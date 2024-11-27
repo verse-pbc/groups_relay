@@ -1,0 +1,4 @@
+/target
+strfry-db/*
+!strfry-db/.gitkeep
+frontend/node_modules/*

@@ -1,0 +1,33 @@
+[package]
+name = "websocket_builder"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "websocket_builder"
+
+
+[dependencies]
+anyhow = "1.0.89"
+async-trait = "0.1.82"
+axum = { version = "0.7.9", features = ["ws"] }
+bytes = "1.7.1"
+clap = { version = "4.5.17", features = ["derive"] }
+env_logger = "0.11.5"
+futures = "0.3.30"
+futures-util = "0.3.31"
+hex = "0.4.3"
+hickory-resolver = { version = "0.24.1", features = ["tokio-runtime"] }
+http = "1.1.0"
+serde_json = "1.0.128"
+thiserror = "1.0.63"
+tokio-native-tls = "0.3.1"
+tokio-util = { version = "0.7.1", features = ["rt"] }
+tower-http = { version = "0.6.2", features = ["trace"] }
+tracing = "0.1"
+tokio = { version = "1.38.1", features = ["full", "tracing"] }
+
+[dev-dependencies]
+futures-util = "0.3.31"
+tokio = { version = "1.38.1", features = ["full"] }
+tokio-tungstenite = "0.24.0"

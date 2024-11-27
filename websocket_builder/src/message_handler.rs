@@ -1,0 +1,168 @@
+use crate::{
+    ConnectionContext, DisconnectContext, InboundContext, MiddlewareVec, OutboundContext,
+    WebsocketError,
+};
+use anyhow::Result;
+use std::sync::Arc;
+use tokio::sync::mpsc::{Receiver as MpscReceiver, Sender as MpscSender};
+use tokio_util::sync::CancellationToken;
+
+pub trait MessageConverter<I, O> {
+    fn outbound_to_string(&self, message: O) -> Result<String>;
+    fn inbound_from_string(&self, message: String) -> Result<Option<I>>;
+}
+
+pub struct MessageHandler<
+    TapState: Send + Sync + 'static,
+    I: Send + Sync + 'static,
+    O: Send + Sync + 'static,
+    Converter: MessageConverter<I, O> + 'static,
+> {
+    middlewares: Arc<MiddlewareVec<TapState, I, O>>,
+    message_converter: Arc<Converter>,
+    sender: Option<MpscSender<(O, usize)>>,
+    cancellation_token: CancellationToken,
+}
+
+impl<
+        TapState: Send + Sync + 'static,
+        I: Send + Sync + 'static,
+        O: Send + Sync + 'static,
+        Converter: MessageConverter<I, O>,
+    > MessageHandler<TapState, I, O, Converter>
+{
+    pub fn new(
+        middlewares: Arc<MiddlewareVec<TapState, I, O>>,
+        message_converter: Arc<Converter>,
+        sender: Option<MpscSender<(O, usize)>>,
+        cancellation_token: CancellationToken,
+    ) -> Self {
+        Self {
+            middlewares,
+            message_converter,
+            sender,
+            cancellation_token,
+        }
+    }
+
+    pub async fn handle_inbound_message(
+        &self,
+        connection_id: String,
+        payload: String,
+        mut state: TapState,
+    ) -> Result<TapState, WebsocketError<TapState>> {
+        let Ok(inbound_message) = self.message_converter.inbound_from_string(payload) else {
+            return Err(WebsocketError::InboundMessageConversionError(
+                "Failed to convert inbound message to string".to_string(),
+                state,
+            ));
+        };
+
+        let Some(inbound_message) = inbound_message else {
+            return Ok(state);
+        };
+
+        let mut ctx = InboundContext::new(
+            connection_id,
+            inbound_message,
+            self.sender.clone(),
+            &mut state,
+            &self.middlewares,
+            0,
+        );
+
+        if let Err(e) = self.middlewares[0].process_inbound(&mut ctx).await {
+            return Err(WebsocketError::HandlerError(e.into(), state));
+        };
+
+        Ok(state)
+    }
+
+    pub async fn handle_outbound_message(
+        &self,
+        connection_id: String,
+        message: O,
+        middleware_index: usize,
+        mut state: TapState,
+    ) -> Result<(TapState, Option<String>), WebsocketError<TapState>> {
+        let message = if middleware_index > 0 {
+            let mut ctx = OutboundContext::new(
+                connection_id,
+                message,
+                self.sender.clone(),
+                &mut state,
+                &self.middlewares,
+                middleware_index,
+            );
+
+            if let Err(e) = self.middlewares[middleware_index]
+                .process_outbound(&mut ctx)
+                .await
+            {
+                return Err(WebsocketError::HandlerError(e.into(), state));
+            };
+
+            ctx.message
+        } else {
+            Some(message)
+        };
+
+        match message {
+            Some(message) => {
+                let Ok(string_message) = self.message_converter.outbound_to_string(message) else {
+                    return Err(WebsocketError::OutboundMessageConversionError(
+                        "Failed to convert outbound message to string".to_string(),
+                        state,
+                    ));
+                };
+
+                Ok((state, Some(string_message)))
+            }
+            None => Ok((state, None)),
+        }
+    }
+
+    pub async fn on_connect(
+        &mut self,
+        connection_id: String,
+        mut state: TapState,
+    ) -> Result<(TapState, MpscReceiver<(O, usize)>), WebsocketError<TapState>> {
+        let (channel_sender, channel_receiver) = tokio::sync::mpsc::channel::<(O, usize)>(100);
+        self.sender = Some(channel_sender);
+
+        let mut ctx = ConnectionContext::new(
+            connection_id,
+            self.sender.clone(),
+            &mut state,
+            &self.middlewares,
+            0,
+        );
+
+        if let Err(e) = self.middlewares[0].on_connect(&mut ctx).await {
+            return Err(WebsocketError::HandlerError(e.into(), state));
+        };
+
+        Ok((state, channel_receiver))
+    }
+
+    pub async fn on_disconnect(
+        &self,
+        connection_id: String,
+        mut state: TapState,
+    ) -> Result<TapState, WebsocketError<TapState>> {
+        let mut ctx = DisconnectContext::new(
+            connection_id,
+            self.sender.clone(),
+            &mut state,
+            &self.middlewares,
+            0,
+        );
+
+        if let Err(e) = self.middlewares[0].on_disconnect(&mut ctx).await {
+            return Err(WebsocketError::HandlerError(e.into(), state));
+        };
+
+        self.cancellation_token.cancel();
+        Ok(state)
+    }
+}
