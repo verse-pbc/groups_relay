@@ -1,0 +1,37 @@
+services:
+  strfry:
+    image: ghcr.io/hoytech/strfry:latest
+    volumes:
+      - ./strfry-db:/strfry/data
+      - ./config/strfry.conf:/etc/strfry.conf:ro
+    ports:
+      - "7777:7777"
+    entrypoint: /bin/sh
+    command: -c "rm -rf /strfry/data/* && ./strfry relay --config /etc/strfry.conf"
+    networks:
+      - nostr-net
+
+  groups_relay:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        - DEBIAN_FRONTEND=noninteractive
+    environment:
+      RUST_LOG: "info"
+      OPENSSL_DIR: "/usr/lib/ssl"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - strfry
+    #command: sh -c "RUST_LOG=info ./groups_relay --relay-url ws://strfry:7777 --local-addr 0.0.0.0:8080"
+    command: sh -c "./groups_relay --relay-url ws://strfry:7777 --local-addr 0.0.0.0:8080"
+    networks:
+      - nostr-net
+
+volumes:
+  strfry-data:
+
+networks:
+  nostr-net:
+    driver: bridge

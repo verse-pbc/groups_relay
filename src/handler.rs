@@ -12,11 +12,14 @@ pub struct GroupResponse {
     id: String,
     name: String,
     about: Option<String>,
+    picture: Option<String>,
     private: bool,
     closed: bool,
     members: Vec<MemberResponse>,
     invites: HashMap<String, Invite>,
     join_requests: Vec<String>,
+    created_at: u64,
+    updated_at: u64,
 }
 
 #[derive(Serialize)]
@@ -49,6 +52,7 @@ fn try_get_groups(
                 id: group.id.clone(),
                 name: group.metadata.name.clone(),
                 about: group.metadata.about.clone(),
+                picture: group.metadata.picture.clone(),
                 private: group.metadata.private,
                 closed: group.metadata.closed,
                 members: group
@@ -65,6 +69,8 @@ fn try_get_groups(
                     .iter()
                     .map(|pk| pk.to_string())
                     .collect(),
+                created_at: group.created_at.as_u64(),
+                updated_at: group.updated_at.as_u64(),
             }
         })
         .collect();

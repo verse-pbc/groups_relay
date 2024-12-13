@@ -50,6 +50,10 @@ struct Args {
     /// Override source address
     #[arg(short, long)]
     local_addr: Option<String>,
+
+    /// Override authentication URL
+    #[arg(short, long)]
+    auth_url: Option<String>,
 }
 
 #[derive(Clone)]
@@ -193,14 +197,19 @@ fn setup_tracing() {
 
 #[cfg(not(feature = "console"))]
 fn setup_tracing() {
-    tracing_subscriber::fmt()
-        .with_target(true)
+    use tracing_subscriber::{fmt, EnvFilter};
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    fmt()
+        .with_target(false)
         .with_thread_ids(false)
         .with_thread_names(false)
         .with_file(false)
         .with_line_number(false)
-        .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
-        .compact()
+        .with_level(true)
+        .without_time()
+        .with_env_filter(filter)
         .init();
 }
 
@@ -220,8 +229,13 @@ async fn main() -> Result<()> {
     if let Some(target_url) = args.relay_url {
         settings.relay_url = target_url;
     }
+
     if let Some(local_addr) = args.local_addr {
         settings.local_addr = local_addr;
+    }
+
+    if let Some(auth_url) = args.auth_url {
+        settings.auth_url = auth_url;
     }
 
     info!("Starting Relay proxy");

@@ -97,7 +97,7 @@ impl FromStr for GroupRole {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GroupMember {
     pub pubkey: PublicKey,
     pub roles: HashSet<GroupRole>,
@@ -216,7 +216,7 @@ impl Group {
     }
 
     pub fn add_members(&mut self, members_event: &Event) -> Result<bool, Error> {
-        if !self.can_add_user(&members_event.pubkey) {
+        if !self.can_edit_members(&members_event.pubkey) {
             return Err(Error::notice(
                 "User is not authorized to add users to this group",
             ));
@@ -235,12 +235,23 @@ impl Group {
         Ok(added_admins)
     }
 
+    pub fn admin_pubkeys(&self) -> Vec<PublicKey> {
+        self.members
+            .values()
+            .filter(|member| member.is(GroupRole::Admin))
+            .map(|member| member.pubkey)
+            .collect::<Vec<_>>()
+    }
+
     pub fn remove_members(&mut self, members_event: &Event) -> Result<bool, Error> {
-        if !self.can_remove_user(&members_event.pubkey) {
+        if !self.can_edit_members(&members_event.pubkey) {
             return Err(Error::notice(
                 "User is not authorized to remove users from this group",
             ));
         }
+
+        let admins = self.admin_pubkeys();
+
         let mut removed_admins = false;
         for removed_member in members_event.tags.filter(TagKind::p()) {
             let Some(removed_pubkey) = removed_member
@@ -249,6 +260,10 @@ impl Group {
             else {
                 return Err(Error::notice("Invalid tag format"));
             };
+
+            if admins.len() == 1 && admins.contains(&removed_pubkey) {
+                return Err(Error::notice("Cannot remove last admin"));
+            }
 
             if let Some(removed_user) = self.members.remove(&removed_pubkey) {
                 removed_admins |= removed_user.is(GroupRole::Admin);
@@ -269,6 +284,10 @@ impl Group {
                 "Invalid event kind for group metadata {}",
                 event.kind
             )));
+        }
+
+        if !self.can_edit_metadata(&event.pubkey) {
+            return Err(Error::notice("User is not authorized to edit metadata"));
         }
 
         if event.tags.find(TagKind::custom("private")).is_some() {
@@ -309,6 +328,10 @@ impl Group {
     }
 
     pub fn set_roles(&mut self, event: &Event) -> Result<(), Error> {
+        if !self.can_edit_metadata(&event.pubkey) {
+            return Err(Error::notice("User is not authorized to edit metadata"));
+        }
+
         if event.tags.find(TagKind::custom("private")).is_some() {
             self.metadata.private = true;
         } else if event.tags.find(TagKind::custom("public")).is_some() {
@@ -372,6 +395,10 @@ impl Group {
                 "Invalid event kind for create invite {}",
                 event.kind
             )));
+        }
+
+        if !self.can_create_invites(&event.pubkey) {
+            return Err(Error::notice("User is not authorized to create invites"));
         }
 
         let invite_code = event
@@ -524,11 +551,15 @@ impl Group {
 
 // Authorization checks
 impl Group {
-    pub fn can_add_user(&self, pubkey: &PublicKey) -> bool {
+    pub fn can_edit_members(&self, pubkey: &PublicKey) -> bool {
         self.is_admin(pubkey)
     }
 
-    pub fn can_remove_user(&self, pubkey: &PublicKey) -> bool {
+    pub fn can_edit_metadata(&self, pubkey: &PublicKey) -> bool {
+        self.is_admin(pubkey)
+    }
+
+    pub fn can_create_invites(&self, pubkey: &PublicKey) -> bool {
         self.is_admin(pubkey)
     }
 
