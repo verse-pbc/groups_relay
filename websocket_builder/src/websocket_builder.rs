@@ -6,7 +6,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::Receiver as MpscReceiver;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Error, Debug)]
 pub enum WebsocketError<TapState: Send + Sync + 'static> {
@@ -137,7 +137,6 @@ where
     Converter: MessageConverter<I, O> + Send + Sync + 'static,
     Factory: StateFactory<TapState> + Send + Sync + 'static,
 {
-    #[instrument(skip(self, socket), level = "debug")]
     pub async fn start(
         &self,
         socket: WebSocket,
@@ -148,7 +147,7 @@ where
         let state = self.state_factory.create_state(connection_token.clone());
         let middlewares = self.middlewares.clone();
         let message_converter = self.message_converter.clone();
-        info!("New connection: {}", connection_id);
+        info!("[{}] New connection", connection_id);
 
         let mut session_handler = MessageHandler::new(
             middlewares,
@@ -177,12 +176,11 @@ where
             error!("Disconnect error: {}", e);
         }
 
-        info!("Connection closed: {}", connection_id);
+        info!("[{}] Connection closed", connection_id);
         Ok(())
     }
 }
 
-#[instrument(skip(socket, session_handler, state), level = "debug")]
 async fn handle_connection_lifecycle<
     TapState: Send + Sync + 'static,
     I: Send + Sync + 'static,
@@ -225,7 +223,6 @@ async fn handle_connection_lifecycle<
     Ok(state)
 }
 
-#[instrument(skip(socket, server_receiver, handler, state), level = "debug")]
 async fn message_loop<
     TapState: Send + Sync + 'static,
     I: Send + Sync + 'static,

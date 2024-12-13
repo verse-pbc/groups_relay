@@ -1,0 +1,31 @@
+.role-badge {
+  @apply inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium;
+}
+
+.role-badge.admin {
+  @apply bg-yellow-100 text-yellow-800;
+}
+
+.role-badge.moderator {
+  @apply bg-blue-100 text-blue-800;
+}
+
+.role-badge.member {
+  @apply bg-gray-100 text-gray-800;
+}
+
+.pubkey {
+  font-family: monospace;
+  @apply bg-gray-50 px-2 py-1 rounded;
+}
+
+.name-input {
+  @apply flex-1 rounded-lg border border-gray-200 px-3 py-2 bg-gray-50
+         text-gray-900 focus:border-accent focus:outline-none focus:ring-2
+         focus:ring-accent/10 focus:bg-white transition-all;
+}
+
+.save-button {
+  @apply px-3 py-2 bg-accent text-white rounded-lg hover:bg-accent/90
+         active:transform active:translate-y-0.5 transition-all;
+}

@@ -32,6 +32,16 @@ You can monitor the group state changes through the web interface hosted at the 
 - Active groups
 - Group state changes
 
+### Local development
+
+```bash
+docker compose up --build
+```
+
+This will spawn a relay just for the docker session, it will be emptied once the compose server is stopped.
+
+A webpage is available to inspect and interact with the relay groups at `/`.
+
 ## Configuration
 
 The proxy can be configured to connect to any backing relay. By default, it connects to a local strfry instance at `localhost:7777`, but this can be modified through configuration or command line arguments.
