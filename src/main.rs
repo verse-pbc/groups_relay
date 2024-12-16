@@ -238,9 +238,13 @@ async fn main() -> Result<()> {
         settings.auth_url = auth_url;
     }
 
-    info!("Starting Relay proxy");
-    info!("Listening on: {}", settings.local_addr);
-    info!("Relay URL: {}", settings.relay_url);
+    info!(
+        "Listening for websocket connections at: {}",
+        settings.local_addr
+    );
+    info!("Frontend URL: {}", settings.local_addr);
+    info!("Proxied relay URL: {}", settings.relay_url);
+    info!("Auth requests must match this URL: {}", settings.auth_url);
 
     let relay_keys = settings.relay_keys()?;
     let logger = LoggerMiddleware::new();

@@ -20,12 +20,13 @@ services:
     environment:
       RUST_LOG: "info"
       OPENSSL_DIR: "/usr/lib/ssl"
+      NIP29__relay__relay_url: "ws://strfry:7777"
+      NIP29__relay__auth_url: "ws://localhost:8080"
+      #NIP29__relay__auth_url: "wss://humorous-tiger-above.ngrok-free.app"
     ports:
       - "8080:8080"
     depends_on:
       - strfry
-    #command: sh -c "RUST_LOG=info ./groups_relay --relay-url ws://strfry:7777 --local-addr 0.0.0.0:8080"
-    command: sh -c "./groups_relay --relay-url ws://strfry:7777 --local-addr 0.0.0.0:8080"
     networks:
       - nostr-net
 

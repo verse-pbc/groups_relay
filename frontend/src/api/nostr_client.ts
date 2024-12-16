@@ -38,7 +38,7 @@ export class NostrClient {
   constructor(key: string, config?: Partial<NostrClientConfig>) {
     try {
       this.config = {
-        relayUrl: "ws://127.0.0.1:8080",
+        relayUrl: "/ws",
         ...config,
       };
 
@@ -52,10 +52,6 @@ export class NostrClient {
       this.ndk.pool.on("relay:connect", (relay: NDKRelay) => {
         relay.authPolicy = NDKRelayAuthPolicies.signIn({ ndk: this.ndk });
       });
-
-      console.log("NostrClient initialized", this.ndk);
-      console.log("pool", this.ndk.pool);
-      console.log("config", this.config);
     } catch (error) {
       throw new NostrGroupError(`Failed to initialize NostrClient: ${error}`);
     }
