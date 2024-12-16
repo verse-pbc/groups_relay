@@ -85,7 +85,7 @@ export class JoinRequestForm extends Component<JoinRequestFormProps, JoinRequest
       <form onSubmit={this.handleSubmit} class="space-y-2">
         <div>
           <label htmlFor="nsec" class="block text-xs font-medium text-[var(--color-text-secondary)] mb-0.5">
-            Your nsec
+            Your nsec or hex key
           </label>
           <input
             type="password"

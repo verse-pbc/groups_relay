@@ -248,8 +248,6 @@ impl Nip29Middleware {
             ]);
         }
 
-        debug!("Group: {:?}", group.value());
-
         Ok(vec![EventToSave::Event(join_request_event.clone())])
     }
 

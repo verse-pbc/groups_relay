@@ -16,7 +16,7 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
   constructor(props: JoinRequestSectionProps) {
     super(props)
     this.state = {
-      showJoinForm: false
+      showJoinForm: true
     }
   }
 
@@ -30,7 +30,6 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
 
   render() {
     const { group, client } = this.props
-    const { showJoinForm } = this.state
 
     const pendingRequests = group.join_requests?.filter(
       pubkey => !group.members.some(member => member.pubkey === pubkey)
@@ -42,20 +41,13 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
 
     return (
       <section class="border-t border-[var(--color-border)] p-3">
-        <div class="flex items-center justify-between mb-2">
-          <button
-            onClick={() => this.setState({ showJoinForm: !showJoinForm })}
-            class="text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] text-xs"
-          >
-            {showJoinForm ? 'Cancel Join' : 'Join Group'}
-          </button>
-        </div>
+        <h3 class="flex items-center gap-1 text-sm font-semibold text-[var(--color-text-primary)] mb-2">
+          <span class="text-base">🤝</span> Join Requests
+        </h3>
 
-        {showJoinForm && (
-          <div class="mb-3 border border-[var(--color-border)] rounded p-2 bg-[var(--color-bg-tertiary)]">
-            <JoinRequestForm groupId={group.id} relayUrl={client.config.relayUrl} />
-          </div>
-        )}
+        <div class="mb-3 border border-[var(--color-border)] rounded p-2 bg-[var(--color-bg-tertiary)]">
+          <JoinRequestForm groupId={group.id} relayUrl={client.config.relayUrl} />
+        </div>
 
         {pendingRequests.length > 0 ? (
           <ul class="space-y-2">
