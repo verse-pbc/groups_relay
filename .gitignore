@@ -1,3 +1,6 @@
+/**/.*  # ignore all dotted files
+/**/.*/ # ignore all dotted folders
+!/.gitignore  # except `gitignore` :)
 /target
 strfry-db/*
 !strfry-db/.gitkeep
