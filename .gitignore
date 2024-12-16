@@ -1,7 +1,7 @@
 /**/.*  # ignore all dotted files
 /**/.*/ # ignore all dotted folders
 !/.gitignore  # except `gitignore` :)
+!strfry-db/.gitkeep
 /target
 strfry-db/*
-!strfry-db/.gitkeep
 frontend/node_modules/*
