@@ -100,6 +100,12 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
                     <div class="text-xs text-[var(--color-text-secondary)] font-mono">
                       Code: {code}
                     </div>
+                    <a
+                      href={`plur://join-community?group-id=${group.id}&code=${code}`}
+                      class="text-xs text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors"
+                    >
+                      Join Link
+                    </a>
                   </div>
                   {invite.pubkey && (
                     <div class="flex items-center justify-between gap-2">

@@ -7,7 +7,7 @@ use std::{collections::HashMap, collections::HashSet};
 use strum::Display;
 use strum::EnumIter;
 use strum::IntoEnumIterator;
-
+use tracing::info;
 // Group Creation and Management
 pub const KIND_GROUP_CREATE: Kind = Kind::Custom(9007); // Admin/Relay -> Relay: Create a new group
 pub const KIND_GROUP_DELETE: Kind = Kind::Custom(9008); // Admin/Relay -> Relay: Delete an existing group
@@ -173,7 +173,7 @@ impl Invite {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Group {
     pub id: String,
     pub metadata: GroupMetadata,
@@ -185,7 +185,84 @@ pub struct Group {
     pub updated_at: Timestamp,
 }
 
+impl std::fmt::Debug for Group {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{{")?;
+        writeln!(f, "  id: \"{}\",", self.id)?;
+        writeln!(f, "  metadata: {{")?;
+        writeln!(f, "    name: \"{}\",", self.metadata.name)?;
+        if let Some(about) = &self.metadata.about {
+            writeln!(f, "    about: \"{}\",", about)?;
+        }
+        if let Some(picture) = &self.metadata.picture {
+            writeln!(f, "    picture: \"{}\",", picture)?;
+        }
+        writeln!(f, "    private: {},", self.metadata.private)?;
+        writeln!(f, "    closed: {}", self.metadata.closed)?;
+        writeln!(f, "  }},")?;
+        writeln!(f, "  members: {{")?;
+        for (pubkey, member) in &self.members {
+            writeln!(
+                f,
+                "    {}: {{ roles: [{}] }},",
+                pubkey.to_string(),
+                member
+                    .roles
+                    .iter()
+                    .map(|r| format!("\"{}\"", r))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )?;
+        }
+        writeln!(f, "  }},")?;
+        writeln!(
+            f,
+            "  join_requests: [{}],",
+            self.join_requests
+                .iter()
+                .map(|pk| format!("\"{}\"", pk))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )?;
+        writeln!(f, "  invites: {{")?;
+        for (code, invite) in &self.invites {
+            write!(f, "    {}: {{ ", code)?;
+            if let Some(pubkey) = invite.pubkey {
+                write!(f, "pubkey: \"{}\", ", pubkey)?;
+            }
+            writeln!(
+                f,
+                "roles: [{}] }},",
+                invite
+                    .roles
+                    .iter()
+                    .map(|r| format!("\"{}\"", r))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )?;
+        }
+        writeln!(f, "  }},")?;
+        writeln!(
+            f,
+            "  roles: [{}],",
+            self.roles
+                .iter()
+                .map(|r| format!("\"{}\"", r))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )?;
+        writeln!(f, "  created_at: {},", self.created_at.as_u64())?;
+        writeln!(f, "  updated_at: {}", self.updated_at.as_u64())?;
+        write!(f, "}}")
+    }
+}
+
 impl Group {
+    fn update_state(&mut self) {
+        self.updated_at = Timestamp::now();
+        info!("Group state: {:?}", self);
+    }
+
     pub fn new(event: &Event) -> Result<Self, Error> {
         if event.kind != KIND_GROUP_CREATE {
             return Err(Error::notice(&format!(
@@ -203,7 +280,7 @@ impl Group {
         let member = GroupMember::new_admin(event.pubkey);
         let members = HashMap::from([(event.pubkey, member)]);
 
-        Ok(Self {
+        let mut group = Self {
             id: group_id.to_string(),
             metadata: GroupMetadata::new(group_id.to_string()),
             members,
@@ -212,7 +289,10 @@ impl Group {
             roles: HashSet::new(),
             created_at: event.created_at,
             updated_at: event.created_at,
-        })
+        };
+
+        group.update_state();
+        Ok(group)
     }
 
     pub fn add_members(&mut self, members_event: &Event) -> Result<bool, Error> {
@@ -230,8 +310,7 @@ impl Group {
             self.members.insert(member.pubkey, member);
         }
 
-        self.updated_at = members_event.created_at;
-
+        self.update_state();
         Ok(added_admins)
     }
 
@@ -270,8 +349,7 @@ impl Group {
             }
         }
 
-        self.updated_at = members_event.created_at;
-
+        self.update_state();
         Ok(removed_admins)
     }
 
@@ -322,8 +400,7 @@ impl Group {
             self.metadata.picture = Some(picture_tag.to_string());
         }
 
-        self.updated_at = event.created_at;
-
+        self.update_state();
         Ok(())
     }
 
@@ -344,8 +421,7 @@ impl Group {
             self.metadata.closed = false;
         }
 
-        self.updated_at = event.created_at;
-
+        self.update_state();
         Ok(())
     }
 
@@ -358,10 +434,11 @@ impl Group {
         }
 
         if !self.metadata.closed {
+            info!("Public group, adding member {}", event.pubkey);
             self.members
                 .insert(event.pubkey, GroupMember::new_member(event.pubkey));
             self.join_requests.remove(&event.pubkey);
-
+            self.update_state();
             return Ok(true);
         }
 
@@ -371,22 +448,34 @@ impl Group {
             .and_then(|t| t.content())
             .and_then(|code| self.invites.get_mut(code));
 
-        if let Some(invite) = code {
-            invite.pubkey = Some(event.pubkey);
-            let roles = invite.roles.clone();
+        let Some(invite) = code else {
+            info!("Invite not found, adding join request for {}", event.pubkey);
+            self.join_requests.insert(event.pubkey);
+            self.update_state();
+            return Ok(false);
+        };
 
-            self.members
-                .insert(event.pubkey, GroupMember::new(event.pubkey, roles));
-
-            self.join_requests.remove(&event.pubkey);
-
-            return Ok(true);
+        if invite.pubkey.is_some() {
+            info!(
+                "Invite already used, adding join request for {}",
+                event.pubkey
+            );
+            self.join_requests.insert(event.pubkey);
+            self.update_state();
+            return Ok(false);
         }
 
-        self.join_requests.insert(event.pubkey);
-        self.updated_at = event.created_at;
+        // Invite code matched and is available
+        info!("Invite code matched, adding member {}", event.pubkey);
+        invite.pubkey = Some(event.pubkey);
+        let roles = invite.roles.clone();
 
-        Ok(false)
+        self.members
+            .insert(event.pubkey, GroupMember::new(event.pubkey, roles));
+
+        self.join_requests.remove(&event.pubkey);
+        self.update_state();
+        Ok(true)
     }
 
     pub fn create_invite(&mut self, event: &Event) -> Result<bool, Error> {
@@ -410,7 +499,7 @@ impl Group {
         let invite = Invite::new(HashSet::from([GroupRole::Member]));
 
         self.invites.insert(invite_code.to_string(), invite);
-        self.updated_at = event.created_at;
+        self.update_state();
         Ok(true)
     }
 
@@ -422,10 +511,10 @@ impl Group {
             )));
         }
 
-        self.updated_at = event.created_at;
-
         self.join_requests.remove(&event.pubkey);
-        Ok(self.members.remove(&event.pubkey).is_some())
+        let removed = self.members.remove(&event.pubkey).is_some();
+        self.update_state();
+        Ok(removed)
     }
 
     pub fn is_admin(&self, pubkey: &PublicKey) -> bool {
