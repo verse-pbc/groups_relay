@@ -1,4 +1,14 @@
 services:
+  strfry:
+    image: ghcr.io/hoytech/strfry:latest
+    volumes:
+      - ./strfry-db:/strfry/data
+      - ./config/strfry.conf:/etc/strfry.conf:ro
+    ports:
+      - "7777:7777"
+    entrypoint: /bin/sh
+    command: -c "rm -rf /strfry/data/* && ./strfry relay --config /etc/strfry.conf"
+
   groups_relay:
     build:
       context: .
@@ -6,4 +16,13 @@ services:
       args:
         - DEBIAN_FRONTEND=noninteractive
     environment:
+      RUST_LOG: "info"
+      NIP29__relay__relay_url: "ws://strfry:7777"
       NIP29__relay__auth_url: "ws://localhost:8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - strfry
+
+volumes:
+  strfry-data:

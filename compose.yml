@@ -6,25 +6,20 @@ services:
       - ./config/strfry.conf:/etc/strfry.conf:ro
     ports:
       - "7777:7777"
-    entrypoint: /bin/sh
-    command: -c "rm -rf /strfry/data/* && ./strfry relay --config /etc/strfry.conf"
-    networks:
-      - nostr-net
+    command: ./strfry relay --config /etc/strfry.conf
 
   groups_relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
       RUST_LOG: "info"
       NIP29__relay__relay_url: "ws://strfry:7777"
+      NIP29__relay__auth_url: "${AUTH_URL}"
     ports:
       - "8080:8080"
     depends_on:
       - strfry
-    networks:
-      - nostr-net
 
 volumes:
   strfry-data:
-
-networks:
-  nostr-net:
-    driver: bridge
