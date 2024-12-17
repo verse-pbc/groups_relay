@@ -7,34 +7,28 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /usr/src/app
 
-# Copy only the files needed for Rust build
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY config ./config
 COPY websocket_builder ./websocket_builder
 
-# Build Rust project
 RUN cargo build
 
 FROM node:20-slim as frontend-builder
 
 WORKDIR /usr/src/app/frontend
 
-# Install Python and build tools
 RUN apt-get update && apt-get install -y \
     python3 \
     make \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only frontend files
 COPY frontend/package*.json ./
 COPY frontend/pnpm-lock.yaml ./
 
-# Install dependencies
 RUN npm install -g pnpm && pnpm install
 
-# Copy frontend source
 COPY frontend/src ./src
 COPY frontend/index.html ./
 COPY frontend/vite.config.mts ./
@@ -42,7 +36,6 @@ COPY frontend/tsconfig.json ./
 COPY frontend/postcss.config.cjs ./
 COPY frontend/tailwind.config.js ./
 
-# Build frontend
 RUN pnpm run build
 
 FROM debian:bookworm-slim
