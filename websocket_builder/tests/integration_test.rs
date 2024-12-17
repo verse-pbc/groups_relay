@@ -3,7 +3,7 @@ mod utils;
 use anyhow::Result;
 use async_trait::async_trait;
 use axum::{
-    extract::{ConnectInfo, FromRef, State, WebSocketUpgrade},
+    extract::{ConnectInfo, State, WebSocketUpgrade},
     response::IntoResponse,
     routing::get,
     Router,
@@ -215,7 +215,7 @@ impl TestServer {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         Ok(Self {
             server_task,
-            shutdown: CancellationToken::new(),
+            shutdown: cancellation_token,
         })
     }
 

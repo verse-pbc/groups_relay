@@ -205,7 +205,7 @@ impl std::fmt::Debug for Group {
             writeln!(
                 f,
                 "    {}: {{ roles: [{}] }},",
-                pubkey.to_string(),
+                pubkey,
                 member
                     .roles
                     .iter()
