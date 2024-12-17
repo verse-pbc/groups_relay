@@ -1,6 +1,8 @@
+#AUTH_URL=ws://localhost:8080 docker compose -f compose.prod.example.yml up
 services:
   groups_relay:
-    image: ghcr.io/nos/groups_relay:latest
+    image: ghcr.io/verse-pbc/groups_relay:latest
+    platform: linux/amd64
     volumes:
       - ./config:/app/config:ro
     environment:
@@ -13,7 +15,8 @@ services:
       - strfry
 
   strfry:
-    image: ghcr.io/hoytech/strfry@sha256:0fc68c78ae31cc6194fbd98ad5cdef6516de4f65b768d4b7250b3cac2b0b3ac8
+    image: ghcr.io/hoytech/strfry:latest
+    platform: linux/amd64
     volumes:
       - ./strfry-db:/strfry/data
       - ./config/strfry.conf:/etc/strfry.conf:ro
