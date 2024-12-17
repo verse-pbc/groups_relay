@@ -1,11 +1,11 @@
 services:
   groups_relay:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/nos/groups_relay:latest
+    volumes:
+      - ./config:/app/config:ro
     environment:
-      RUST_LOG: "info"
-      NIP29__relay__relay_url: "ws://strfry:7777"
+      RUST_LOG: "${RUST_LOG:-info}"
+      NIP29__relay__relay_url: "${RELAY_URL:-ws://strfry:7777}"
       NIP29__relay__auth_url: "${AUTH_URL}"
     ports:
       - "8080:8080"
