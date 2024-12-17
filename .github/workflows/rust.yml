@@ -36,3 +36,14 @@ jobs:
           path: |
             target/release/groups_relay
             config/settings.yml
+
+      - name: Trigger Docker workflow
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && success()
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: Docker
+          token: ${{ secrets.GITHUB_TOKEN }}
+          inputs: |
+            {
+              "sha": "${{ github.sha }}"
+            }

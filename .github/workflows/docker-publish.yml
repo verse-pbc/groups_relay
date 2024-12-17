@@ -1,10 +1,11 @@
 name: Docker
 
 on:
-  workflow_run:
-    workflows: [Rust]
-    types: [completed]
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Commit SHA to build from'
+        required: true
 
 env:
   REGISTRY: ghcr.io
@@ -13,9 +14,6 @@ env:
 jobs:
   build:
     name: Build and Push Docker Image
-    if: |
-      github.event.workflow_run.conclusion == 'success' &&
-      (github.event.workflow_run.head_branch == 'main' || contains(github.event.workflow_run.head_branch, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -26,7 +24,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.sha }}
 
       - name: Download Rust build artifacts
         uses: dawidd6/action-download-artifact@v3
@@ -36,6 +34,8 @@ jobs:
           path: rust-artifacts
           workflow_conclusion: success
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          pr: ${{ github.event.pull_request.number }}
+          commit: ${{ inputs.sha }}
 
       - name: Install cosign
         uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 #v3.5.0
