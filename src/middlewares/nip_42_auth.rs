@@ -35,6 +35,11 @@ impl Nip42Auth {
             return None;
         }
 
+        if event.verify().is_err() {
+            warn!("Event signature verification failed");
+            return None;
+        }
+
         let now = Timestamp::now();
         if (now.as_u64() - event.created_at.as_u64()) > MAX_AUTH_EVENT_AGE {
             warn!(
