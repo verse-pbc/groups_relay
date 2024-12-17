@@ -4,5 +4,5 @@ relay:
   # This is a test key, replace with your own in settings.local.yml
   relay_secret_key: "6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e"
   local_addr: "0.0.0.0:8080"
-  auth_url: "wss://humorous-tiger-above.ngrok-free.app"
+  auth_url: "ws://localhost:8080"
   relay_url: "ws://127.0.0.1:7777"
