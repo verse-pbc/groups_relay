@@ -35,7 +35,7 @@ You can monitor the group state changes through the web interface hosted at the 
 ### Local development
 
 ```bash
-docker compose up --build
+docker compose -f compose.dev.yml up --build
 ```
 
 This will spawn a relay just for the docker session, it will be emptied once the compose server is stopped.
