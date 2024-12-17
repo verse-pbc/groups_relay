@@ -9,7 +9,6 @@ WORKDIR /usr/src/app
 
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-COPY config ./config
 COPY websocket_builder ./websocket_builder
 
 RUN cargo build
@@ -47,8 +46,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+COPY config ./config
 COPY --from=rust-builder /usr/src/app/target/debug/groups_relay ./groups_relay
-COPY --from=rust-builder /usr/src/app/config ./config
 COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
 
 EXPOSE 8080
