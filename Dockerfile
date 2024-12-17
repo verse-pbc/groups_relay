@@ -9,7 +9,6 @@ WORKDIR /usr/src/app
 
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-COPY config ./config
 COPY websocket_builder ./websocket_builder
 
 RUN RUSTFLAGS="-C target-cpu=native" cargo build --release
@@ -47,8 +46,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+COPY config ./config
 COPY --from=rust-builder /usr/src/app/target/release/groups_relay ./groups_relay
-COPY --from=rust-builder /usr/src/app/config ./config
 COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
 
 EXPOSE 8080
