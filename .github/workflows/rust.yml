@@ -9,6 +9,10 @@ env:
   CARGO_TERM_COLOR: always
   RUST_LOG: debug
 
+permissions:
+  contents: read
+  actions: write  # Required to trigger other workflows
+
 jobs:
   test:
     name: Test
