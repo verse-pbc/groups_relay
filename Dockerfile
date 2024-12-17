@@ -31,9 +31,9 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy pre-built artifacts
+# Copy pre-built artifacts and default config
 COPY groups_relay ./groups_relay
-COPY config ./config
+COPY config/settings.yml ./config/
 COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
 
 EXPOSE 8080
