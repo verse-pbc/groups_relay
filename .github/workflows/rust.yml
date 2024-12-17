@@ -1,11 +1,6 @@
 name: Rust
 
 on:
-  workflow_call:
-    outputs:
-      success:
-        description: "Whether the build and tests succeeded"
-        value: ${{ jobs.test.outputs.success }}
   push:
     branches: [ "main" ]
   pull_request:
@@ -19,8 +14,6 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    outputs:
-      success: ${{ steps.set-output.outputs.success }}
     steps:
       - uses: actions/checkout@v4
 
@@ -36,14 +29,11 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --verbose -- --nocapture
 
-      - name: Set success output
-        id: set-output
-        run: echo "success=true" >> "$GITHUB_OUTPUT"
-
       - name: Upload build artifacts
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: release-build
           path: |
             target/release/groups_relay
-            config/
+            config/settings.yml

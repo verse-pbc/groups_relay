@@ -1,27 +1,21 @@
 name: Docker
 
 on:
-  push:
-    branches: [ "main" ]
-    # Publish semver tags as releases.
-    tags: [ 'v*.*.*' ]
+  workflow_run:
+    workflows: ["Rust"]
+    types:
+      - completed
+    branches: ["main"]
 
 env:
-  # Use docker.io for Docker Hub if empty
   REGISTRY: ghcr.io
-  # github.repository as <account>/<repo>
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  verify-rust:
-    name: Verify Rust Build and Tests
-    uses: ./.github/workflows/rust.yml
-
   build:
     name: Build and Push Docker Image
-    needs: [verify-rust]
-    # Only run if we're on main and the Rust workflow passed
-    if: github.ref == 'refs/heads/main' && needs.verify-rust.outputs.success == 'true'
+    # Only run if the Rust workflow succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -33,10 +27,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download Rust build artifacts
-        uses: actions/download-artifact@v4
+        uses: dawidd6/action-download-artifact@v3
         with:
+          workflow: rust.yml
           name: release-build
           path: rust-artifacts
+          workflow_conclusion: success
 
       - name: Install cosign
         uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 #v3.5.0
@@ -63,7 +59,7 @@ jobs:
         run: |
           mkdir -p build-context
           mv rust-artifacts/groups_relay build-context/
-          mv rust-artifacts/config build-context/
+          mv rust-artifacts/settings.yml build-context/config/
           cp -r frontend build-context/
 
       - name: Build and push Docker image
