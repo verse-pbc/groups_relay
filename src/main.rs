@@ -1,11 +1,3 @@
-mod app_state;
-mod config;
-mod error;
-mod group;
-mod handler;
-mod middlewares;
-mod nostr_session_state;
-
 use anyhow::{Context, Result};
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
@@ -16,13 +8,18 @@ use axum::{
     Router,
 };
 use clap::Parser;
-use dashmap::DashMap;
-use middlewares::{
-    EventVerifierMiddleware, LoggerMiddleware, Nip29Middleware, Nip42Middleware, Nip70Middleware,
-    NostrMessageConverter, RelayForwarder,
+use groups_relay::{
+    app_state, config,
+    create_client::create_client,
+    groups::Groups,
+    handler,
+    middlewares::{
+        EventVerifierMiddleware, LoggerMiddleware, Nip29Middleware, Nip42Middleware,
+        Nip70Middleware, NostrMessageConverter, RelayForwarder,
+    },
+    nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
 };
 use nostr_sdk::{ClientMessage, RelayMessage};
-use nostr_session_state::{NostrConnectionFactory, NostrConnectionState};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -218,9 +215,6 @@ async fn main() -> Result<()> {
     setup_tracing();
 
     let args = Args::parse();
-    let cancellation_token = CancellationToken::new();
-    let shared_groups = Arc::new(DashMap::new());
-    let http_state = Arc::new(app_state::HttpServerState::new(shared_groups.clone()));
     let config = config::Config::new(&args.config_dir).context("Failed to load configuration")?;
     let mut settings = config
         .get_settings()
@@ -237,6 +231,16 @@ async fn main() -> Result<()> {
     if let Some(auth_url) = args.auth_url {
         settings.auth_url = auth_url;
     }
+    let cancellation_token = CancellationToken::new();
+
+    let client = create_client(&settings.relay_url, settings.relay_keys()?)
+        .await
+        .context("Failed to create client")?;
+    let groups = Groups::load_groups(&client)
+        .await
+        .context("Failed to load groups")?;
+    let shared_groups = Arc::new(groups);
+    let http_state = Arc::new(app_state::HttpServerState::new(shared_groups.clone()));
 
     info!(
         "Listening for websocket connections at: {}",

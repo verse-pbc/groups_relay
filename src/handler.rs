@@ -1,5 +1,5 @@
 use crate::app_state::HttpServerState;
-use crate::group::Invite;
+use crate::groups::Invite;
 use axum::{extract::State, http::StatusCode, response::Json};
 use nostr_sdk::nips::nip11::RelayInformationDocument;
 use serde::Serialize;

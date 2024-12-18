@@ -24,6 +24,7 @@ interface AppState {
 
 export class App extends Component<AppProps, AppState> {
   private groupsMap: Map<string, Group>
+  private cleanup: (() => void) | null = null
 
   constructor(props: AppProps) {
     super(props)
@@ -218,30 +219,8 @@ export class App extends Component<AppProps, AppState> {
   }
 
   async componentDidMount() {
-    const fetchMetadataEvents = async () => {
-      try {
-        const metadataSub = await this.props.client.ndkInstance.fetchEvents({
-          kinds: [
-            ...metadataKinds,
-          ].map(k => k as NDKKind),
-        })
-
-        // Process historical events in chronological order
-        Array.from(metadataSub)
-          .sort((a: any, b: any) => a.created_at - b.created_at)
-          .forEach((event: any) => this.processEvent(event, this.groupsMap))
-
-        const sortedGroups = Array.from(this.groupsMap.values()).sort((a, b) => b.created_at - a.created_at)
-        this.setState({ groups: sortedGroups })
-      } catch (error) {
-        console.error('Error fetching metadata events:', error)
-      }
-    }
-
     const fetchGroups = async () => {
       try {
-        await fetchMetadataEvents()
-
         const sub = this.props.client.ndkInstance.subscribe(
           {
             kinds: [
@@ -262,15 +241,11 @@ export class App extends Component<AppProps, AppState> {
           this.processEvent(event, this.groupsMap)
           const sortedGroups = Array.from(this.groupsMap.values()).sort((a, b) => b.created_at - a.created_at)
           this.setState({ groups: sortedGroups })
-
-          if (event.kind < 30000) {
-            console.log('fetching metadata events')
-            await new Promise(resolve => setTimeout(resolve, 1000))
-            await fetchMetadataEvents()
-          }
         })
 
-        return () => {
+        // Store the cleanup function
+        this.cleanup = () => {
+          console.log('Stopping subscription')
           sub.stop()
         }
       } catch (error) {
@@ -279,6 +254,13 @@ export class App extends Component<AppProps, AppState> {
     }
 
     fetchGroups()
+  }
+
+  componentWillUnmount() {
+    if (this.cleanup) {
+      console.log('Cleaning up subscription')
+      this.cleanup()
+    }
   }
 
   render() {

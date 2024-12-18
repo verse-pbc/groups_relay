@@ -1,101 +1,40 @@
-use crate::group::{
-    Group, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER, KIND_GROUP_CREATE, KIND_GROUP_CREATE_INVITE,
-    KIND_GROUP_DELETE, KIND_GROUP_DELETE_EVENT, KIND_GROUP_EDIT_METADATA, KIND_GROUP_REMOVE_USER,
-    KIND_GROUP_SET_ROLES, KIND_GROUP_USER_JOIN_REQUEST, KIND_GROUP_USER_LEAVE_REQUEST,
-    METADATA_EVENT_KINDS,
-};
-use crate::middlewares::relay_forwarder::EventToSave;
-use crate::{error::Error, nostr_session_state::NostrConnectionState};
+use std::sync::Arc;
+
 use anyhow::Result;
 use async_trait::async_trait;
-use dashmap::{
-    mapref::one::{Ref, RefMut},
-    DashMap,
-};
 use nostr_sdk::prelude::*;
-use std::sync::Arc;
 use tracing::debug;
+
+use crate::error::Error;
+use crate::groups::{
+    Group, Groups, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER, KIND_GROUP_CREATE,
+    KIND_GROUP_CREATE_INVITE, KIND_GROUP_DELETE, KIND_GROUP_DELETE_EVENT, KIND_GROUP_EDIT_METADATA,
+    KIND_GROUP_REMOVE_USER, KIND_GROUP_SET_ROLES, KIND_GROUP_USER_JOIN_REQUEST,
+    KIND_GROUP_USER_LEAVE_REQUEST, METADATA_EVENT_KINDS,
+};
+use crate::nostr_session_state::NostrConnectionState;
+use crate::EventToSave;
 use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage};
 
 #[derive(Debug)]
 pub struct Nip29Middleware {
-    groups: Arc<DashMap<String, Group>>,
+    groups: Arc<Groups>,
     relay_pubkey: PublicKey,
 }
 
 impl Nip29Middleware {
-    pub fn new(groups: Arc<DashMap<String, Group>>, relay_pubkey: PublicKey) -> Self {
+    pub fn new(groups: Arc<Groups>, relay_pubkey: PublicKey) -> Self {
         Self {
             groups,
             relay_pubkey,
         }
     }
 
-    pub fn get_group_mut<'a>(&'a self, group_id: &str) -> Option<RefMut<'a, String, Group>> {
-        self.groups.get_mut(group_id)
-    }
-
-    pub fn get_group<'a>(&'a self, group_id: &str) -> Result<Ref<'a, String, Group>, Error> {
-        self.groups
-            .get(group_id)
-            .ok_or(Error::notice("Group not found"))
-    }
-
-    pub fn find_group_from_event_mut<'a>(
-        &'a self,
-        event: &Event,
-    ) -> Result<Option<RefMut<'a, String, Group>>, Error> {
-        let Some(group_id) = event
-            .tags
-            .iter()
-            .find(|t| t.kind() == TagKind::h() || t.kind() == TagKind::d())
-            .and_then(|t| t.content())
-        else {
-            return Ok(None);
-        };
-
-        let group = self.get_group_mut(group_id);
-
-        if let Some(group) = group {
-            if event.kind != KIND_GROUP_USER_JOIN_REQUEST && !group.is_member(&event.pubkey) {
-                return Err(Error::restricted(format!(
-                    "User {} is not a member of this group",
-                    event.pubkey
-                )));
-            }
-
-            return Ok(Some(group));
-        }
-
-        Ok(None)
-    }
-
-    pub fn find_group_from_event<'a>(&'a self, event: &Event) -> Option<Ref<'a, String, Group>> {
-        let group_id = event
-            .tags
-            .iter()
-            .find(|t| t.kind() == TagKind::h() || t.kind() == TagKind::d())
-            .and_then(|t| t.content())?;
-
-        let group = self.get_group(group_id).ok();
-
-        group
-    }
-
-    pub fn find_group_from_event_h_tag<'a>(
-        &'a self,
-        event: &Event,
-    ) -> Option<Ref<'a, String, Group>> {
-        let group_id = self.extract_group_h_tag(event)?;
-
-        self.get_group(group_id).ok()
-    }
-
     /// Handles the creation of a group (`kind:9007`)
     async fn handle_group_create(&self, event: &Event) -> Result<Vec<EventToSave>, Error> {
         debug!("Handling group creation event");
 
-        if let Some(group) = self.find_group_from_event(event) {
+        if let Some(group) = self.groups.find_group_from_event(event) {
             debug!("Group already exists: {:?}", group);
             return Err(Error::notice("Group already exists"));
         }
@@ -124,6 +63,7 @@ impl Nip29Middleware {
     async fn handle_set_roles<'a>(&'a self, event: &Event) -> Result<Vec<EventToSave>, Error> {
         debug!("Handling set-roles event");
         let mut group = self
+            .groups
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("Group not found"))?;
 
@@ -141,6 +81,7 @@ impl Nip29Middleware {
     /// Handles adding a user to the group (`kind:9000`)
     async fn handle_put_user<'a>(&'a self, event: &Event) -> Result<Vec<EventToSave>, Error> {
         let mut group = self
+            .groups
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("Group not found"))?;
 
@@ -166,6 +107,7 @@ impl Nip29Middleware {
     async fn handle_remove_user<'a>(&'a self, event: &Event) -> Result<Vec<EventToSave>, Error> {
         debug!("Handling remove-user event");
         let mut group = self
+            .groups
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("Group not found"))?;
 
@@ -194,6 +136,7 @@ impl Nip29Middleware {
     ) -> Result<Vec<EventToSave>, Error> {
         debug!("Handling edit-metadata event");
         let mut group = self
+            .groups
             .find_group_from_event_mut(edit_metadata_event)?
             .ok_or(Error::notice("Group not found"))?;
 
@@ -217,6 +160,7 @@ impl Nip29Middleware {
     async fn handle_create_invite<'a>(&'a self, event: &Event) -> Result<Vec<EventToSave>, Error> {
         debug!("Handling create-invite event");
         let mut group = self
+            .groups
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("Group not found"))?;
 
@@ -232,6 +176,7 @@ impl Nip29Middleware {
     ) -> Result<Vec<EventToSave>, Error> {
         debug!("Handling join-request event");
         let mut group = self
+            .groups
             .find_group_from_event_mut(join_request_event)?
             .ok_or(Error::notice("Group not found"))?;
 
@@ -256,6 +201,7 @@ impl Nip29Middleware {
         debug!("Handling leave-request event");
 
         let mut group = self
+            .groups
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("Group not found"))?;
 
@@ -268,11 +214,6 @@ impl Nip29Middleware {
         }
 
         Ok(vec![])
-    }
-
-    // Helper function to extract group ID from event tags
-    fn extract_group_h_tag<'a>(&self, event: &'a Event) -> Option<&'a str> {
-        event.tags.find(TagKind::h()).and_then(|t| t.content())
     }
 
     fn verify_filters(
@@ -330,7 +271,7 @@ impl Nip29Middleware {
                 .filter(|(k, _)| k == &&SingleLetterTag::lowercase(Alphabet::H))
                 .flat_map(|(_, tag_set)| tag_set.iter())
             {
-                let group = self.get_group(tag)?;
+                let group = self.groups.get_group(tag)?;
 
                 debug!(
                     "checking filters for normal request for group: {:?}",
@@ -433,7 +374,7 @@ impl Nip29Middleware {
             // Group content events
             k => {
                 debug!("User -> Relay: Group content event");
-                let group = match self.find_group_from_event_h_tag(event) {
+                let group = match self.groups.find_group_from_event(event) {
                     None => return Ok(None),
                     Some(group) => group,
                 };
@@ -500,7 +441,7 @@ impl Middleware for Nip29Middleware {
         ctx: &mut OutboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<()> {
         if let Some(RelayMessage::Event { event, .. }) = &ctx.message {
-            if let Some(group) = self.find_group_from_event(event) {
+            if let Some(group) = self.groups.find_group_from_event(event) {
                 if !group.can_see_event(&ctx.state.authed_pubkey, event.kind) {
                     debug!(
                         "Not authorized to see event {}, kind {}",

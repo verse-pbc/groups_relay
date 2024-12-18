@@ -1,16 +1,17 @@
-use crate::error::Error;
 use crate::nostr_session_state::NostrConnectionState;
+use crate::relay_client_connection::RelayClientConnection;
+use crate::Error;
 use anyhow::Result;
 use async_trait::async_trait;
+use dashmap::DashMap;
 use nostr_sdk::prelude::*;
-use std::collections::HashMap;
-use tokio::sync::mpsc::{channel, Sender};
-use tokio::time::Duration;
+use std::time::Duration;
+use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 use websocket_builder::{
-    ConnectionContext, InboundContext, MessageConverter, MessageSender, Middleware,
-    OutboundContext, SendMessage,
+    ConnectionContext, DisconnectContext, InboundContext, MessageConverter, MessageSender,
+    Middleware, OutboundContext, SendMessage,
 };
 
 pub struct NostrMessageConverter;
@@ -30,269 +31,230 @@ impl MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
     }
 }
 
-pub enum EventToSave {
-    UnsignedEvent(UnsignedEvent),
-    Event(Event),
+#[derive(Debug, Clone)]
+struct Subscription {
+    filters: Vec<Filter>,
+    sender: MessageSender<RelayMessage>,
+    connection_id: String,
 }
 
-impl EventToSave {
-    pub fn is_replaceable(&self) -> bool {
-        match self {
-            EventToSave::UnsignedEvent(event) => event.kind.is_replaceable(),
-            EventToSave::Event(event) => event.kind.is_replaceable(),
+impl Subscription {
+    pub fn new(
+        filters: Vec<Filter>,
+        sender: MessageSender<RelayMessage>,
+        connection_id: String,
+    ) -> Self {
+        Self {
+            filters,
+            sender,
+            connection_id,
         }
+    }
+
+    pub fn matches(&self, event: &Event) -> bool {
+        self.filters.iter().any(|filter| filter.match_event(event))
     }
 }
 
 #[derive(Debug)]
 pub struct RelayForwarder {
     pub relay_secret: Keys,
-    #[allow(unused)]
-    pub subscriptions: HashMap<SubscriptionId, Vec<Filter>>,
+    broadcast_sender: Sender<Event>,
+    sub_update_sender: Sender<SubUpdateMessage>,
+    _token: CancellationToken,
+}
+
+//These are basically actor messages but for the moment it's not worth to use an actor library for this
+// TODO: Refactor for ractor?
+#[derive(Debug)]
+enum SubUpdateMessage {
+    Add(SubscriptionId, Subscription),
+    Remove(SubscriptionId),
+    RemoveConnection(String),
 }
 
 impl RelayForwarder {
     pub fn new(relay_secret: Keys) -> Self {
-        Self {
+        let (event_sender, mut event_receiver) = tokio::sync::mpsc::channel::<Event>(100);
+        let (sub_sender, mut sub_receiver) = tokio::sync::mpsc::channel::<SubUpdateMessage>(100);
+        let token = CancellationToken::new();
+
+        let forwarder = Self {
             relay_secret,
-            subscriptions: HashMap::new(),
+            broadcast_sender: event_sender,
+            sub_update_sender: sub_sender,
+            _token: token,
+        };
+
+        let token_clone = forwarder._token.clone();
+        let broadcast_subs: DashMap<SubscriptionId, Subscription> = DashMap::new();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+
+                    _ = token_clone.cancelled() => {
+                        debug!("Broadcast task shutting down");
+                        return;
+                    }
+
+                    Some(update_msg) = sub_receiver.recv() => {
+                        match update_msg {
+                            SubUpdateMessage::Add(sub_id, sub) => {
+                                debug!("Broadcast task: Adding subscription {}", sub_id);
+                                broadcast_subs.insert(sub_id, sub);
+                            }
+                            SubUpdateMessage::Remove(sub_id) => {
+                                debug!("Broadcast task: Removing subscription {}", sub_id);
+                                broadcast_subs.remove(&sub_id);
+                            }
+                            SubUpdateMessage::RemoveConnection(conn_id) => {
+                                debug!("Broadcast task: Removing all subscriptions for connection {}", conn_id);
+                                broadcast_subs.retain(|_, sub| sub.connection_id != conn_id);
+                            }
+                        }
+                    }
+
+                    Some(event) = event_receiver.recv() => {
+                        debug!("Broadcast task received event: kind={}", event.kind);
+                        let mut matching_subscriptions = Vec::new();
+
+                        // Log subscription summary
+                        let total_subs = broadcast_subs.len();
+                        debug!("Current subscription summary:");
+                        debug!("Total subscriptions: {}", total_subs);
+                        if total_subs > 0 {
+                            broadcast_subs.iter().for_each(|entry| {
+                                let sub = entry.value();
+                                debug!(
+                                    "  Subscription {}: connection={}, filters={:?}",
+                                    entry.key(),
+                                    sub.connection_id,
+                                    sub.filters
+                                );
+                            });
+                        }
+
+                        // Collect matching subscriptions
+                        broadcast_subs.iter().for_each(|entry| {
+                            let subscription_id = entry.key().clone();
+                            let subscription = entry.value().clone();
+
+                            if subscription.matches(&event) {
+                                debug!("Found matching subscription: {}", subscription_id);
+                                matching_subscriptions.push((subscription_id, subscription.sender));
+                            }
+                        });
+
+                        debug!("Broadcasting to {} matching subscriptions", matching_subscriptions.len());
+                        // Send to all matching subscriptions
+                        for (subscription_id, mut sender) in matching_subscriptions {
+                            if let Err(e) = sender
+                                .send(RelayMessage::Event {
+                                    event: Box::new(event.clone()),
+                                    subscription_id: subscription_id.clone(),
+                                })
+                                .await
+                            {
+                                error!(
+                                    "Failed to send event to subscription {}: {:?}",
+                                    subscription_id, e
+                                );
+                            } else {
+                                debug!("Successfully sent event to subscription {}", subscription_id);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        forwarder
+    }
+
+    pub fn remove_connection_subscriptions(&self, connection_id: &str) {
+        if let Err(e) = self
+            .sub_update_sender
+            .try_send(SubUpdateMessage::RemoveConnection(
+                connection_id.to_string(),
+            ))
+        {
+            error!("Failed to send connection cleanup request: {:?}", e);
+        } else {
+            debug!("Sent cleanup request for connection {}", connection_id);
+        }
+    }
+
+    pub async fn broadcast(&self, event: &Event) {
+        if let Err(e) = self.broadcast_sender.send(event.clone()).await {
+            error!("Failed to send event to broadcast channel: {:?}", e);
         }
     }
 
     pub async fn add_connection(
         &self,
         relay_url: String,
-        sender: MessageSender<RelayMessage>,
         cancellation_token: CancellationToken,
     ) -> Result<RelayClientConnection> {
         let connection = RelayClientConnection::new(
             relay_url.clone(),
             self.relay_secret.clone(),
             cancellation_token.clone(),
+            self.broadcast_sender.clone(),
         )
         .await?;
-        // let relay_client = connection.client.clone();
-        // let token = cancellation_token.clone();
-        // tokio::spawn(async move {
-        //     token.cancelled().await;
-        //     if let Err(e) = relay_client.shutdown().await {
-        //         error!("Error shutting down relay client: {:?}", e);
-        //     }
-        // });
-
-        let relay_client = connection.client.clone();
-
-        // Box::pin used to avoid filling the stack with the captured variables
-        tokio::spawn(Box::pin(async move {
-            if let Err(e) = relay_client
-                .handle_notifications(move |notification| {
-                    let mut sender = sender.clone();
-                    let cancellation_token = cancellation_token.clone();
-
-                    async move {
-                        if cancellation_token.is_cancelled() {
-                            return Ok(true);
-                        }
-
-                        match notification {
-                            RelayPoolNotification::Message { message, .. } => match message {
-                                RelayMessage::Event { .. }
-                                | RelayMessage::Notice { .. }
-                                | RelayMessage::EndOfStoredEvents { .. }
-                                | RelayMessage::Closed { .. } => {
-                                    // Pipe them to the middlewares
-                                    if let Err(e) = sender.send(message).await {
-                                        error!("Failed to send nostr RelayMessage: {}", e);
-                                    }
-                                }
-                                RelayMessage::Ok {
-                                    event_id,
-                                    status,
-                                    message,
-                                } => {
-                                    if !status {
-                                        warn!(
-                                            "Received unsuccessful nostr Ok message for event {}: {}",
-                                            event_id, message
-                                        );
-                                    }
-                                }
-                                RelayMessage::Auth { .. }
-                                | RelayMessage::Count { .. }
-                                | RelayMessage::NegErr { .. }
-                                | RelayMessage::NegMsg { .. } => {
-                                    // Ignored
-                                }
-                            },
-                            RelayPoolNotification::Shutdown => {
-                                debug!("Received shutdown notification");
-                                return Ok(true);
-                            }
-                            RelayPoolNotification::Authenticated { relay_url } => {
-                                debug!(
-                                    "Received authenticated notification for relay: {}",
-                                    relay_url
-                                );
-                            }
-                            RelayPoolNotification::Event { .. } => {
-                                // Covered by the message variant
-                            }
-                            #[allow(deprecated)]
-                            RelayPoolNotification::RelayStatus { .. } => {
-                                // Deprecated so we ignore
-                            }
-                        }
-
-                        Ok(false)
-                    }
-                })
-                .await
-            {
-                error!("Error handling notifications: {:?}", e);
-            }
-
-            debug!("Nostr connection closed");
-        }));
 
         Ok(connection)
     }
-}
 
-struct ReplaceableEventsBuffer {
-    buffer: HashMap<(PublicKey, Kind), UnsignedEvent>,
-}
+    async fn fetch_historical_events(
+        &self,
+        connection: &RelayClientConnection,
+        subscription_id: &SubscriptionId,
+        filters: &[Filter],
+        mut sender: MessageSender<RelayMessage>,
+    ) -> Result<(), Error> {
+        // Fetch historical events with a 10-second timeout
+        let events = connection
+            .fetch_events(filters.to_vec(), Some(Duration::from_secs(10)))
+            .await?;
 
-impl ReplaceableEventsBuffer {
-    pub fn new() -> Self {
-        Self {
-            buffer: HashMap::new(),
-        }
-    }
-
-    pub fn insert(&mut self, event: UnsignedEvent) {
-        self.buffer.insert((event.pubkey, event.kind), event);
-    }
-
-    pub async fn flush(&mut self, client: &Client) {
-        if self.buffer.is_empty() {
-            return;
-        }
-
-        let Ok(signer) = client.signer().await else {
-            error!("Error getting signer");
-            return;
-        };
-
-        for (_, event) in self.buffer.drain() {
-            match signer.sign_event(event).await {
-                Ok(event) => {
-                    debug!("Saving relay generated event: {:?}", event.as_json());
-                    if let Err(e) = client.send_event(event).await {
-                        error!("Error sending replaceable event: {:?}", e);
-                    }
-                }
-                Err(e) => {
-                    error!("Error signing event: {:?}", e);
-                }
+        // Send each event
+        let len = events.len();
+        for event in events {
+            if let Err(e) = sender
+                .send(RelayMessage::Event {
+                    subscription_id: subscription_id.clone(),
+                    event: Box::new(event),
+                })
+                .await
+            {
+                error!(
+                    "Failed to send historical event to subscription {}: {:?}",
+                    subscription_id, e
+                );
             }
         }
-    }
-}
 
-#[derive(Debug, Clone)]
-pub struct RelayClientConnection {
-    pub client: Client,
-    pub connection_token: CancellationToken,
-    pub active_subscriptions: HashMap<SubscriptionId, Vec<Filter>>,
-    replaceable_event_queue: Sender<UnsignedEvent>,
-}
+        debug!(
+            "Sending EOSE for subscription {} after {} historical events",
+            subscription_id, len
+        );
 
-impl RelayClientConnection {
-    async fn new(
-        relay_url: String,
-        relay_keys: Keys,
-        cancellation_token: CancellationToken,
-    ) -> Result<Self> {
-        let client = create_client(&relay_url, relay_keys).await?;
-        let (sender, mut receiver) = channel::<UnsignedEvent>(10);
-        let client_clone = client.clone();
-
-        let connection_token = cancellation_token.child_token();
-        let token = connection_token.clone();
-
-        // Box::pin used to avoid filling the stack with the captured variables
-        tokio::spawn(Box::pin(async move {
-            let mut buffer = ReplaceableEventsBuffer::new();
-
-            loop {
-                tokio::select! {
-                    _ = token.cancelled() => {
-                        buffer.flush(&client_clone).await;
-                        return;
-                    }
-
-                    event = receiver.recv() => {
-                        if let Some(event) = event {
-                            buffer.insert(event);
-                        }
-                    }
-                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                        buffer.flush(&client_clone).await;
-                    }
-                }
-            }
-        }));
-
-        Ok(Self {
-            client,
-            connection_token,
-            active_subscriptions: HashMap::new(),
-            replaceable_event_queue: sender,
-        })
-    }
-
-    pub async fn save_event(&self, event_builder: EventToSave) -> Result<(), Error> {
-        match event_builder {
-            EventToSave::UnsignedEvent(event) => {
-                if let Err(e) = self.replaceable_event_queue.send(event).await {
-                    error!("Error sending event to replaceable events sender: {:?}", e);
-                }
-            }
-            EventToSave::Event(event) => {
-                debug!("Saving event: {:?}", event.as_json());
-                self.client.send_event(event).await?;
-            }
+        // Send EOSE
+        if let Err(e) = sender
+            .send(RelayMessage::EndOfStoredEvents(subscription_id.clone()))
+            .await
+        {
+            error!(
+                "Failed to send EOSE to subscription {}: {:?}",
+                subscription_id, e
+            );
         }
+
         Ok(())
     }
-
-    pub fn get_subscription(&self, subscription_id: &SubscriptionId) -> Option<&[Filter]> {
-        self.active_subscriptions
-            .get(subscription_id)
-            .map(|f| f.as_slice())
-    }
-
-    pub fn insert_subscription(&mut self, subscription_id: SubscriptionId, filters: Vec<Filter>) {
-        self.active_subscriptions.insert(subscription_id, filters);
-    }
-
-    pub fn remove_subscription(&mut self, subscription_id: &SubscriptionId) {
-        self.active_subscriptions.remove(subscription_id);
-    }
-}
-
-pub async fn create_client(relay_url: &str, relay_keys: Keys) -> Result<Client> {
-    let opts = Options::default()
-        .autoconnect(true)
-        .timeout(Duration::from_secs(5));
-
-    let client = ClientBuilder::default()
-        .opts(opts)
-        .signer(relay_keys)
-        .build();
-
-    client.add_relay(relay_url).await?;
-    Ok(client)
 }
 
 #[async_trait]
@@ -316,35 +278,68 @@ impl Middleware for RelayForwarder {
                 subscription_id,
                 filters,
             } => {
-                debug!(
-                    "[{}] Received REQ message with subscription_id: {} and filters: {:?}",
-                    connection_id, subscription_id, filters
-                );
+                // Store subscription for future custom event filtering and distribution
+                if let Some(ref sender) = ctx.sender {
+                    let sub = Subscription::new(
+                        filters.clone(),
+                        sender.clone(),
+                        connection_id.to_string(),
+                    );
 
-                let opts = filters
-                    .iter()
-                    .find(|filter| filter.limit.is_some())
-                    .map(|_| {
-                        let filter_options = FilterOptions::ExitOnEOSE;
-                        SubscribeAutoCloseOptions::default().filter(filter_options)
-                    });
+                    if let Err(e) = self
+                        .sub_update_sender
+                        .send(SubUpdateMessage::Add(subscription_id.clone(), sub))
+                        .await
+                    {
+                        error!("Failed to send subscription update: {:?}", e);
+                    }
 
-                connection.insert_subscription(subscription_id.clone(), filters.clone());
-
-                if let Err(e) = connection
-                    .client
-                    .subscribe_with_id(subscription_id.clone(), filters.clone(), opts)
-                    .await
-                {
-                    connection.remove_subscription(subscription_id);
-                    error!("Error subscribing: {:?}", e);
+                    // Fetch historical events
+                    if let Err(e) = self
+                        .fetch_historical_events(
+                            connection,
+                            subscription_id,
+                            filters,
+                            sender.clone(),
+                        )
+                        .await
+                    {
+                        error!("Error fetching historical events: {:?}", e);
+                        self.sub_update_sender
+                            .send(SubUpdateMessage::Remove(subscription_id.clone()))
+                            .await?;
+                    }
+                } else {
+                    error!("No sender available for subscription {}", subscription_id);
                 }
 
                 return ctx.next().await;
             }
+            ClientMessage::Close(subscription_id) => {
+                debug!(
+                    "[{}] Received CLOSE message with subscription_id: {}",
+                    connection_id, subscription_id
+                );
+
+                // Remove subscription from our tracking
+                if let Err(e) = self
+                    .sub_update_sender
+                    .send(SubUpdateMessage::Remove(subscription_id.clone()))
+                    .await
+                {
+                    error!("Failed to send subscription removal: {:?}", e);
+                }
+
+                ctx.send_message(RelayMessage::Closed {
+                    subscription_id: subscription_id.clone(),
+                    message: "".to_string(),
+                })
+                .await?;
+                return ctx.next().await;
+            }
             ClientMessage::Event(event) => {
                 let event_id = event.id;
-                if let Err(e) = connection.client.send_event(*event.clone()).await {
+                if let Err(e) = connection.send_event(*event.clone()).await {
                     error!("Error sending event to relay: {:?}", e);
                     ctx.send_message(RelayMessage::Ok {
                         event_id,
@@ -358,22 +353,6 @@ impl Middleware for RelayForwarder {
                 ctx.send_message(RelayMessage::Ok {
                     event_id,
                     status: true,
-                    message: "".to_string(),
-                })
-                .await?;
-                return ctx.next().await;
-            }
-            ClientMessage::Close(subscription_id) => {
-                debug!(
-                    "[{}] Received CLOSE message with subscription_id: {}",
-                    connection_id, subscription_id
-                );
-                connection.client.unsubscribe(subscription_id.clone()).await;
-
-                connection.remove_subscription(subscription_id);
-
-                ctx.send_message(RelayMessage::Closed {
-                    subscription_id: subscription_id.clone(),
                     message: "".to_string(),
                 })
                 .await?;
@@ -407,7 +386,7 @@ impl Middleware for RelayForwarder {
             subscription_id, ..
         } = message
         {
-            ctx.state.remove_subscription(subscription_id);
+            debug!("Subscription {} closed via CLOSED message", subscription_id);
         }
 
         ctx.next().await
@@ -420,11 +399,7 @@ impl Middleware for RelayForwarder {
         let cancellation_token = ctx.state.connection_token.child_token();
 
         let connection = match self
-            .add_connection(
-                ctx.state.relay_url.clone(),
-                ctx.sender.clone().unwrap(),
-                cancellation_token,
-            )
+            .add_connection(ctx.state.relay_url.clone(), cancellation_token)
             .await
         {
             Ok(connection) => connection,
@@ -438,6 +413,17 @@ impl Middleware for RelayForwarder {
         };
 
         ctx.state.relay_connection = Some(connection);
+
+        ctx.next().await
+    }
+
+    async fn on_disconnect<'a>(
+        &'a self,
+        ctx: &mut DisconnectContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
+        let connection_id = ctx.connection_id.as_str();
+
+        self.remove_connection_subscriptions(connection_id);
 
         ctx.next().await
     }

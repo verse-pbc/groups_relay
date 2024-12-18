@@ -1,8 +1,7 @@
 use crate::error::Error;
-use crate::middlewares::relay_forwarder::{EventToSave, RelayClientConnection};
-use anyhow::Result;
+use crate::{EventToSave, RelayClientConnection};
 use nostr_sdk::prelude::*;
-use snafu::Backtrace;
+use std::backtrace::Backtrace;
 use tokio_util::sync::CancellationToken;
 use websocket_builder::StateFactory;
 
@@ -35,17 +34,6 @@ impl NostrConnectionState {
         Ok(())
     }
 
-    pub async fn save_event(&self, event_builder: EventToSave) -> Result<(), Error> {
-        let Some(connection) = self.relay_connection.as_ref() else {
-            return Err(Error::Internal {
-                message: "No connection".to_string(),
-                backtrace: Backtrace::capture(),
-            });
-        };
-
-        connection.save_event(event_builder).await
-    }
-
     pub fn get_challenge_event(&mut self) -> RelayMessage {
         let challenge = match self.challenge.as_ref() {
             Some(challenge) => challenge.clone(),
@@ -56,24 +44,6 @@ impl NostrConnectionState {
             }
         };
         RelayMessage::auth(challenge)
-    }
-
-    pub fn get_subscription(&self, subscription_id: &SubscriptionId) -> Option<&[Filter]> {
-        self.relay_connection
-            .as_ref()
-            .and_then(|c| c.get_subscription(subscription_id))
-    }
-
-    pub fn insert_subscription(&mut self, subscription_id: SubscriptionId, filters: Vec<Filter>) {
-        if let Some(connection) = self.relay_connection.as_mut() {
-            connection.insert_subscription(subscription_id, filters);
-        }
-    }
-
-    pub fn remove_subscription(&mut self, subscription_id: &SubscriptionId) {
-        if let Some(connection) = self.relay_connection.as_mut() {
-            connection.remove_subscription(subscription_id);
-        }
     }
 }
 
