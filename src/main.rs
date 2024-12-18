@@ -129,7 +129,7 @@ async fn http_websocket_handler(
         })
     } else if uri.path() == "/api/groups" {
         debug!("Handling API request for groups");
-        handler::handle_get(State(state.http_state.clone()))
+        handler::handle_get_groups(State(state.http_state.clone()))
             .await
             .into_response()
     } else if let Some(accept_header) = headers.get(axum::http::header::ACCEPT) {
@@ -278,7 +278,8 @@ async fn main() -> Result<()> {
 
     let router = Router::new()
         .route("/", get(http_websocket_handler))
-        .route("/api/groups", get(handler::handle_get))
+        .route("/health", get(handler::handle_health))
+        .route("/api/groups", get(handler::handle_get_groups))
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .fallback_service(ServeDir::new("frontend/dist"))
         .layer(cors)

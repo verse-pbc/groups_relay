@@ -28,7 +28,7 @@ struct MemberResponse {
     roles: Vec<String>,
 }
 
-pub async fn handle_get(
+pub async fn handle_get_groups(
     State(state): State<Arc<HttpServerState>>,
 ) -> Result<Json<Vec<GroupResponse>>, StatusCode> {
     match try_get_groups(state) {
@@ -93,4 +93,8 @@ pub async fn handle_nostr_json(
     };
 
     Json(relay_info)
+}
+
+pub async fn handle_health() -> &'static str {
+    "OK"
 }
