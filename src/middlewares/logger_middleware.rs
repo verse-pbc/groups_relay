@@ -15,6 +15,12 @@ impl LoggerMiddleware {
     }
 }
 
+impl Default for LoggerMiddleware {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl Middleware for LoggerMiddleware {
     type State = NostrConnectionState;

@@ -21,7 +21,7 @@ pub struct Groups {
 }
 
 impl Groups {
-    pub async fn load_groups(client: &Client) -> Result<Self> {
+    pub async fn load_groups(_client: &Client) -> Result<Self> {
         let groups = DashMap::new();
         Ok(Self { groups })
     }
@@ -88,7 +88,7 @@ impl Groups {
 }
 
 // Helper function to extract group ID from event tags
-fn extract_group_h_tag<'a>(event: &'a Event) -> Option<&'a str> {
+fn extract_group_h_tag(event: &Event) -> Option<&str> {
     event.tags.find(TagKind::h()).and_then(|t| t.content())
 }
 
