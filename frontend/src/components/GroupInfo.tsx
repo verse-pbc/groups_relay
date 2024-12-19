@@ -1,4 +1,4 @@
-import { Component } from 'preact'
+import { FunctionComponent } from 'preact'
 import type { Group } from '../types'
 
 interface GroupInfoProps {
@@ -8,90 +8,128 @@ interface GroupInfoProps {
   onAboutEdit: () => void
   onAboutSave: () => void
   onAboutChange: (about: string) => void
-  onMetadataChange: (field: 'private' | 'closed', value: boolean) => void
+  onMetadataChange: (changes: Partial<Group>) => void
 }
 
-export class GroupInfo extends Component<GroupInfoProps> {
-  render() {
-    const {
-      group,
-      isEditingAbout,
-      newAbout,
-      onAboutEdit,
-      onAboutSave,
-      onAboutChange,
-      onMetadataChange
-    } = this.props
-
-    return (
-      <div class="space-y-3">
-        <div>
-          <span class="text-xs font-medium text-[var(--color-text-secondary)] uppercase tracking-wide">ID:</span>
-          <div class="mt-0.5 text-xs text-[var(--color-text-primary)] break-all">{group.id}</div>
+export const GroupInfo: FunctionComponent<GroupInfoProps> = ({
+  group,
+  isEditingAbout,
+  newAbout,
+  onAboutEdit,
+  onAboutSave,
+  onAboutChange,
+  onMetadataChange,
+}) => {
+  return (
+    <div class="space-y-4">
+      {/* About Section */}
+      <div class="space-y-2">
+        <div class="flex items-center justify-between">
+          <label class="text-xs font-medium text-[var(--color-text-secondary)]">About</label>
+          {!isEditingAbout && (
+            <button
+              onClick={onAboutEdit}
+              class="text-xs text-accent hover:text-accent/90 transition-colors"
+            >
+              Edit
+            </button>
+          )}
         </div>
-        <div>
-          <span class="text-xs font-medium text-[var(--color-text-secondary)] uppercase tracking-wide">About:</span>
-          {isEditingAbout ? (
-            <div class="mt-0.5 flex items-start gap-2">
-              <textarea
-                value={newAbout}
-                onInput={e => onAboutChange((e.target as HTMLTextAreaElement).value)}
-                class="flex-1 rounded border border-[var(--color-border)] px-2 py-1 text-xs
-                       bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]
-                       focus:border-[var(--color-accent)] focus:outline-none focus:ring-1
-                       focus:ring-[var(--color-accent)]/10 transition-all resize-none"
-                rows={2}
-                autoFocus
-              />
+
+        {isEditingAbout ? (
+          <div class="space-y-2">
+            <textarea
+              value={newAbout}
+              onChange={(e) => onAboutChange((e.target as HTMLTextAreaElement).value)}
+              rows={3}
+              class="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)]
+                     rounded-lg text-sm text-[var(--color-text-primary)]
+                     placeholder-[var(--color-text-tertiary)]
+                     focus:outline-none focus:ring-1 focus:ring-accent"
+              placeholder="Enter group description"
+              autoFocus
+            />
+            <div class="flex justify-end gap-2">
+              <button
+                onClick={() => onAboutChange(group.about || '')}
+                class="px-2 py-1 text-xs text-[var(--color-text-secondary)]
+                       hover:text-[var(--color-text-primary)] transition-colors"
+              >
+                Cancel
+              </button>
               <button
                 onClick={onAboutSave}
-                class="px-2 py-1 bg-[var(--color-accent)] text-white rounded text-xs font-medium
-                       hover:bg-[var(--color-accent-hover)] active:transform active:translate-y-0.5
-                       transition-all disabled:opacity-50"
+                class="px-2 py-1 bg-accent text-white text-xs rounded
+                       hover:bg-accent/90 transition-colors"
               >
                 Save
               </button>
             </div>
-          ) : (
-            <div
-              class="mt-0.5 text-xs text-[var(--color-text-primary)] cursor-pointer group
-                     hover:bg-[var(--color-bg-tertiary)] transition-colors rounded px-2 py-1 -mx-2
-                     flex items-center gap-1"
-              onClick={onAboutEdit}
-            >
-              {group.about || "No description"}
-              <span class="text-xs text-[var(--color-text-secondary)] opacity-0 group-hover:opacity-100 transition-opacity">
-                ✏️ edit
-              </span>
+          </div>
+        ) : (
+          <p class="text-sm text-[var(--color-text-primary)] leading-relaxed">
+            {group.about || 'No description provided'}
+          </p>
+        )}
+      </div>
+
+      {/* Settings Section */}
+      <div class="space-y-2">
+        <label class="text-xs font-medium text-[var(--color-text-secondary)]">Settings</label>
+        <div class="space-y-3 p-3 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]">
+          {/* Private Toggle */}
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm font-medium text-[var(--color-text-primary)]">Private Group</div>
+              <div class="text-xs text-[var(--color-text-tertiary)]">Only members can see group content</div>
             </div>
-          )}
-        </div>
-        <div>
-          <span class="text-xs font-medium text-[var(--color-text-secondary)] uppercase tracking-wide">Type:</span>
-          <div class="mt-1 flex gap-3">
-            <label class="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={group.private}
-                onChange={() => onMetadataChange('private', !group.private)}
-                class="w-3 h-3 rounded border-[var(--color-border)] text-[var(--color-accent)]
-                       focus:ring-[var(--color-accent)] cursor-pointer bg-[var(--color-bg-tertiary)]"
+            <button
+              onClick={() => onMetadataChange({ private: !group.private })}
+              class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                     focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2
+                     focus:ring-offset-[var(--color-bg-primary)]
+                     ${group.private
+                       ? 'bg-accent'
+                       : 'bg-[var(--color-bg-tertiary)] dark:bg-[var(--color-text-tertiary)]'
+                     }`}
+              role="switch"
+              aria-checked={group.private}
+            >
+              <span
+                class={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm
+                        transition-transform duration-200 ease-in-out
+                        ${group.private ? 'translate-x-6' : 'translate-x-0.5'}`}
               />
-              <span class="text-xs text-[var(--color-text-primary)]">Private</span>
-            </label>
-            <label class="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={group.closed}
-                onChange={() => onMetadataChange('closed', !group.closed)}
-                class="w-3 h-3 rounded border-[var(--color-border)] text-[var(--color-accent)]
-                       focus:ring-[var(--color-accent)] cursor-pointer bg-[var(--color-bg-tertiary)]"
+            </button>
+          </div>
+
+          {/* Closed Toggle */}
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm font-medium text-[var(--color-text-primary)]">Closed Group</div>
+              <div class="text-xs text-[var(--color-text-tertiary)]">Only admins can invite new members</div>
+            </div>
+            <button
+              onClick={() => onMetadataChange({ closed: !group.closed })}
+              class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+                     focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2
+                     focus:ring-offset-[var(--color-bg-primary)]
+                     ${group.closed
+                       ? 'bg-accent'
+                       : 'bg-[var(--color-bg-tertiary)] dark:bg-[var(--color-text-tertiary)]'
+                     }`}
+              role="switch"
+              aria-checked={group.closed}
+            >
+              <span
+                class={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm
+                        transition-transform duration-200 ease-in-out
+                        ${group.closed ? 'translate-x-6' : 'translate-x-0.5'}`}
               />
-              <span class="text-xs text-[var(--color-text-primary)]">Closed</span>
-            </label>
+            </button>
           </div>
         </div>
       </div>
-    )
-  }
+    </div>
+  )
 }

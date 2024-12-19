@@ -134,6 +134,22 @@ export class NostrClient {
     }
   }
 
+  async disconnect() {
+    try {
+      // Close all relay connections
+      const relays = Array.from(this.ndk.pool.relays.values());
+      await Promise.all(relays.map((relay) => relay.disconnect()));
+
+      // Clear any subscriptions
+      this.ndk.pool.removeAllListeners();
+
+      console.log("Disconnected from all relays");
+    } catch (error) {
+      console.error("Error during disconnect:", error);
+      throw new NostrGroupError(`Failed to disconnect: ${error}`);
+    }
+  }
+
   private async publishEvent(
     kind: GroupEventKind,
     tags: string[][],
@@ -189,24 +205,20 @@ export class NostrClient {
     ]);
   }
 
-  async createGroup(
-    groupId: string,
-    name: string,
-    about: string = "",
-    picture: string = ""
-  ) {
+  async createGroup(group: Group) {
     // First create the group
-    await this.publishEvent(GroupEventKind.CreateGroup, [["h", groupId]]);
+    await this.publishEvent(GroupEventKind.CreateGroup, [["h", group.id]]);
 
     // Then set its metadata
-    const metadataTags = [["h", groupId]];
-    if (name) metadataTags.push(["name", name]);
-    if (about) metadataTags.push(["about", about]);
-    if (picture) metadataTags.push(["picture", picture]);
-    metadataTags.push(["public"]);
-    metadataTags.push(["open"]);
+    const metadataTags = [["h", group.id]];
+    if (group.name) metadataTags.push(["name", group.name]);
+    if (group.about) metadataTags.push(["about", group.about]);
+    if (group.picture) metadataTags.push(["picture", group.picture]);
+    metadataTags.push([group.private ? "private" : "public"]);
+    metadataTags.push([group.closed ? "closed" : "open"]);
 
-    return this.publishEvent(GroupEventKind.EditMetadata, metadataTags);
+    await this.publishEvent(GroupEventKind.EditMetadata, metadataTags);
+    return group;
   }
 
   async updateGroupName(groupId: string, newName: string) {

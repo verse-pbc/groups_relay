@@ -1,46 +1,65 @@
+import { FunctionComponent } from 'preact'
+import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
+import { PubkeyDisplay } from './PubkeyDisplay'
 
 interface ContentSectionProps {
   group: Group
+  client: NostrClient
 }
 
-export function ContentSection({ group }: ContentSectionProps) {
-  if (!group.content?.length) {
-    return null
+export const ContentSection: FunctionComponent<ContentSectionProps> = ({ group }) => {
+  const formatTimestamp = (timestamp: number) => {
+    const date = new Date(timestamp * 1000)
+    return date.toLocaleString()
   }
 
-  return (
-    <section class="border-t border-[var(--color-border)] flex-1 flex flex-col min-h-0">
-      <h3 class="flex items-center gap-1 text-sm font-semibold text-[var(--color-text-primary)] p-3 border-b border-[var(--color-border)] bg-gradient-to-r from-[var(--color-bg-tertiary)] to-[var(--color-bg-secondary)]">
-        <span class="text-base">💬</span> Recent Activity
-      </h3>
+  const content = group.content || []
 
-      <div class="p-4 overflow-y-auto flex-1">
-        <ul class="space-y-4 max-w-4xl mx-auto">
-          {group.content.map((item, index) => (
-            <li key={index} class="rounded-lg bg-[var(--color-bg-tertiary)] p-4 hover:bg-[var(--color-bg-tertiary)]/80 transition-colors">
-              <div class="space-y-3">
-                <div class="flex items-center justify-between gap-2">
-                  <div class="flex items-center gap-2">
-                    <div class="w-8 h-8 rounded-full bg-[var(--color-accent)] flex items-center justify-center text-white text-xs font-medium">
-                      {item.pubkey.slice(0, 2).toUpperCase()}
-                    </div>
-                    <div class="text-xs font-mono text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer" data-tooltip={item.pubkey}>
-                      {item.pubkey.slice(0, 8)}...
-                    </div>
+  return (
+    <div class="h-full flex flex-col">
+      <div class="p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+        <h3 class="text-sm font-medium text-[var(--color-text-primary)] flex items-center gap-2">
+          <span>💬</span>
+          Recent Activity
+        </h3>
+      </div>
+
+      <div class="flex-1 overflow-y-auto p-4">
+        <div class="space-y-4">
+          {content.map((item, index) => (
+            <div
+              key={index}
+              class="p-3 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]
+                     hover:border-[var(--color-border-hover)] transition-colors"
+            >
+              <div class="flex items-start justify-between gap-4">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 mb-2">
+                    <PubkeyDisplay pubkey={item.pubkey} showCopy={false} />
+                    <span class="text-xs text-[var(--color-text-tertiary)]">
+                      {formatTimestamp(item.created_at)}
+                    </span>
                   </div>
-                  <span class="text-xs text-[var(--color-text-secondary)]">
-                    {new Date(item.created_at * 1000).toLocaleString()}
-                  </span>
-                </div>
-                <div class="text-sm text-[var(--color-text-primary)] break-words leading-relaxed">
-                  {item.content}
+                  <p class="text-sm text-[var(--color-text-primary)] break-words leading-relaxed">
+                    {item.content}
+                  </p>
                 </div>
               </div>
-            </li>
+            </div>
           ))}
-        </ul>
+
+          {content.length === 0 && (
+            <div class="text-center py-12">
+              <div class="mb-3 text-2xl">💭</div>
+              <p class="text-sm text-[var(--color-text-tertiary)]">No activity yet</p>
+              <p class="text-xs text-[var(--color-text-tertiary)] mt-1">
+                Messages will appear here when members start posting
+              </p>
+            </div>
+          )}
+        </div>
       </div>
-    </section>
+    </div>
   )
 }

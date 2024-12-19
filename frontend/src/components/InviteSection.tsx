@@ -51,84 +51,88 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
     }
 
     return (
-      <section class="border-t border-[var(--color-border)] p-3">
-        <h3 class="flex items-center gap-1 text-sm font-semibold text-[var(--color-text-primary)] mb-2">
-          <span class="text-base">🎟️</span> Invites
-        </h3>
+      <div class="space-y-4">
+        <div class="p-4 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]">
+          <form onSubmit={this.handleCreateInvite}>
+            <div class="flex gap-2">
+              <input
+                type="text"
+                id={`create-invite-code-${this.instanceId}`}
+                value={inviteCode}
+                onInput={e => this.setState({ inviteCode: (e.target as HTMLInputElement).value })}
+                placeholder="Enter invite code"
+                class="min-w-0 flex-1 px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
+                       text-sm rounded-lg text-[var(--color-text-primary)]
+                       placeholder-[var(--color-text-tertiary)]
+                       focus:outline-none focus:ring-1 focus:ring-accent
+                       hover:border-[var(--color-border-hover)] transition-colors"
+                required
+                disabled={isCreatingInvite}
+              />
+              <button
+                type="submit"
+                disabled={isCreatingInvite || !inviteCode.trim()}
+                class="shrink-0 px-3 py-1.5 bg-accent text-white rounded-lg text-sm font-medium
+                       hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed
+                       transition-colors flex items-center justify-center w-[80px]"
+              >
+                {isCreatingInvite ? (
+                  <span class="animate-spin">⚡</span>
+                ) : (
+                  'Create'
+                )}
+              </button>
+            </div>
+            {error && (
+              <div class="mt-2 text-xs text-red-400">
+                {error}
+              </div>
+            )}
+          </form>
+        </div>
 
-        <form onSubmit={this.handleCreateInvite} class="mb-3">
-          <div class="flex gap-2">
-            <input
-              type="text"
-              id={`create-invite-code-${this.instanceId}`}
-              value={inviteCode}
-              onInput={e => this.setState({ inviteCode: (e.target as HTMLInputElement).value })}
-              placeholder="Enter invite code"
-              class="flex-1 rounded border border-[var(--color-border)] px-2 py-1 text-xs
-                     bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]
-                     focus:border-[var(--color-accent)] focus:outline-none focus:ring-1
-                     focus:ring-[var(--color-accent)]/10 transition-all"
-              required
-              disabled={isCreatingInvite}
-            />
-            <button
-              type="submit"
-              disabled={isCreatingInvite || !inviteCode.trim()}
-              class="px-2 py-1 bg-[var(--color-accent)] text-white rounded text-xs font-medium
-                     hover:bg-[var(--color-accent-hover)] active:transform active:translate-y-0.5
-                     transition-all flex items-center gap-1 disabled:opacity-50 whitespace-nowrap"
-            >
-              {isCreatingInvite ? (
-                <>
-                  <span class="animate-spin">⌛</span>
-                  Creating...
-                </>
-              ) : (
-                'Create Invite'
-              )}
-            </button>
-          </div>
-          {error && (
-            <div class="mt-1 text-xs text-red-400">
-              {error}
+        <div class="space-y-2">
+          {group.invites && Object.entries(group.invites).length > 0 ? (
+            <ul class="space-y-2">
+              {Object.entries(group.invites).map(([code, invite]) => (
+                <li key={code} class="p-2.5 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]">
+                  <div class="space-y-2">
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="text-xs font-mono text-[var(--color-text-primary)]">
+                        Code: {code}
+                      </div>
+                      <a
+                        href={`plur://join-community?group-id=${group.id}&code=${code}`}
+                        class="text-xs text-accent hover:text-accent/90 transition-colors"
+                      >
+                        Join Link
+                      </a>
+                    </div>
+                    {invite.pubkey && (
+                      <div class="flex items-center justify-between gap-2">
+                        <div
+                          class="text-xs font-mono text-[var(--color-text-secondary)]"
+                          title={invite.pubkey}
+                        >
+                          Used by: {truncatePubkey(invite.pubkey)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div class="text-center py-12">
+              <div class="mb-3 text-2xl">🎟️</div>
+              <p class="text-sm text-[var(--color-text-tertiary)]">No invites created yet</p>
+              <p class="text-xs text-[var(--color-text-tertiary)] mt-1">
+                Create an invite code to let others join
+              </p>
             </div>
           )}
-        </form>
-
-        {group.invites && Object.entries(group.invites).length > 0 ? (
-          <ul class="space-y-2">
-            {Object.entries(group.invites).map(([code, invite]) => (
-              <li key={code} class="py-1">
-                <div class="space-y-2">
-                  <div class="flex items-center justify-between gap-2">
-                    <div class="text-xs text-[var(--color-text-secondary)] font-mono">
-                      Code: {code}
-                    </div>
-                    <a
-                      href={`plur://join-community?group-id=${group.id}&code=${code}`}
-                      class="text-xs text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors"
-                    >
-                      Join Link
-                    </a>
-                  </div>
-                  {invite.pubkey && (
-                    <div class="flex items-center justify-between gap-2">
-                      <div
-                        class="text-xs text-[var(--color-text-secondary)] font-mono hover:text-[var(--color-text-primary)] transition-colors"
-                        data-tooltip={invite.pubkey}
-                      >
-                        Used by: {truncatePubkey(invite.pubkey)}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p class="text-xs text-[var(--color-text-secondary)]">No invites created yet.</p>
-        )}
-      </section>
+        </div>
+      </div>
     )
   }
 }

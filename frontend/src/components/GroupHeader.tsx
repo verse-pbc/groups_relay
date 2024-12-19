@@ -1,4 +1,4 @@
-import { Component } from 'preact'
+import { FunctionComponent } from 'preact'
 import type { Group } from '../types'
 
 interface GroupHeaderProps {
@@ -10,61 +10,79 @@ interface GroupHeaderProps {
   onNameChange: (name: string) => void
 }
 
-export class GroupHeader extends Component<GroupHeaderProps> {
-  render() {
-    const { group, isEditingName, newName, onNameEdit, onNameSave, onNameChange } = this.props
+export const GroupHeader: FunctionComponent<GroupHeaderProps> = ({
+  group,
+  isEditingName,
+  newName,
+  onNameEdit,
+  onNameSave,
+  onNameChange,
+}) => {
+  return (
+    <div class="p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+      <div class="flex items-start gap-3">
+        {group.picture ? (
+          <img
+            src={group.picture}
+            alt={group.name}
+            class="w-12 h-12 rounded-lg object-cover bg-[var(--color-bg-primary)]"
+          />
+        ) : (
+          <div class="w-12 h-12 rounded-lg bg-accent/10 flex items-center justify-center">
+            <span class="text-lg font-medium text-accent">
+              {(group.name || '?').charAt(0).toUpperCase()}
+            </span>
+          </div>
+        )}
 
-    return (
-      <header class="p-3 border-b border-[var(--color-border)] bg-gradient-to-r from-[var(--color-bg-tertiary)] to-[var(--color-bg-secondary)]">
-        <div class="flex items-center gap-3">
-          {group.picture && (
-            <img
-              src={group.picture}
-              alt={group.name}
-              class="w-8 h-8 rounded object-cover flex-shrink-0"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none'
-              }}
-            />
-          )}
-          <div class="flex-grow min-w-0">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center justify-between gap-2">
             {isEditingName ? (
-              <div class="flex items-center gap-2">
+              <div class="w-full space-y-2">
                 <input
                   type="text"
                   value={newName}
-                  onInput={e => onNameChange((e.target as HTMLInputElement).value)}
-                  class="flex-1 rounded border border-[var(--color-border)] px-2 py-1 text-xs
-                         bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]
-                         focus:border-[var(--color-accent)] focus:outline-none focus:ring-1
-                         focus:ring-[var(--color-accent)]/10 transition-all"
+                  onChange={(e) => onNameChange((e.target as HTMLInputElement).value)}
+                  class="w-full px-3 py-1.5 bg-[var(--color-bg-primary)] border border-[var(--color-border)]
+                         rounded-lg text-base text-[var(--color-text-primary)]
+                         placeholder-[var(--color-text-tertiary)]
+                         focus:outline-none focus:ring-1 focus:ring-accent"
+                  placeholder="Enter group name"
                   autoFocus
                 />
-                <button
-                  onClick={onNameSave}
-                  class="px-2 py-1 bg-[var(--color-accent)] text-white rounded text-xs font-medium
-                         hover:bg-[var(--color-accent-hover)] active:transform active:translate-y-0.5
-                         transition-all disabled:opacity-50"
-                >
-                  Save
-                </button>
+                <div class="flex justify-end gap-2">
+                  <button
+                    onClick={() => onNameChange(group.name || '')}
+                    class="px-2 py-1 text-xs text-[var(--color-text-secondary)]
+                           hover:text-[var(--color-text-primary)] transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={onNameSave}
+                    class="px-2 py-1 bg-accent text-white text-xs rounded
+                           hover:bg-accent/90 transition-colors"
+                  >
+                    Save
+                  </button>
+                </div>
               </div>
             ) : (
-              <h2
-                class="text-base font-semibold text-[var(--color-text-primary)] cursor-pointer px-2 py-1
-                       rounded group hover:bg-[var(--color-bg-tertiary)] transition-colors flex items-center gap-1
-                       truncate"
-                onClick={onNameEdit}
-              >
-                <span class="truncate">{group.name}</span>
-                <span class="text-xs text-[var(--color-text-secondary)] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                  ✏️ edit
-                </span>
-              </h2>
+              <>
+                <h2 class="text-lg font-medium text-[var(--color-text-primary)] truncate">
+                  {group.name || 'Unnamed Group'}
+                </h2>
+                <button
+                  onClick={onNameEdit}
+                  class="shrink-0 text-xs text-accent hover:text-accent/90 transition-colors"
+                >
+                  Edit
+                </button>
+              </>
             )}
           </div>
         </div>
-      </header>
-    )
-  }
+      </div>
+    </div>
+  )
 }

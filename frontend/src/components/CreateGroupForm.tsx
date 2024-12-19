@@ -1,11 +1,13 @@
 import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import { Group } from '../types'
+import { LogoutButton } from './LogoutButton'
 
 interface CreateGroupFormProps {
   updateGroupsMap: (updater: (map: Map<string, Group>) => void) => void
   client: NostrClient
   showMessage: (message: string, type: 'success' | 'error' | 'info') => void
+  onLogout: () => void
 }
 
 interface CreateGroupFormState {
@@ -38,22 +40,37 @@ export class CreateGroupForm extends Component<CreateGroupFormProps, CreateGroup
 
   handleSubmit = async (e: Event) => {
     e.preventDefault()
-    this.setState({ isSubmitting: true })
+    if (!this.state.name.trim()) return
 
+    this.setState({ isSubmitting: true })
     try {
-      await this.props.client.createGroup(
-        this.state.groupId,
-        this.state.name,
-        this.state.about,
-        this.state.picture
-      )
-      this.props.showMessage('Group created successfully!', 'success')
+      const group = await this.props.client.createGroup({
+        id: this.state.groupId,
+        name: this.state.name,
+        about: this.state.about,
+        picture: this.state.picture,
+        private: false,
+        closed: false,
+        created_at: Math.floor(Date.now() / 1000),
+        updated_at: Math.floor(Date.now() / 1000),
+        members: [],
+        invites: {},
+        joinRequests: [],
+        content: [],
+      })
+
+      this.props.updateGroupsMap(groupsMap => {
+        groupsMap.set(group.id, group)
+      })
+
       this.setState({
         groupId: generateGroupId(),
         name: '',
         about: '',
         picture: '',
       })
+
+      this.props.showMessage('Group created successfully!', 'success')
     } catch (error) {
       console.error('Failed to create group:', error)
       this.props.showMessage('Failed to create group: ' + error, 'error')
@@ -63,90 +80,79 @@ export class CreateGroupForm extends Component<CreateGroupFormProps, CreateGroup
   }
 
   render() {
-    const { groupId, name, about, picture, isSubmitting } = this.state
+    const { isSubmitting } = this.state
+    const { onLogout } = this.props
 
     return (
-      <form onSubmit={this.handleSubmit} class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] p-2 w-full">
-        <h2 class="text-sm font-semibold text-[var(--color-text-primary)] mb-2">Create New Group</h2>
-
-        <div class="space-y-1.5">
+      <div class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] p-4">
+        <h2 class="text-lg font-semibold text-[var(--color-text-primary)] mb-4">Create New Group</h2>
+        <form onSubmit={this.handleSubmit} class="space-y-4">
           <div>
-            <label htmlFor="groupId" class="block text-xs font-medium text-[var(--color-text-secondary)] mb-0.5">
-              Group ID
+            <label class="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
+              Name
             </label>
             <input
               type="text"
-              id="groupId"
-              value={groupId}
-              class="block w-full rounded border border-[var(--color-border)] px-2 py-1 text-xs
-                     bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]
-                     focus:border-[var(--color-accent)] focus:outline-none focus:ring-1
-                     focus:ring-[var(--color-accent)]/10 transition-all font-mono"
-              disabled
-            />
-          </div>
-
-          <div>
-            <label htmlFor="name" class="block text-xs font-medium text-[var(--color-text-secondary)] mb-0.5">
-              Name *
-            </label>
-            <input
-              type="text"
-              id="name"
-              value={name}
-              onInput={e => this.setState({ name: (e.target as HTMLInputElement).value })}
-              class="block w-full rounded border border-[var(--color-border)] px-2 py-1 text-xs
-                     bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]
-                     focus:border-[var(--color-accent)] focus:outline-none focus:ring-1
-                     focus:ring-[var(--color-accent)]/10 transition-all"
+              value={this.state.name}
+              onChange={(e) => this.setState({ name: (e.target as HTMLInputElement).value })}
+              placeholder="Enter group name"
+              class="w-full p-2 border border-[var(--color-border)] rounded bg-[var(--color-bg-primary)]
+                     text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)]
+                     focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
               required
             />
           </div>
 
           <div>
-            <label htmlFor="about" class="block text-xs font-medium text-[var(--color-text-secondary)] mb-0.5">
-              About
+            <label class="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
+              Description
             </label>
             <textarea
-              id="about"
-              value={about}
-              onInput={e => this.setState({ about: (e.target as HTMLTextAreaElement).value })}
-              rows={2}
-              class="block w-full rounded border border-[var(--color-border)] px-2 py-1 text-xs
-                     bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]
-                     focus:border-[var(--color-accent)] focus:outline-none focus:ring-1
-                     focus:ring-[var(--color-accent)]/10 transition-all"
+              value={this.state.about}
+              onChange={(e) => this.setState({ about: (e.target as HTMLTextAreaElement).value })}
+              placeholder="Enter group description"
+              class="w-full p-2 border border-[var(--color-border)] rounded bg-[var(--color-bg-primary)]
+                     text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)]
+                     focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+              rows={3}
             />
           </div>
 
           <div>
-            <label htmlFor="picture" class="block text-xs font-medium text-[var(--color-text-secondary)] mb-0.5">
+            <label class="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
               Picture URL
             </label>
             <input
               type="url"
-              id="picture"
-              value={picture}
-              onInput={e => this.setState({ picture: (e.target as HTMLInputElement).value })}
-              class="block w-full rounded border border-[var(--color-border)] px-2 py-1 text-xs
-                     bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]
-                     focus:border-[var(--color-accent)] focus:outline-none focus:ring-1
-                     focus:ring-[var(--color-accent)]/10 transition-all"
+              value={this.state.picture}
+              onChange={(e) => this.setState({ picture: (e.target as HTMLInputElement).value })}
+              placeholder="Enter picture URL"
+              class="w-full p-2 border border-[var(--color-border)] rounded bg-[var(--color-bg-primary)]
+                     text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)]
+                     focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
             />
           </div>
 
           <button
             type="submit"
-            disabled={isSubmitting || !name.trim()}
-            class="w-full mt-1.5 flex justify-center py-1 px-2 border border-transparent rounded text-xs
-                   font-medium text-white bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]
-                   focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[var(--color-accent)]
-                   disabled:opacity-50 transition-all"
+            disabled={isSubmitting}
+            class="w-full px-4 py-2 bg-[var(--color-accent)] text-white rounded
+                   hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed
+                   transition-colors flex items-center justify-center gap-2"
           >
-            {isSubmitting ? 'Creating...' : 'Create Group'}
+            {isSubmitting ? (
+              <>
+                <span class="animate-spin">⚡</span>
+                Creating...
+              </>
+            ) : (
+              'Create Group'
+            )}
           </button>
-        </div>
-      </form>
+        </form>
+
+        <LogoutButton onLogout={onLogout} />
+      </div>
     )
   }
 }

@@ -15,6 +15,7 @@ export interface FlashMessageData {
 
 export interface AppProps {
   client: NostrClient
+  onLogout: () => void
 }
 
 interface AppState {
@@ -259,6 +260,7 @@ export class App extends Component<AppProps, AppState> {
 
   render() {
     const { flashMessage } = this.state
+    const { client, onLogout } = this.props
 
     return (
       <>
@@ -274,15 +276,16 @@ export class App extends Component<AppProps, AppState> {
             <div class="lg:w-[240px] flex-shrink-0">
               <CreateGroupForm
                 updateGroupsMap={this.updateGroupsMap}
-                client={this.props.client}
+                client={client}
                 showMessage={this.showMessage}
+                onLogout={onLogout}
               />
             </div>
 
             <div class="flex-1">
               <GroupList
                 groups={this.state.groups}
-                client={this.props.client}
+                client={client}
                 showMessage={this.showMessage}
               />
             </div>

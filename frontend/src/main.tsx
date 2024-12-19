@@ -1,12 +1,13 @@
 import 'preact/debug'
 import 'preact/devtools'
 import { render } from 'preact'
+import { useState, useEffect } from 'preact/hooks'
 import { NostrClient } from './api/nostr_client.ts'
 import { App } from './components/App.tsx'
+import { LoadingState } from './components/LoadingState.tsx'
+import { ErrorState } from './components/ErrorState.tsx'
+import { AuthPrompt } from './components/AuthPrompt.tsx'
 import './style.css'
-
-// TODO: This is the same test key used in the backend. We could do some nip07 in the future?
-const RELAY_SECRET_KEY = "6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e"
 
 // In development, connect directly to the relay
 // In production, use the WebSocket proxy
@@ -14,22 +15,73 @@ const wsUrl = import.meta.env.DEV
   ? "ws://127.0.0.1:8080"
   : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
 
-const client = new NostrClient(RELAY_SECRET_KEY, { relayUrl: wsUrl })
+interface InitializationProps {
+  onComplete: (client: NostrClient) => void
+}
 
-client.connect()
-  .then(() => {
-    console.log('Successfully connected to relay')
-    render(<App client={client} />, document.getElementById('app')!)
-  })
-  .catch(error => {
-    console.error('Connection error:', error)
-    const app = document.getElementById('app')
-    if (app) {
-      app.innerHTML = `<div style="color: red; padding: 20px;">
-        <h2>Connection Error</h2>
-        <p>${error.message}</p>
-        <pre>${error.stack}</pre>
-      </div>`
+const Initialization = ({ onComplete }: InitializationProps) => {
+  const [error, setError] = useState<Error | null>(null)
+  const [status, setStatus] = useState<'idle' | 'connecting'>('idle')
+
+  useEffect(() => {
+    // Check if we have a stored key
+    const storedKey = localStorage.getItem('nostr_key')
+    if (storedKey) {
+      connectWithKey(storedKey)
     }
-  })
+  }, [])
+
+  const connectWithKey = async (key: string) => {
+    try {
+      setStatus('connecting')
+      const client = new NostrClient(key, { relayUrl: wsUrl })
+      await client.connect()
+      console.log('Successfully connected to relay')
+      // Store the key only after successful connection
+      localStorage.setItem('nostr_key', key)
+      onComplete(client)
+    } catch (e) {
+      setError(e instanceof Error ? e : new Error('Failed to connect'))
+      setStatus('idle')
+      // Clear stored key if connection fails
+      localStorage.removeItem('nostr_key')
+    }
+  }
+
+  if (error) {
+    return <ErrorState error={error} onRetry={() => setError(null)} />
+  }
+
+  if (status === 'connecting') {
+    return (
+      <LoadingState
+        title="Connecting"
+        message="Establishing connection to relay..."
+      />
+    )
+  }
+
+  return <AuthPrompt onSubmit={connectWithKey} />
+}
+
+const Root = () => {
+  const [client, setClient] = useState<NostrClient | null>(null)
+
+  const handleLogout = () => {
+    if (client) {
+      client.disconnect()
+    }
+    setClient(null)
+    // Clear stored key on explicit logout
+    localStorage.removeItem('nostr_key')
+  }
+
+  if (!client) {
+    return <Initialization onComplete={setClient} />
+  }
+
+  return <App client={client} onLogout={handleLogout} />
+}
+
+render(<Root />, document.getElementById('app')!)
 

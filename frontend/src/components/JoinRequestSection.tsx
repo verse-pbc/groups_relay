@@ -2,6 +2,7 @@ import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
 import { JoinRequestForm } from './JoinRequestForm'
+import { PubkeyDisplay } from './PubkeyDisplay'
 
 interface JoinRequestSectionProps {
   group: Group
@@ -35,47 +36,42 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
       pubkey => !group.members.some(member => member.pubkey === pubkey)
     ) || []
 
-    const truncatePubkey = (pubkey: string) => {
-      return pubkey.slice(0, 8) + '...'
-    }
-
     return (
-      <section class="border-t border-[var(--color-border)] p-3">
-        <h3 class="flex items-center gap-1 text-sm font-semibold text-[var(--color-text-primary)] mb-2">
-          <span class="text-base">🤝</span> Join Requests
-        </h3>
-
-        <div class="mb-3 border border-[var(--color-border)] rounded p-2 bg-[var(--color-bg-tertiary)]">
+      <div class="space-y-4">
+        <div class="p-4 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]">
           <JoinRequestForm groupId={group.id} relayUrl={client.config.relayUrl} />
         </div>
 
         {pendingRequests.length > 0 ? (
-          <ul class="space-y-2">
+          <div class="space-y-2">
             {pendingRequests.map(pubkey => (
-              <li key={pubkey} class="py-1">
-                <div class="flex items-center justify-between gap-2">
-                  <div
-                    class="text-xs text-[var(--color-text-secondary)] font-mono hover:text-[var(--color-text-primary)] transition-colors"
-                    data-tooltip={pubkey}
-                  >
-                    {truncatePubkey(pubkey)}
-                  </div>
-                  <button
-                    onClick={() => this.handleAcceptRequest(pubkey)}
-                    class="px-2 py-1 bg-[var(--color-accent)] text-white text-xs rounded
-                           hover:bg-[var(--color-accent-hover)] active:transform active:translate-y-0.5
-                           transition-all flex-shrink-0"
-                  >
-                    Accept
-                  </button>
-                </div>
-              </li>
+              <div
+                key={pubkey}
+                class="flex items-center justify-between gap-2 p-4 bg-[var(--color-bg-primary)]
+                       rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-hover)]
+                       transition-colors"
+              >
+                <PubkeyDisplay pubkey={pubkey} showCopy={false} />
+                <button
+                  onClick={() => this.handleAcceptRequest(pubkey)}
+                  class="shrink-0 px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium
+                         hover:bg-accent/90 transition-colors flex items-center gap-2"
+                >
+                  Accept
+                </button>
+              </div>
             ))}
-          </ul>
+          </div>
         ) : (
-          <p class="text-xs text-[var(--color-text-secondary)]">No pending join requests.</p>
+          <div class="text-center py-12">
+            <div class="mb-3 text-2xl">🤝</div>
+            <p class="text-sm text-[var(--color-text-tertiary)]">No pending join requests</p>
+            <p class="text-xs text-[var(--color-text-tertiary)] mt-1">
+              Share the group invite code to let others join
+            </p>
+          </div>
         )}
-      </section>
+      </div>
     )
   }
 }
