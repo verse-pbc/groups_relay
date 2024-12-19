@@ -7,7 +7,7 @@ export interface Group {
   closed: boolean;
   members: GroupMember[];
   invites: { [key: string]: GroupInvite };
-  join_requests: string[];
+  joinRequests: string[];
   content?: GroupContent[];
   created_at: number;
 }

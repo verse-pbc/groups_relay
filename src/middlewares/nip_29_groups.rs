@@ -271,7 +271,10 @@ impl Nip29Middleware {
                 .filter(|(k, _)| k == &&SingleLetterTag::lowercase(Alphabet::H))
                 .flat_map(|(_, tag_set)| tag_set.iter())
             {
-                let group = self.groups.get_group(tag)?;
+                let group = self
+                    .groups
+                    .get_group(tag)
+                    .ok_or(Error::notice("Group not found"))?;
 
                 debug!(
                     "checking filters for normal request for group: {:?}",
@@ -442,11 +445,21 @@ impl Middleware for Nip29Middleware {
     ) -> Result<()> {
         if let Some(RelayMessage::Event { event, .. }) = &ctx.message {
             if let Some(group) = self.groups.find_group_from_event(event) {
-                if !group.can_see_event(&ctx.state.authed_pubkey, event.kind) {
-                    debug!(
-                        "Not authorized to see event {}, kind {}",
-                        event.id, event.kind
-                    );
+                if !group.can_see_event(&ctx.state.authed_pubkey, &event) {
+                    match ctx.state.authed_pubkey {
+                        Some(authed_pubkey) => {
+                            debug!(
+                                "{} is not authorized to see event {}, kind {}",
+                                authed_pubkey, event.id, event.kind
+                            );
+                        }
+                        None => {
+                            debug!(
+                                "User needs to do auth to see event {}, kind {}",
+                                event.id, event.kind
+                            );
+                        }
+                    }
 
                     ctx.message = None;
                 } else {

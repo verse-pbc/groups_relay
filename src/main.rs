@@ -231,14 +231,15 @@ async fn main() -> Result<()> {
     if let Some(auth_url) = args.auth_url {
         settings.auth_url = auth_url;
     }
-    let cancellation_token = CancellationToken::new();
 
     let client = create_client(&settings.relay_url, settings.relay_keys()?)
         .await
         .context("Failed to create client")?;
+
     let groups = Groups::load_groups(&client)
         .await
         .context("Failed to load groups")?;
+
     let shared_groups = Arc::new(groups);
     let http_state = Arc::new(app_state::HttpServerState::new(shared_groups.clone()));
 
@@ -257,7 +258,7 @@ async fn main() -> Result<()> {
     let nip_42 = Nip42Middleware::new(settings.auth_url.clone());
     let nip_70 = Nip70Middleware;
     let nip_29 = Nip29Middleware::new(shared_groups.clone(), relay_keys.public_key);
-    let relay_connector = RelayForwarder::new(relay_keys);
+    let relay_forwarder = RelayForwarder::new(relay_keys);
     let connection_state_factory = NostrConnectionFactory::new(settings.relay_url.clone());
 
     let websocket_handler = WebSocketBuilder::new(connection_state_factory, NostrMessageConverter)
@@ -266,9 +267,10 @@ async fn main() -> Result<()> {
         .with_middleware(nip_42)
         .with_middleware(nip_70)
         .with_middleware(nip_29)
-        .with_middleware(relay_connector)
+        .with_middleware(relay_forwarder)
         .build();
 
+    let cancellation_token = CancellationToken::new();
     let app_state = AppState {
         http_state: http_state.clone(),
         ws_handler: Arc::new(websocket_handler),

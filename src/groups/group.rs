@@ -7,7 +7,7 @@ use std::{collections::HashMap, collections::HashSet};
 use strum::Display;
 use strum::EnumIter;
 use strum::IntoEnumIterator;
-use tracing::info;
+use tracing::{debug, info};
 // Group Creation and Management
 pub const KIND_GROUP_CREATE: Kind = Kind::Custom(9007); // Admin/Relay -> Relay: Create a new group
 pub const KIND_GROUP_DELETE: Kind = Kind::Custom(9008); // Admin/Relay -> Relay: Delete an existing group
@@ -92,6 +92,7 @@ impl FromStr for GroupRole {
         match s.as_str() {
             "admin" => Ok(GroupRole::Admin),
             "member" => Ok(GroupRole::Member),
+            custom if custom.trim().is_empty() => Ok(GroupRole::Member),
             custom => Ok(GroupRole::Custom(custom.to_string())),
         }
     }
@@ -185,6 +186,42 @@ pub struct Group {
     pub updated_at: Timestamp,
 }
 
+impl Default for Group {
+    fn default() -> Self {
+        Self {
+            id: "".to_string(),
+            metadata: GroupMetadata::new("".to_string()),
+            members: HashMap::new(),
+            join_requests: HashSet::new(),
+            invites: HashMap::new(),
+            roles: HashSet::new(),
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
+        }
+    }
+}
+
+impl From<&Event> for Group {
+    fn from(event: &Event) -> Self {
+        let Some(group_id) = event
+            .tags
+            .iter()
+            .find(|t| t.kind() == TagKind::h() || t.kind() == TagKind::d())
+            .and_then(|t| t.content())
+        else {
+            return Self::default();
+        };
+
+        Self {
+            id: group_id.to_string(),
+            metadata: GroupMetadata::new(group_id.to_string()),
+            created_at: event.created_at,
+            updated_at: event.created_at,
+            ..Default::default()
+        }
+    }
+}
+
 impl std::fmt::Debug for Group {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "{{")?;
@@ -261,6 +298,19 @@ impl Group {
     fn update_state(&mut self) {
         self.updated_at = Timestamp::now();
         info!("Group state: {:?}", self);
+    }
+
+    pub fn new_with_id(id: String) -> Self {
+        Self {
+            id: id.clone(),
+            metadata: GroupMetadata::new(id),
+            members: HashMap::new(),
+            join_requests: HashSet::new(),
+            invites: HashMap::new(),
+            roles: HashSet::new(),
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
+        }
     }
 
     pub fn new(event: &Event) -> Result<Self, Error> {
@@ -529,6 +579,187 @@ impl Group {
     pub fn is_member(&self, pubkey: &PublicKey) -> bool {
         self.members.contains_key(pubkey)
     }
+
+    // State loading methods - used during startup to rebuild state from stored events
+    pub fn load_metadata_from_event(&mut self, event: &Event) -> Result<(), Error> {
+        let name = event.tags.find(TagKind::Name).and_then(|t| t.content());
+        let about = event
+            .tags
+            .find(TagKind::custom("about"))
+            .and_then(|t| t.content());
+        let picture = event
+            .tags
+            .find(TagKind::custom("picture"))
+            .and_then(|t| t.content());
+        let private = event.tags.find(TagKind::custom("private")).is_some();
+        let closed = event.tags.find(TagKind::custom("closed")).is_some();
+
+        self.metadata = GroupMetadata {
+            name: name.unwrap_or(&self.id).to_string(),
+            about: about.map(|s| s.to_string()),
+            picture: picture.map(|s| s.to_string()),
+            private,
+            closed,
+        };
+
+        self.updated_at = event.created_at;
+        Ok(())
+    }
+
+    pub fn load_members_from_event(&mut self, event: &Event) -> Result<(), Error> {
+        let pubkey_and_roles = event
+            .tags
+            .iter()
+            .filter(|t| t.kind() == TagKind::p())
+            .map(|t| {
+                let [_, pubkey, roles @ ..] = t.as_slice() else {
+                    return None;
+                };
+
+                let pubkey = PublicKey::parse(pubkey).ok()?;
+                Some((pubkey, roles))
+            })
+            .filter_map(|t| t)
+            .collect::<Vec<_>>();
+
+        for (pubkey, roles) in pubkey_and_roles {
+            let mut roles = roles.to_vec();
+            if roles.is_empty() {
+                roles.push(GroupRole::Member.to_string());
+            }
+
+            let roles = roles
+                .iter()
+                .map(|r| GroupRole::from_str(r).unwrap_or(GroupRole::Member))
+                .collect::<HashSet<_>>();
+
+            self.members.insert(pubkey, GroupMember::new(pubkey, roles));
+        }
+
+        self.update_roles();
+        self.updated_at = event.created_at;
+        Ok(())
+    }
+
+    pub fn load_join_request_from_event(&mut self, event: &Event) -> Result<(), Error> {
+        if !self.members.contains_key(&event.pubkey) {
+            self.join_requests.insert(event.pubkey);
+            self.updated_at = event.created_at;
+        }
+        Ok(())
+    }
+
+    pub fn load_invite_from_event(&mut self, event: &Event) -> Result<(), Error> {
+        if let Some(code) = event
+            .tags
+            .find(TagKind::custom("code"))
+            .and_then(|t| t.content())
+        {
+            let roles = event
+                .tags
+                .iter()
+                .filter(|t| t.kind() == TagKind::custom("role"))
+                .filter_map(|t| t.content())
+                .map(|r| GroupRole::from_str(r).unwrap_or(GroupRole::Member))
+                .collect();
+
+            let invite = Invite {
+                pubkey: None,
+                roles,
+            };
+
+            self.invites.insert(code.to_string(), invite);
+            self.updated_at = event.created_at;
+        }
+        Ok(())
+    }
+
+    // Real-time event handling methods - used for incoming events
+    pub fn handle_join_request(&mut self, event: &Event) -> Result<bool, Error> {
+        if event.kind != KIND_GROUP_USER_JOIN_REQUEST {
+            return Err(Error::notice(&format!(
+                "Invalid event kind for join request {}",
+                event.kind
+            )));
+        }
+
+        if !self.metadata.closed {
+            info!("Public group, adding member {}", event.pubkey);
+            self.members
+                .insert(event.pubkey, GroupMember::new_member(event.pubkey));
+            self.join_requests.remove(&event.pubkey);
+            self.update_state();
+            return Ok(true);
+        }
+
+        let code = event
+            .tags
+            .find(TagKind::custom("code"))
+            .and_then(|t| t.content())
+            .and_then(|code| self.invites.get_mut(code));
+
+        let Some(invite) = code else {
+            info!("Invite not found, adding join request for {}", event.pubkey);
+            self.join_requests.insert(event.pubkey);
+            self.update_state();
+            return Ok(false);
+        };
+
+        if invite.pubkey.is_some() {
+            info!(
+                "Invite already used, adding join request for {}",
+                event.pubkey
+            );
+            self.join_requests.insert(event.pubkey);
+            self.update_state();
+            return Ok(false);
+        }
+
+        // Invite code matched and is available
+        info!("Invite code matched, adding member {}", event.pubkey);
+        invite.pubkey = Some(event.pubkey);
+        let roles = invite.roles.clone();
+
+        self.members
+            .insert(event.pubkey, GroupMember::new(event.pubkey, roles));
+
+        self.join_requests.remove(&event.pubkey);
+        self.update_state();
+        Ok(true)
+    }
+
+    // Helper methods
+    pub fn update_roles(&mut self) {
+        let unique_roles = self
+            .members
+            .values()
+            .flat_map(|m| m.roles.iter().cloned())
+            .collect::<HashSet<_>>();
+
+        self.roles = unique_roles;
+    }
+
+    pub fn extract_group_id(event: &Event) -> Option<&str> {
+        event
+            .tags
+            .iter()
+            .find(|t| t.kind() == TagKind::h() || t.kind() == TagKind::d())
+            .and_then(|t| t.content())
+    }
+
+    pub fn extract_group_h_tag(event: &Event) -> Option<&str> {
+        event.tags.find(TagKind::h()).and_then(|t| t.content())
+    }
+
+    pub fn verify_member_access(&self, pubkey: &PublicKey, event_kind: Kind) -> Result<(), Error> {
+        if event_kind != KIND_GROUP_USER_JOIN_REQUEST && !self.is_member(pubkey) {
+            return Err(Error::restricted(format!(
+                "User {} is not a member of this group",
+                pubkey
+            )));
+        }
+        Ok(())
+    }
 }
 
 // Event generation based on current state
@@ -652,7 +883,7 @@ impl Group {
         self.is_admin(pubkey)
     }
 
-    pub fn can_see_event(&self, pubkey: &Option<PublicKey>, kind: Kind) -> bool {
+    pub fn can_see_event(&self, pubkey: &Option<PublicKey>, event: &Event) -> bool {
         // Public groups are always visible
         if !self.metadata.private {
             return true;
@@ -661,12 +892,22 @@ impl Group {
         // Private groups need authentication
         let Some(pubkey) = pubkey else { return false };
 
-        // Admins can see everything
-        if self.is_admin(pubkey) {
+        // You can see your own events
+        if *pubkey == event.pubkey {
             return true;
         }
 
+        // Admins can see everything
+        if self.is_admin(pubkey) {
+            return true;
+        } else {
+            debug!(
+                "User {} is not an admin, checking if they are a member to see event {}, group is {:?}",
+                pubkey, event.id, self
+            );
+        }
+
         // Members can see everything except invites
-        self.is_member(pubkey) && kind != KIND_GROUP_CREATE_INVITE
+        self.is_member(pubkey) && event.kind != KIND_GROUP_CREATE_INVITE
     }
 }

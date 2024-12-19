@@ -269,6 +269,6 @@ export class NostrClient {
 }
 
 export function hashGroup(group: Group): string {
-  const { id, name, invites, join_requests, content } = group;
+  const { id, name, invites, joinRequests: join_requests, content } = group;
   return JSON.stringify({ id, name, invites, join_requests, content });
 }

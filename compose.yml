@@ -24,7 +24,7 @@ services:
     ports:
       - "7777:7777"
     entrypoint: /bin/sh
-    command: -c "rm -rf /strfry/data/* && ./strfry relay --config /etc/strfry.conf"
+    command: -c "./strfry relay --config /etc/strfry.conf"
 
 volumes:
   strfry-data:

@@ -31,7 +31,7 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
   render() {
     const { group, client } = this.props
 
-    const pendingRequests = group.join_requests?.filter(
+    const pendingRequests = group.joinRequests?.filter(
       pubkey => !group.members.some(member => member.pubkey === pubkey)
     ) || []
 

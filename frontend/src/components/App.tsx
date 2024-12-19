@@ -49,6 +49,26 @@ export class App extends Component<AppProps, AppState> {
     this.setState({ groups: sortedGroups })
   }
 
+  private getOrCreateGroup = (groupId: string, createdAt: number): Group => {
+    if (!this.groupsMap.has(groupId)) {
+      const group: Group = {
+        id: groupId,
+        name: '',
+        about: '',
+        picture: '',
+        private: false,
+        closed: false,
+        created_at: createdAt,
+        members: [],
+        invites: {},
+        joinRequests: [],
+        content: [],
+      }
+      this.groupsMap.set(groupId, group)
+    }
+    return this.groupsMap.get(groupId)!
+  }
+
   processEvent = (event: any, groupsMap: Map<string, Group>) => {
     console.log('processing event', event.kind, event)
 
@@ -57,22 +77,7 @@ export class App extends Component<AppProps, AppState> {
       const groupId = event.tags.find((t: string[]) => t[0] === 'h')?.[1]
       if (!groupId) return
 
-      if (!groupsMap.has(groupId)) {
-        const group: Group = {
-          id: groupId,
-          name: '',
-          about: '',
-          picture: '',
-          private: false,
-          closed: false,
-          created_at: event.created_at,
-          members: [],
-          invites: {},
-          join_requests: [],
-          content: [],
-        }
-        groupsMap.set(groupId, group)
-      }
+      this.getOrCreateGroup(groupId, event.created_at)
     }
 
     // Handle relay-generated metadata events
@@ -80,19 +85,7 @@ export class App extends Component<AppProps, AppState> {
       const groupId = event.tags.find((t: string[]) => t[0] === 'd')?.[1]
       if (!groupId) return
 
-      let group = groupsMap.get(groupId) || {
-        id: groupId,
-        name: '',
-        about: '',
-        picture: '',
-        private: false,
-        closed: false,
-        created_at: event.created_at,
-        members: [] as GroupMember[],
-        invites: {},
-        join_requests: [] as string[],
-        content: [] as GroupContent[],
-      }
+      const group = this.getOrCreateGroup(groupId, event.created_at)
 
       switch (event.kind) {
         case 39000: // Group metadata
@@ -167,8 +160,7 @@ export class App extends Component<AppProps, AppState> {
       const groupId = event.tags.find((t: string[]) => t[0] === 'h')?.[1]
       if (!groupId) return
 
-      const group = groupsMap.get(groupId)
-      if (!group) return
+      const group = this.getOrCreateGroup(groupId, event.created_at)
 
       const content: GroupContent = {
         pubkey: event.pubkey,
@@ -186,8 +178,7 @@ export class App extends Component<AppProps, AppState> {
       const groupId = event.tags.find((t: string[]) => t[0] === 'h')?.[1]
       if (!groupId) return
 
-      const group = groupsMap.get(groupId)
-      if (!group) return
+      const group = this.getOrCreateGroup(groupId, event.created_at)
 
       const code = event.tags.find((t: string[]) => t[0] === 'code')?.[1]
       const roles = event.tags.find((t: string[]) => t[0] === 'roles')?.[1]?.split(',') || ['member']
@@ -207,12 +198,10 @@ export class App extends Component<AppProps, AppState> {
       const groupId = event.tags.find((t: string[]) => t[0] === 'h')?.[1]
       if (!groupId) return
 
-      const group = groupsMap.get(groupId)
-      if (!group) return
+      const group = this.getOrCreateGroup(groupId, event.created_at)
 
-      // Add the pubkey to join_requests if not already there
-      if (!group.join_requests.includes(event.pubkey)) {
-        group.join_requests.push(event.pubkey)
+      if (!group.joinRequests.includes(event.pubkey)) {
+        group.joinRequests.push(event.pubkey)
         groupsMap.set(groupId, { ...group })
       }
     }
