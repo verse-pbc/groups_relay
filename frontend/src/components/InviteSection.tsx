@@ -14,8 +14,11 @@ interface InviteSectionState {
 }
 
 export class InviteSection extends Component<InviteSectionProps, InviteSectionState> {
+  private instanceId: string;
+
   constructor(props: InviteSectionProps) {
     super(props)
+    this.instanceId = Math.random().toString(36).substring(2, 9);
     this.state = {
       isCreatingInvite: false,
       inviteCode: '',
@@ -57,6 +60,7 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
           <div class="flex gap-2">
             <input
               type="text"
+              id={`create-invite-code-${this.instanceId}`}
               value={inviteCode}
               onInput={e => this.setState({ inviteCode: (e.target as HTMLInputElement).value })}
               placeholder="Enter invite code"

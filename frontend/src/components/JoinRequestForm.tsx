@@ -15,8 +15,11 @@ interface JoinRequestFormState {
 }
 
 export class JoinRequestForm extends Component<JoinRequestFormProps, JoinRequestFormState> {
+  private instanceId: string;
+
   constructor(props: JoinRequestFormProps) {
     super(props)
+    this.instanceId = Math.random().toString(36).substring(2, 9);
     this.state = {
       sec: '',
       inviteCode: '',
@@ -84,12 +87,12 @@ export class JoinRequestForm extends Component<JoinRequestFormProps, JoinRequest
     return (
       <form onSubmit={this.handleSubmit} class="space-y-2">
         <div>
-          <label htmlFor="nsec" class="block text-xs font-medium text-[var(--color-text-secondary)] mb-0.5">
+          <label htmlFor={`join-nsec-${this.instanceId}`} class="block text-xs font-medium text-[var(--color-text-secondary)] mb-0.5">
             Your nsec or hex key
           </label>
           <input
             type="password"
-            id="nsec"
+            id={`join-nsec-${this.instanceId}`}
             value={sec}
             onInput={e => this.setState({ sec: (e.target as HTMLInputElement).value })}
             placeholder="nsec1..."
@@ -103,12 +106,12 @@ export class JoinRequestForm extends Component<JoinRequestFormProps, JoinRequest
         </div>
 
         <div>
-          <label htmlFor="inviteCode" class="block text-xs font-medium text-[var(--color-text-secondary)] mb-0.5">
+          <label htmlFor={`join-invite-code-${this.instanceId}`} class="block text-xs font-medium text-[var(--color-text-secondary)] mb-0.5">
             Invite Code (optional)
           </label>
           <input
             type="text"
-            id="inviteCode"
+            id={`join-invite-code-${this.instanceId}`}
             value={inviteCode}
             onInput={e => this.setState({ inviteCode: (e.target as HTMLInputElement).value })}
             placeholder="Enter invite code"

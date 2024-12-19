@@ -59,12 +59,16 @@ export class App extends Component<AppProps, AppState> {
         private: false,
         closed: false,
         created_at: createdAt,
+        updated_at: createdAt,
         members: [],
         invites: {},
         joinRequests: [],
         content: [],
       }
       this.groupsMap.set(groupId, group)
+    }
+    if (createdAt > this.groupsMap.get(groupId)!.updated_at) {
+      this.groupsMap.get(groupId)!.updated_at = createdAt
     }
     return this.groupsMap.get(groupId)!
   }
@@ -77,7 +81,8 @@ export class App extends Component<AppProps, AppState> {
       const groupId = event.tags.find((t: string[]) => t[0] === 'h')?.[1]
       if (!groupId) return
 
-      this.getOrCreateGroup(groupId, event.created_at)
+      let group = this.getOrCreateGroup(groupId, event.created_at)
+      group.created_at = event.created_at
     }
 
     // Handle relay-generated metadata events

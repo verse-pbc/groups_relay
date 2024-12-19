@@ -4,6 +4,10 @@ import type { Group } from '../types'
 import { InviteSection } from './InviteSection'
 import { JoinRequestSection } from './JoinRequestSection'
 import { ContentSection } from './ContentSection'
+import { GroupHeader } from './GroupHeader'
+import { GroupInfo } from './GroupInfo'
+import { GroupTimestamps } from './GroupTimestamps'
+import { MembersSection } from './MembersSection'
 
 interface GroupCardProps {
   group: Group
@@ -119,228 +123,54 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
     const { group, client } = this.props
     const { isEditingName, newName, isEditingAbout, newAbout, newMemberPubkey, isAddingMember } = this.state
 
-    const truncatePubkey = (pubkey: string) => {
-      return pubkey.slice(0, 8) + '...'
-    }
-
     return (
       <article class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] overflow-hidden">
         <div class="flex flex-col lg:flex-row lg:divide-x divide-[var(--color-border)]">
           <div class="lg:w-1/3 flex flex-col">
-            <header class="p-3 border-b border-[var(--color-border)] bg-gradient-to-r from-[var(--color-bg-tertiary)] to-[var(--color-bg-secondary)]">
-              <div class="flex items-center gap-3">
-                {group.picture && (
-                  <img
-                    src={group.picture}
-                    alt={group.name}
-                    class="w-8 h-8 rounded object-cover flex-shrink-0"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none'
-                    }}
-                  />
-                )}
-                <div class="flex-grow min-w-0">
-                  {isEditingName ? (
-                    <div class="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={newName}
-                        onInput={e => this.setState({ newName: (e.target as HTMLInputElement).value })}
-                        class="flex-1 rounded border border-[var(--color-border)] px-2 py-1 text-xs
-                               bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]
-                               focus:border-[var(--color-accent)] focus:outline-none focus:ring-1
-                               focus:ring-[var(--color-accent)]/10 transition-all"
-                        autoFocus
-                      />
-                      <button
-                        onClick={this.handleNameSave}
-                        class="px-2 py-1 bg-[var(--color-accent)] text-white rounded text-xs font-medium
-                               hover:bg-[var(--color-accent-hover)] active:transform active:translate-y-0.5
-                               transition-all disabled:opacity-50"
-                      >
-                        Save
-                      </button>
-                    </div>
-                  ) : (
-                    <h2
-                      class="text-base font-semibold text-[var(--color-text-primary)] cursor-pointer px-2 py-1
-                             rounded group hover:bg-[var(--color-bg-tertiary)] transition-colors flex items-center gap-1
-                             truncate"
-                      onClick={this.handleNameEdit}
-                    >
-                      <span class="truncate">{group.name}</span>
-                      <span class="text-xs text-[var(--color-text-secondary)] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                        ✏️ edit
-                      </span>
-                    </h2>
-                  )}
-                </div>
-              </div>
-            </header>
+            <GroupHeader
+              group={group}
+              isEditingName={isEditingName}
+              newName={newName}
+              onNameEdit={this.handleNameEdit}
+              onNameSave={this.handleNameSave}
+              onNameChange={(name) => this.setState({ newName: name })}
+            />
 
             <div class="p-3 flex-grow">
               <div class="space-y-3">
-                <div>
-                  <span class="text-xs font-medium text-[var(--color-text-secondary)] uppercase tracking-wide">ID:</span>
-                  <div class="mt-0.5 text-xs text-[var(--color-text-primary)] break-all">{group.id}</div>
-                </div>
-                <div>
-                  <span class="text-xs font-medium text-[var(--color-text-secondary)] uppercase tracking-wide">About:</span>
-                  {isEditingAbout ? (
-                    <div class="mt-0.5 flex items-start gap-2">
-                      <textarea
-                        value={newAbout}
-                        onInput={e => this.setState({ newAbout: (e.target as HTMLTextAreaElement).value })}
-                        class="flex-1 rounded border border-[var(--color-border)] px-2 py-1 text-xs
-                               bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]
-                               focus:border-[var(--color-accent)] focus:outline-none focus:ring-1
-                               focus:ring-[var(--color-accent)]/10 transition-all resize-none"
-                        rows={2}
-                        autoFocus
-                      />
-                      <button
-                        onClick={this.handleAboutSave}
-                        class="px-2 py-1 bg-[var(--color-accent)] text-white rounded text-xs font-medium
-                               hover:bg-[var(--color-accent-hover)] active:transform active:translate-y-0.5
-                               transition-all disabled:opacity-50"
-                      >
-                        Save
-                      </button>
-                    </div>
-                  ) : (
-                    <div
-                      class="mt-0.5 text-xs text-[var(--color-text-primary)] cursor-pointer group
-                             hover:bg-[var(--color-bg-tertiary)] transition-colors rounded px-2 py-1 -mx-2
-                             flex items-center gap-1"
-                      onClick={this.handleAboutEdit}
-                    >
-                      {group.about || "No description"}
-                      <span class="text-xs text-[var(--color-text-secondary)] opacity-0 group-hover:opacity-100 transition-opacity">
-                        ✏️ edit
-                      </span>
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <span class="text-xs font-medium text-[var(--color-text-secondary)] uppercase tracking-wide">Type:</span>
-                  <div class="mt-1 flex gap-3">
-                    <label class="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={group.private}
-                        onChange={() => this.handleMetadataChange('private', !group.private)}
-                        class="w-3 h-3 rounded border-[var(--color-border)] text-[var(--color-accent)]
-                               focus:ring-[var(--color-accent)] cursor-pointer bg-[var(--color-bg-tertiary)]"
-                      />
-                      <span class="text-xs text-[var(--color-text-primary)]">Private</span>
-                    </label>
-                    <label class="flex items-center gap-1.5 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={group.closed}
-                        onChange={() => this.handleMetadataChange('closed', !group.closed)}
-                        class="w-3 h-3 rounded border-[var(--color-border)] text-[var(--color-accent)]
-                               focus:ring-[var(--color-accent)] cursor-pointer bg-[var(--color-bg-tertiary)]"
-                      />
-                      <span class="text-xs text-[var(--color-text-primary)]">Closed</span>
-                    </label>
-                  </div>
-                </div>
-                <div class="space-y-1">
-                  <div>
-                    <span class="text-xs font-medium text-[var(--color-text-secondary)] uppercase tracking-wide">Created:</span>
-                    <div class="text-xs text-[var(--color-text-secondary)]">
-                      {new Date(group.created_at * 1000).toLocaleString()}
-                    </div>
-                  </div>
-                </div>
+                <GroupInfo
+                  group={group}
+                  isEditingAbout={isEditingAbout}
+                  newAbout={newAbout}
+                  onAboutEdit={this.handleAboutEdit}
+                  onAboutSave={this.handleAboutSave}
+                  onAboutChange={(about) => this.setState({ newAbout: about })}
+                  onMetadataChange={this.handleMetadataChange}
+                />
+                <GroupTimestamps group={group} />
               </div>
             </div>
           </div>
 
-          <div class="lg:w-1/3">
-            <div class="p-3">
-              <h3 class="flex items-center gap-1 text-sm font-semibold text-[var(--color-text-primary)] mb-2">
-                <span class="text-base">👥</span> Members
-              </h3>
+          <div class="lg:w-2/3 flex flex-col">
+            <div class="flex flex-row divide-x divide-[var(--color-border)]">
+              <div class="w-1/2">
+                <MembersSection
+                  group={group}
+                  newMemberPubkey={newMemberPubkey}
+                  isAddingMember={isAddingMember}
+                  onMemberPubkeyChange={(pubkey) => this.setState({ newMemberPubkey: pubkey })}
+                  onAddMember={this.handleAddMember}
+                  onRemoveMember={this.handleRemoveMember}
+                />
+              </div>
 
-              <form onSubmit={this.handleAddMember} class="mb-3">
-                <div class="flex gap-2">
-                  <input
-                    type="text"
-                    value={newMemberPubkey}
-                    onInput={e => this.setState({ newMemberPubkey: (e.target as HTMLInputElement).value })}
-                    placeholder="Enter member pubkey"
-                    class="flex-1 rounded border border-[var(--color-border)] px-2 py-1 text-xs
-                           bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]
-                           focus:border-[var(--color-accent)] focus:outline-none focus:ring-1
-                           focus:ring-[var(--color-accent)]/10 transition-all font-mono"
-                    required
-                    disabled={isAddingMember}
-                  />
-                  <button
-                    type="submit"
-                    disabled={isAddingMember || !newMemberPubkey.trim()}
-                    class="px-2 py-1 bg-[var(--color-accent)] text-white rounded text-xs font-medium
-                           hover:bg-[var(--color-accent-hover)] active:transform active:translate-y-0.5
-                           transition-all flex items-center gap-1 disabled:opacity-50 whitespace-nowrap"
-                  >
-                    {isAddingMember ? (
-                      <>
-                        <span class="animate-spin">⌛</span>
-                        Adding...
-                      </>
-                    ) : (
-                      'Add Member'
-                    )}
-                  </button>
-                </div>
-              </form>
-
-              <ul class="space-y-2 max-h-[300px] overflow-y-auto">
-                {group.members.map(member => (
-                  <li key={member.pubkey} class="py-1">
-                    <div class="flex items-center justify-between gap-2">
-                      <div
-                        class="text-xs text-[var(--color-text-secondary)] font-mono hover:text-[var(--color-text-primary)] transition-colors"
-                        data-tooltip={member.pubkey}
-                      >
-                        {truncatePubkey(member.pubkey)}
-                      </div>
-                      <div class="flex items-center gap-2">
-                        <div class="flex flex-wrap gap-1 flex-shrink-0">
-                          {member.roles.map(role => {
-                            const lower = role.toLowerCase()
-                            const [icon] = lower.includes("admin")
-                              ? ["⭐"]
-                              : lower.includes("moderator")
-                                ? ["���"]
-                                : ["👤"]
-                            return (
-                              <span class={`role-badge ${lower.includes("admin") ? "admin" : lower.includes("moderator") ? "moderator" : "member"} text-xs`}>
-                                {icon} {role}
-                              </span>
-                            )
-                          })}
-                        </div>
-                        <button
-                          onClick={() => this.handleRemoveMember(member.pubkey)}
-                          class="text-red-400 hover:text-red-300 transition-colors flex-shrink-0 p-1"
-                          title="Remove member"
-                        >
-                          ❌
-                        </button>
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <div class="w-1/2 flex flex-col">
+                <InviteSection group={group} client={client} />
+                <JoinRequestSection group={group} client={client} />
+              </div>
             </div>
-          </div>
 
-          <div class="lg:w-1/3 flex flex-col">
-            <InviteSection group={group} client={client} />
-            <JoinRequestSection group={group} client={client} />
             <ContentSection group={group} />
           </div>
         </div>

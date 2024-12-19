@@ -10,6 +10,7 @@ export interface Group {
   joinRequests: string[];
   content?: GroupContent[];
   created_at: number;
+  updated_at: number;
 }
 
 export interface GroupMember {
