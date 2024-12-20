@@ -361,7 +361,7 @@ impl Group {
             let member = GroupMember::try_from(new_member)?;
             added_admins |= member.is(GroupRole::Admin);
             self.join_requests.remove(&member.pubkey);
-            self.members.insert(member.pubkey, member);
+            self.members.entry(member.pubkey).or_insert(member);
         }
 
         self.update_state();
@@ -494,7 +494,8 @@ impl Group {
         if !self.metadata.closed {
             info!("Public group, adding member {}", event.pubkey);
             self.members
-                .insert(event.pubkey, GroupMember::new_member(event.pubkey));
+                .entry(event.pubkey)
+                .or_insert(GroupMember::new_member(event.pubkey));
             self.join_requests.remove(&event.pubkey);
             self.update_state();
             return Ok(true);
@@ -694,7 +695,8 @@ impl Group {
         if !self.metadata.closed {
             info!("Public group, adding member {}", event.pubkey);
             self.members
-                .insert(event.pubkey, GroupMember::new_member(event.pubkey));
+                .entry(event.pubkey)
+                .or_insert(GroupMember::new_member(event.pubkey));
             self.join_requests.remove(&event.pubkey);
             self.update_state();
             return Ok(true);
@@ -729,7 +731,8 @@ impl Group {
         let roles = invite.roles.clone();
 
         self.members
-            .insert(event.pubkey, GroupMember::new(event.pubkey, roles));
+            .entry(event.pubkey)
+            .or_insert(GroupMember::new(event.pubkey, roles));
 
         self.join_requests.remove(&event.pubkey);
         self.update_state();

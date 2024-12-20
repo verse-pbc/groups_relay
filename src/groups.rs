@@ -14,9 +14,8 @@ pub use group::{
     KIND_GROUP_USER_LEAVE_REQUEST, METADATA_EVENT_KINDS,
 };
 use nostr_sdk::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
-use std::str::FromStr;
 use tracing::info;
 
 #[derive(Debug)]
@@ -146,58 +145,6 @@ impl Groups {
     ) -> Option<Ref<'a, String, Group>> {
         let group_id = Group::extract_group_h_tag(event)?;
         self.get_group(group_id)
-    }
-
-    fn process_metadata_event(&mut self, event: &Event) -> Result<(), Error> {
-        let group_id = match Group::extract_group_id(event) {
-            Some(id) => id,
-            None => return Err(Error::notice("Missing group ID")),
-        };
-        let mut group = self
-            .groups
-            .entry(group_id.to_string())
-            .or_insert_with(|| Group::from(event));
-        group.load_metadata_from_event(event)?;
-        Ok(())
-    }
-
-    fn process_members_event(&mut self, event: &Event) -> Result<(), Error> {
-        let group_id = match Group::extract_group_id(event) {
-            Some(id) => id,
-            None => return Err(Error::notice("Missing group ID")),
-        };
-        let mut group = self
-            .groups
-            .entry(group_id.to_string())
-            .or_insert_with(|| Group::from(event));
-        group.load_members_from_event(event)?;
-        Ok(())
-    }
-
-    fn process_join_request(&mut self, event: &Event) -> Result<(), Error> {
-        let group_id = match Group::extract_group_id(event) {
-            Some(id) => id,
-            None => return Err(Error::notice("Missing group ID")),
-        };
-        let mut group = self
-            .groups
-            .entry(group_id.to_string())
-            .or_insert_with(|| Group::from(event));
-        group.load_join_request_from_event(event)?;
-        Ok(())
-    }
-
-    fn process_create_invite(&mut self, event: &Event) -> Result<(), Error> {
-        let group_id = match Group::extract_group_id(event) {
-            Some(id) => id,
-            None => return Err(Error::notice("Missing group ID")),
-        };
-        let mut group = self
-            .groups
-            .entry(group_id.to_string())
-            .or_insert_with(|| Group::from(event));
-        group.load_invite_from_event(event)?;
-        Ok(())
     }
 }
 

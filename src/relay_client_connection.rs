@@ -394,7 +394,10 @@ impl RelayClientConnection {
         filters: Vec<Filter>,
         timeout: Option<Duration>,
     ) -> Result<Events, Error> {
-        Ok(self.client.fetch_events(filters, timeout).await?)
+        match self.client.fetch_events(filters, timeout).await {
+            Ok(events) => Ok(events),
+            Err(e) => Err(Error::notice(&format!("Failed to fetch events: {:?}", e))),
+        }
     }
 }
 

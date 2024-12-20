@@ -82,9 +82,16 @@ impl RelayForwarder {
         mut sender: MessageSender<RelayMessage>,
     ) -> Result<(), Error> {
         // Fetch historical events with a 10-second timeout
-        let events = connection
+        let events = match connection
             .fetch_events(filters.to_vec(), Some(Duration::from_secs(10)))
-            .await?;
+            .await
+        {
+            Ok(events) => events,
+            Err(e) => {
+                error!("Failed to fetch historical events: {:?}", e);
+                return Err(e.into());
+            }
+        };
 
         // Send each event
         let len = events.len();
