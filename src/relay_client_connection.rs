@@ -101,8 +101,8 @@ pub struct RelayClientConnection {
 impl RelayClientConnection {
     pub async fn new(
         id: String,
+        client: Client,
         relay_url: String,
-        relay_keys: Keys,
         cancellation_token: CancellationToken,
         broadcast_sender: broadcast::Sender<Event>,
         mut broadcast_receiver: broadcast::Receiver<Event>,
@@ -116,7 +116,6 @@ impl RelayClientConnection {
             relay_url
         );
 
-        let client = create_client(&relay_url, relay_keys).await?;
         let (sender, receiver) = mpsc::unbounded_channel::<UnsignedEvent>();
         let (subscription_sender, subscription_receiver) = mpsc::unbounded_channel();
 

@@ -628,7 +628,7 @@ impl Group {
                 let pubkey = PublicKey::parse(pubkey).ok()?;
                 Some((pubkey, roles))
             })
-            .filter_map(|t| t)
+            .flatten()
             .collect::<Vec<_>>();
 
         for (pubkey, roles) in pubkey_and_roles {

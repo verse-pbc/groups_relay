@@ -258,7 +258,7 @@ async fn main() -> Result<()> {
     let nip_42 = Nip42Middleware::new(settings.auth_url.clone());
     let nip_70 = Nip70Middleware;
     let nip_29 = Nip29Middleware::new(shared_groups.clone(), relay_keys.public_key);
-    let relay_forwarder = RelayForwarder::new(relay_keys);
+    let relay_forwarder = RelayForwarder::new(client);
     let connection_state_factory = NostrConnectionFactory::new(settings.relay_url.clone());
 
     let websocket_handler = WebSocketBuilder::new(connection_state_factory, NostrMessageConverter)

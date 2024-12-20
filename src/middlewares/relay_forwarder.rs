@@ -32,19 +32,19 @@ impl MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
 
 #[derive(Debug)]
 pub struct RelayForwarder {
-    pub relay_secret: Keys,
     broadcast_sender: broadcast::Sender<Event>,
+    relay_client: Client,
     _token: CancellationToken,
 }
 
 impl RelayForwarder {
-    pub fn new(relay_secret: Keys) -> Self {
+    pub fn new(relay_client: Client) -> Self {
         let (broadcast_sender, _) = broadcast::channel(1024); // Buffer size of 1024 events
         let token = CancellationToken::new();
 
         Self {
-            relay_secret,
             broadcast_sender,
+            relay_client,
             _token: token,
         }
     }
@@ -60,10 +60,11 @@ impl RelayForwarder {
         sender: MessageSender<RelayMessage>,
         cancellation_token: CancellationToken,
     ) -> Result<RelayClientConnection> {
+        let client = self.relay_client.clone();
         let connection = RelayClientConnection::new(
             connection_id,
+            client,
             relay_url.clone(),
-            self.relay_secret.clone(),
             cancellation_token.clone(),
             self.broadcast_sender.clone(),
             self.broadcast_sender.subscribe(),
@@ -89,7 +90,7 @@ impl RelayForwarder {
             Ok(events) => events,
             Err(e) => {
                 error!("Failed to fetch historical events: {:?}", e);
-                return Err(e.into());
+                return Err(e);
             }
         };
 
