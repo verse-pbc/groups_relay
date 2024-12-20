@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use nostr_sdk::prelude::*;
 use std::time::Duration;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 use websocket_builder::{
@@ -59,8 +59,8 @@ impl Subscription {
 #[derive(Debug)]
 pub struct RelayForwarder {
     pub relay_secret: Keys,
-    broadcast_sender: Sender<Event>,
-    sub_update_sender: Sender<SubUpdateMessage>,
+    broadcast_sender: UnboundedSender<Event>,
+    sub_update_sender: UnboundedSender<SubUpdateMessage>,
     _token: CancellationToken,
 }
 
@@ -75,8 +75,9 @@ enum SubUpdateMessage {
 
 impl RelayForwarder {
     pub fn new(relay_secret: Keys) -> Self {
-        let (event_sender, mut event_receiver) = tokio::sync::mpsc::channel::<Event>(100);
-        let (sub_sender, mut sub_receiver) = tokio::sync::mpsc::channel::<SubUpdateMessage>(100);
+        let (event_sender, mut event_receiver) = tokio::sync::mpsc::unbounded_channel::<Event>();
+        let (sub_sender, mut sub_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<SubUpdateMessage>();
         let token = CancellationToken::new();
 
         let forwarder = Self {
@@ -173,22 +174,16 @@ impl RelayForwarder {
         forwarder
     }
 
-    pub fn remove_connection_subscriptions(&self, connection_id: &str) {
+    pub async fn remove_connection_subscriptions(&self, connection_id: &str) {
         if let Err(e) = self
             .sub_update_sender
-            .try_send(SubUpdateMessage::RemoveConnection(
+            .send(SubUpdateMessage::RemoveConnection(
                 connection_id.to_string(),
             ))
         {
             error!("Failed to send connection cleanup request: {:?}", e);
         } else {
             debug!("Sent cleanup request for connection {}", connection_id);
-        }
-    }
-
-    pub async fn broadcast(&self, event: &Event) {
-        if let Err(e) = self.broadcast_sender.send(event.clone()).await {
-            error!("Failed to send event to broadcast channel: {:?}", e);
         }
     }
 
@@ -289,7 +284,6 @@ impl Middleware for RelayForwarder {
                     if let Err(e) = self
                         .sub_update_sender
                         .send(SubUpdateMessage::Add(subscription_id.clone(), sub))
-                        .await
                     {
                         error!("Failed to send subscription update: {:?}", e);
                     }
@@ -308,7 +302,6 @@ impl Middleware for RelayForwarder {
                         if let Err(e) = self
                             .sub_update_sender
                             .send(SubUpdateMessage::Remove(subscription_id.clone()))
-                            .await
                         {
                             error!("Failed to remove subscription after error: {:?}", e);
                         }
@@ -341,7 +334,6 @@ impl Middleware for RelayForwarder {
                 if let Err(e) = self
                     .sub_update_sender
                     .send(SubUpdateMessage::Remove(subscription_id.clone()))
-                    .await
                 {
                     error!("Failed to send subscription removal: {:?}", e);
                 }

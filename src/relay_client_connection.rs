@@ -3,7 +3,7 @@ use crate::error::Error;
 use anyhow::Result;
 use nostr_sdk::prelude::*;
 use std::collections::HashMap;
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
@@ -23,7 +23,7 @@ impl ReplaceableEventsBuffer {
         self.buffer.insert((event.pubkey, event.kind), event);
     }
 
-    pub async fn flush(&mut self, client: &Client, broadcast_sender: &Sender<Event>) {
+    pub async fn flush(&mut self, client: &Client, broadcast_sender: &UnboundedSender<Event>) {
         if self.buffer.is_empty() {
             return;
         }
@@ -41,7 +41,7 @@ impl ReplaceableEventsBuffer {
                         error!("Error sending replaceable event: {:?}", e);
                     } else {
                         debug!("Broadcasting replaceable event: kind={}", event.kind);
-                        if let Err(e) = broadcast_sender.send(event).await {
+                        if let Err(e) = broadcast_sender.send(event) {
                             error!("Error sending event to broadcast channel: {:?}", e);
                         }
                     }
@@ -58,8 +58,8 @@ impl ReplaceableEventsBuffer {
 pub struct RelayClientConnection {
     client: Client,
     pub connection_token: CancellationToken,
-    replaceable_event_queue: Sender<UnsignedEvent>,
-    broadcast_sender: Sender<Event>,
+    replaceable_event_queue: UnboundedSender<UnsignedEvent>,
+    broadcast_sender: UnboundedSender<Event>,
 }
 
 impl RelayClientConnection {
@@ -67,10 +67,10 @@ impl RelayClientConnection {
         relay_url: String,
         relay_keys: Keys,
         cancellation_token: CancellationToken,
-        broadcast_sender: Sender<Event>,
+        broadcast_sender: UnboundedSender<Event>,
     ) -> Result<Self> {
         let client = create_client(&relay_url, relay_keys).await?;
-        let (sender, mut receiver) = channel::<UnsignedEvent>(10);
+        let (sender, mut receiver) = unbounded_channel::<UnsignedEvent>();
 
         let connection = Self {
             client,
@@ -113,7 +113,7 @@ impl RelayClientConnection {
         match event_builder {
             EventToSave::UnsignedEvent(event) => {
                 debug!("Queueing unsigned event for signing: kind={}", event.kind);
-                if let Err(e) = self.replaceable_event_queue.send(event).await {
+                if let Err(e) = self.replaceable_event_queue.send(event) {
                     error!("Error sending event to replaceable events sender: {:?}", e);
                 }
             }
@@ -121,7 +121,7 @@ impl RelayClientConnection {
                 debug!("Saving regular event: kind={}", event.kind);
                 self.client.send_event(event.clone()).await?;
                 debug!("Broadcasting regular event: kind={}", event.kind);
-                if let Err(e) = self.broadcast_sender.send(event).await {
+                if let Err(e) = self.broadcast_sender.send(event) {
                     error!("Error sending event to broadcast channel: {:?}", e);
                 }
             }
@@ -133,7 +133,7 @@ impl RelayClientConnection {
         debug!("Sending event directly: kind={}", event.kind);
         self.client.send_event(event.clone()).await?;
         debug!("Broadcasting directly sent event: kind={}", event.kind);
-        if let Err(e) = self.broadcast_sender.send(event).await {
+        if let Err(e) = self.broadcast_sender.send(event) {
             error!("Error sending event to broadcast channel: {:?}", e);
         }
         Ok(())
