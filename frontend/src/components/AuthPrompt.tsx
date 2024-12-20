@@ -87,7 +87,6 @@ export const AuthPrompt: FunctionComponent<AuthPromptProps> = ({ onSubmit }) => 
             </div>
 
             {/* Test Key Button */}
-            {import.meta.env.DEV && (
               <button
                 onClick={() => onSubmit(TEST_KEY)}
                 class="w-full px-4 py-3 bg-purple-100 text-purple-700 rounded-lg
@@ -97,7 +96,6 @@ export const AuthPrompt: FunctionComponent<AuthPromptProps> = ({ onSubmit }) => 
                 <span class="text-base">🔑</span>
                 Use Test Key
               </button>
-            )}
 
             {/* Divider */}
             <div class="relative">
