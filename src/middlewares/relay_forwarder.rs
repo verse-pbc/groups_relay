@@ -305,12 +305,28 @@ impl Middleware for RelayForwarder {
                         .await
                     {
                         error!("Error fetching historical events: {:?}", e);
-                        self.sub_update_sender
+                        if let Err(e) = self
+                            .sub_update_sender
                             .send(SubUpdateMessage::Remove(subscription_id.clone()))
-                            .await?;
+                            .await
+                        {
+                            error!("Failed to remove subscription after error: {:?}", e);
+                        }
+                        return ctx
+                            .send_message(RelayMessage::Closed {
+                                subscription_id: subscription_id.clone(),
+                                message: "".to_string(),
+                            })
+                            .await;
                     }
                 } else {
                     error!("No sender available for subscription {}", subscription_id);
+                    return ctx
+                        .send_message(RelayMessage::Closed {
+                            subscription_id: subscription_id.clone(),
+                            message: "".to_string(),
+                        })
+                        .await;
                 }
 
                 return ctx.next().await;
