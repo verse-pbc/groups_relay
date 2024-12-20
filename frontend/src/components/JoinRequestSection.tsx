@@ -39,7 +39,11 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
     return (
       <div class="space-y-4">
         <div class="p-4 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]">
-          <JoinRequestForm groupId={group.id} relayUrl={client.config.relayUrl} />
+          <JoinRequestForm
+            groupId={group.id}
+            relayUrl={client.config.relayUrl}
+            client={client}
+          />
         </div>
 
         {pendingRequests.length > 0 ? (

@@ -7,7 +7,7 @@ use std::{collections::HashMap, collections::HashSet};
 use strum::Display;
 use strum::EnumIter;
 use strum::IntoEnumIterator;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 // Group Creation and Management
 pub const KIND_GROUP_CREATE: Kind = Kind::Custom(9007); // Admin/Relay -> Relay: Create a new group
 pub const KIND_GROUP_DELETE: Kind = Kind::Custom(9008); // Admin/Relay -> Relay: Delete an existing group
@@ -347,6 +347,10 @@ impl Group {
 
     pub fn add_members(&mut self, members_event: &Event) -> Result<bool, Error> {
         if !self.can_edit_members(&members_event.pubkey) {
+            error!(
+                "User {} is not authorized to add users to this group",
+                members_event.pubkey
+            );
             return Err(Error::notice(
                 "User is not authorized to add users to this group",
             ));
@@ -374,6 +378,10 @@ impl Group {
 
     pub fn remove_members(&mut self, members_event: &Event) -> Result<bool, Error> {
         if !self.can_edit_members(&members_event.pubkey) {
+            error!(
+                "User {} is not authorized to remove users from this group",
+                members_event.pubkey
+            );
             return Err(Error::notice(
                 "User is not authorized to remove users from this group",
             ));
