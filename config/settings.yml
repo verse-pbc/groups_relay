@@ -7,3 +7,4 @@ relay:
   local_addr: "0.0.0.0:8080"
   auth_url: "ws://localhost:8080"
   relay_url: "ws://127.0.0.1:7777"
+  db_path: "/app/config/ndb"

@@ -12,6 +12,7 @@ pub struct RelaySettings {
     pub local_addr: String,
     pub relay_url: String,
     pub auth_url: String,
+    pub db_path: String,
 }
 
 impl RelaySettings {

@@ -1,9 +1,16 @@
-FROM rust:1.80.1-slim-bookworm as rust-builder
+FROM rust:1.83.0-slim-bookworm as rust-builder
 
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    mkdir -p /usr/share/keyrings; \
+    apt-get update -y; \
+    apt-get install -y --no-install-recommends wget ca-certificates; \
+    wget -O /usr/share/keyrings/debian-archive-keyring.gpg https://deb.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2023.3+deb12u1_all.deb; \
+    apt-get update -y; \
+    apt-get install -y --no-install-recommends \
+        pkg-config \
+        libssl-dev; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    apt-get clean
 
 WORKDIR /usr/src/app
 
@@ -17,16 +24,20 @@ FROM node:20-slim as frontend-builder
 
 WORKDIR /usr/src/app/frontend
 
-RUN apt-get update && apt-get install -y \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        python3 \
+        make \
+        g++; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    apt-get clean; \
+    npm install -g pnpm
 
 COPY frontend/package*.json ./
 COPY frontend/pnpm-lock.yaml ./
 
-RUN npm install -g pnpm && pnpm install
+RUN pnpm install
 
 COPY frontend/src ./src
 COPY frontend/index.html ./
@@ -39,11 +50,18 @@ RUN pnpm run build
 
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    iputils-ping \
-    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    mkdir -p /usr/share/keyrings; \
+    apt-get update -y; \
+    apt-get install -y --no-install-recommends wget ca-certificates; \
+    wget -O /usr/share/keyrings/debian-archive-keyring.gpg https://deb.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2023.3+deb12u1_all.deb; \
+    apt-get update -y; \
+    apt-get install -y --no-install-recommends \
+        pkg-config \
+        libssl-dev \
+        iputils-ping; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    apt-get clean
 
 WORKDIR /app
 COPY config/settings.yml ./config/

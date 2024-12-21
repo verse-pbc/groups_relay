@@ -1,8 +1,10 @@
-use crate::create_client::create_client;
 use crate::error::Error;
 use anyhow::Result;
+use nostr_database::NostrEventsDatabase;
+use nostr_ndb::NdbDatabase;
 use nostr_sdk::prelude::*;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -23,12 +25,14 @@ enum SubscriptionMessage {
 // Add after the SubscriptionMessage enum
 struct ReplaceableEventsBuffer {
     buffer: HashMap<(PublicKey, Kind), UnsignedEvent>,
+    keys: Keys,
 }
 
 impl ReplaceableEventsBuffer {
-    pub fn new() -> Self {
+    pub fn new(keys: Keys) -> Self {
         Self {
             buffer: HashMap::new(),
+            keys,
         }
     }
 
@@ -36,25 +40,28 @@ impl ReplaceableEventsBuffer {
         self.buffer.insert((event.pubkey, event.kind), event);
     }
 
-    pub async fn flush(&mut self, client: &Client, broadcast_sender: &broadcast::Sender<Event>) {
+    pub async fn flush(
+        &mut self,
+        database: &Arc<NdbDatabase>,
+        broadcast_sender: &broadcast::Sender<Event>,
+    ) {
         if self.buffer.is_empty() {
             return;
         }
 
-        let Ok(signer) = client.signer().await else {
-            error!("Error getting signer");
-            return;
-        };
-
         for (_, event) in self.buffer.drain() {
-            match signer.sign_event(event).await {
+            match self.keys.sign_event(event).await {
                 Ok(event) => {
                     debug!(
                         target: "relay_client",
                         "Saving replaceable event: kind={}",
                         event.kind
                     );
-                    if let Err(e) = client.send_event(event.clone()).await {
+
+                    //TODO: save_signed_event should be a method on the database
+                    let client_message =
+                        RelayMessage::event(SubscriptionId::new("adfs"), event.clone());
+                    if let Err(e) = database.process_event(&client_message.as_json()) {
                         error!(
                             target: "relay_client",
                             "Error sending replaceable event: {:?}",
@@ -90,7 +97,7 @@ impl ReplaceableEventsBuffer {
 #[derive(Debug, Clone)]
 pub struct RelayClientConnection {
     id: String,
-    client: Client,
+    database: Arc<NdbDatabase>,
     pub connection_token: CancellationToken,
     replaceable_event_queue: mpsc::UnboundedSender<UnsignedEvent>,
     broadcast_sender: broadcast::Sender<Event>,
@@ -101,7 +108,8 @@ pub struct RelayClientConnection {
 impl RelayClientConnection {
     pub async fn new(
         id: String,
-        client: Client,
+        database: Arc<NdbDatabase>,
+        keys: Keys,
         relay_url: String,
         cancellation_token: CancellationToken,
         broadcast_sender: broadcast::Sender<Event>,
@@ -121,7 +129,7 @@ impl RelayClientConnection {
 
         let connection = Self {
             id: id_clone.clone(),
-            client,
+            database,
             connection_token: cancellation_token.child_token(),
             replaceable_event_queue: sender,
             broadcast_sender,
@@ -209,13 +217,13 @@ impl RelayClientConnection {
         }));
 
         // Spawn replaceable events handler
-        let client_clone = connection.client.clone();
+        let database_clone = connection.database.clone();
         let token = connection.connection_token.clone();
         let broadcast_sender_clone = connection.broadcast_sender.clone();
         let id_clone2 = id_clone.clone();
 
         tokio::spawn(Box::pin(async move {
-            let mut buffer = ReplaceableEventsBuffer::new();
+            let mut buffer = ReplaceableEventsBuffer::new(keys);
             let mut receiver = receiver;
 
             loop {
@@ -226,7 +234,7 @@ impl RelayClientConnection {
                             "[{}] Replaceable events handler shutting down",
                             id_clone2
                         );
-                        buffer.flush(&client_clone, &broadcast_sender_clone).await;
+                        buffer.flush(&database_clone, &broadcast_sender_clone).await;
                         return;
                     }
 
@@ -236,7 +244,7 @@ impl RelayClientConnection {
                         }
                     }
                     _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                        buffer.flush(&client_clone, &broadcast_sender_clone).await;
+                        buffer.flush(&database_clone, &broadcast_sender_clone).await;
                     }
                 }
             }
@@ -361,22 +369,22 @@ impl RelayClientConnection {
                 }
             }
             EventToSave::Event(event) => {
-                self.client.send_event(event.clone()).await?;
-                if let Err(e) = self.broadcast_sender.send(event) {
-                    error!(
-                        target: "relay_client",
-                        "[{}] Error sending event to broadcast channel: {:?}",
-                        self.id,
-                        e
-                    );
-                }
+                self.save_signed_event(event.clone()).await?;
             }
         }
         Ok(())
     }
 
-    pub async fn send_event(&self, event: Event) -> Result<(), Error> {
-        self.client.send_event(event.clone()).await?;
+    pub async fn save_signed_event(&self, event: Event) -> Result<(), Error> {
+        let client_message = RelayMessage::event(SubscriptionId::new("adfs"), event.clone());
+        if let Err(e) = self.database.process_event(&client_message.as_json()) {
+            error!(
+                target: "relay_client",
+                "[{}] Error sending event to database: {:?}",
+                self.id,
+                e
+            );
+        }
         if let Err(e) = self.broadcast_sender.send(event) {
             error!(
                 target: "relay_client",
@@ -388,12 +396,8 @@ impl RelayClientConnection {
         Ok(())
     }
 
-    pub async fn fetch_events(
-        &self,
-        filters: Vec<Filter>,
-        timeout: Option<Duration>,
-    ) -> Result<Events, Error> {
-        match self.client.fetch_events(filters, timeout).await {
+    pub async fn fetch_events(&self, filters: Vec<Filter>) -> Result<Events, Error> {
+        match self.database.query(filters).await {
             Ok(events) => Ok(events),
             Err(e) => Err(Error::notice(&format!("Failed to fetch events: {:?}", e))),
         }

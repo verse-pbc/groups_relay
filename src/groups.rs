@@ -13,9 +13,12 @@ pub use group::{
     KIND_GROUP_REMOVE_USER, KIND_GROUP_SET_ROLES, KIND_GROUP_USER_JOIN_REQUEST,
     KIND_GROUP_USER_LEAVE_REQUEST, METADATA_EVENT_KINDS,
 };
+use nostr_database::NostrEventsDatabase;
+use nostr_ndb::NdbDatabase;
 use nostr_sdk::prelude::*;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 use tracing::info;
 
 #[derive(Debug)]
@@ -24,7 +27,7 @@ pub struct Groups {
 }
 
 impl Groups {
-    pub async fn load_groups(client: &Client) -> Result<Self, Error> {
+    pub async fn load_groups(database: Arc<NdbDatabase>) -> Result<Self, Error> {
         let mut groups = HashMap::new();
         info!("Loading groups from relay...");
 
@@ -37,7 +40,9 @@ impl Groups {
             ])
             .since(Timestamp::from(0))];
 
-        let metadata_events = client.fetch_events(metadata_filter, None).await?;
+        let Ok(metadata_events) = database.query(metadata_filter).await else {
+            return Err(Error::notice("Error querying metadata events"));
+        };
         info!("Found {} metadata events", metadata_events.len());
 
         // Process events in order to build current state
@@ -76,7 +81,9 @@ impl Groups {
                 .custom_tag(SingleLetterTag::lowercase(Alphabet::H), vec![group_id])
                 .since(Timestamp::from(0))];
 
-            let historical_events = client.fetch_events(historical_filter, None).await?;
+            let Ok(historical_events) = database.query(historical_filter).await else {
+                return Err(Error::notice("Error querying historical events"));
+            };
             info!(
                 "[{}] Found {} historical events",
                 group_id,

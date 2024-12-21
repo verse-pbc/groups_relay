@@ -7,7 +7,7 @@ use std::{collections::HashMap, collections::HashSet};
 use strum::Display;
 use strum::EnumIter;
 use strum::IntoEnumIterator;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 // Group Creation and Management
 pub const KIND_GROUP_CREATE: Kind = Kind::Custom(9007); // Admin/Relay -> Relay: Create a new group
 pub const KIND_GROUP_DELETE: Kind = Kind::Custom(9008); // Admin/Relay -> Relay: Delete an existing group
@@ -894,31 +894,70 @@ impl Group {
         self.is_admin(pubkey)
     }
 
-    pub fn can_see_event(&self, pubkey: &Option<PublicKey>, event: &Event) -> bool {
+    pub fn can_see_event(
+        &self,
+        authed_pubkey: &Option<PublicKey>,
+        relay_pubkey: &PublicKey,
+        event: &Event,
+    ) -> bool {
         // Public groups are always visible
         if !self.metadata.private {
+            debug!(
+                "Public group, can see event {}, kind {}",
+                event.id, event.kind
+            );
             return true;
         }
 
         // Private groups need authentication
-        let Some(pubkey) = pubkey else { return false };
+        let Some(authed_pubkey) = authed_pubkey else {
+            warn!(
+                "User is not authenticated, cannot see event {}, kind {}",
+                event.id, event.kind
+            );
+            return false;
+        };
+
+        // Relay pubkey can see all events
+        if relay_pubkey == authed_pubkey {
+            debug!(
+                "Relay pubkey {} can see event {}, kind {}",
+                relay_pubkey, event.id, event.kind
+            );
+            return true;
+        }
 
         // You can see your own events
-        if *pubkey == event.pubkey {
+        if *authed_pubkey == event.pubkey {
+            debug!(
+                "User {} can see their own event {}, kind {}",
+                authed_pubkey, event.id, event.kind
+            );
             return true;
         }
 
         // Admins can see everything
-        if self.is_admin(pubkey) {
-            return true;
-        } else {
+        if self.is_admin(authed_pubkey) {
             debug!(
-                "User {} is not an admin, checking if they are a member to see event {}, group is {:?}",
-                pubkey, event.id, self
+                "User {} is an admin, can see event {}, kind {}",
+                authed_pubkey, event.id, event.kind
             );
+            return true;
         }
 
         // Members can see everything except invites
-        self.is_member(pubkey) && event.kind != KIND_GROUP_CREATE_INVITE
+        if self.is_member(authed_pubkey) && event.kind != KIND_GROUP_CREATE_INVITE {
+            debug!(
+                "User {} is a member, can see event {}, kind {}",
+                authed_pubkey, event.id, event.kind
+            );
+            return true;
+        }
+
+        warn!(
+            "User {} is not a member, cannot see event {}, kind {}",
+            authed_pubkey, event.id, event.kind
+        );
+        false
     }
 }

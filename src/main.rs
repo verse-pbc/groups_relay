@@ -10,7 +10,6 @@ use axum::{
 use clap::Parser;
 use groups_relay::{
     app_state, config,
-    create_client::create_client,
     groups::Groups,
     handler,
     middlewares::{
@@ -19,6 +18,9 @@ use groups_relay::{
     },
     nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
 };
+use nostr_database::NostrEventsDatabase;
+use nostr_ndb::NdbDatabase;
+use nostr_sdk::prelude::*;
 use nostr_sdk::{ClientMessage, RelayMessage};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -232,11 +234,25 @@ async fn main() -> Result<()> {
         settings.auth_url = auth_url;
     }
 
-    let client = create_client(&settings.relay_url, settings.relay_keys()?)
-        .await
-        .context("Failed to create client")?;
+    let database = NdbDatabase::open(settings.db_path.clone())?;
+    let database = Arc::new(database);
 
-    let groups = Groups::load_groups(&client)
+    let filters = vec![Filter::new().kind(Kind::TextNote)];
+    let keys = Keys::generate();
+    let unsigned_event = EventBuilder::text_note("Hello, world!".to_string())
+        .build_with_ctx(&Instant::now(), keys.public_key());
+    let event = keys.sign_event(unsigned_event).await.unwrap();
+    let client_message = RelayMessage::event(SubscriptionId::new("adfs"), event);
+    match database.process_event(&client_message.as_json()) {
+        Ok(_) => info!("Event processed successfully"),
+        Err(e) => error!("Error processing event: {:?}", e),
+    }
+    let events = database.query(filters).await?;
+    for event in events {
+        info!("Event: {:?}", event);
+    }
+
+    let groups = Groups::load_groups(database.clone())
         .await
         .context("Failed to load groups")?;
 
@@ -258,7 +274,7 @@ async fn main() -> Result<()> {
     let nip_42 = Nip42Middleware::new(settings.auth_url.clone());
     let nip_70 = Nip70Middleware;
     let nip_29 = Nip29Middleware::new(shared_groups.clone(), relay_keys.public_key);
-    let relay_forwarder = RelayForwarder::new(client);
+    let relay_forwarder = RelayForwarder::new(database.clone(), relay_keys);
     let connection_state_factory = NostrConnectionFactory::new(settings.relay_url.clone());
 
     let websocket_handler = WebSocketBuilder::new(connection_state_factory, NostrMessageConverter)

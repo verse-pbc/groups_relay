@@ -3,8 +3,10 @@ use crate::relay_client_connection::RelayClientConnection;
 use crate::Error;
 use anyhow::Result;
 use async_trait::async_trait;
+use nostr_database::NostrEventsDatabase;
+use nostr_ndb::NdbDatabase;
 use nostr_sdk::prelude::*;
-use std::time::Duration;
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
@@ -33,18 +35,20 @@ impl MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
 #[derive(Debug)]
 pub struct RelayForwarder {
     broadcast_sender: broadcast::Sender<Event>,
-    relay_client: Client,
+    database: Arc<NdbDatabase>,
+    keys: Keys,
     _token: CancellationToken,
 }
 
 impl RelayForwarder {
-    pub fn new(relay_client: Client) -> Self {
+    pub fn new(database: Arc<NdbDatabase>, keys: Keys) -> Self {
         let (broadcast_sender, _) = broadcast::channel(1024); // Buffer size of 1024 events
         let token = CancellationToken::new();
 
         Self {
             broadcast_sender,
-            relay_client,
+            database,
+            keys,
             _token: token,
         }
     }
@@ -55,15 +59,16 @@ impl RelayForwarder {
 
     pub async fn add_connection(
         &self,
+        keys: Keys,
         connection_id: String,
         relay_url: String,
         sender: MessageSender<RelayMessage>,
         cancellation_token: CancellationToken,
     ) -> Result<RelayClientConnection> {
-        let client = self.relay_client.clone();
         let connection = RelayClientConnection::new(
             connection_id,
-            client,
+            self.database.clone(),
+            keys,
             relay_url.clone(),
             cancellation_token.clone(),
             self.broadcast_sender.clone(),
@@ -83,10 +88,7 @@ impl RelayForwarder {
         mut sender: MessageSender<RelayMessage>,
     ) -> Result<(), Error> {
         // Fetch historical events with a 10-second timeout
-        let events = match connection
-            .fetch_events(filters.to_vec(), Some(Duration::from_secs(10)))
-            .await
-        {
+        let events = match connection.fetch_events(filters.to_vec()).await {
             Ok(events) => events,
             Err(e) => {
                 error!("Failed to fetch historical events: {:?}", e);
@@ -237,7 +239,7 @@ impl Middleware for RelayForwarder {
                     "[{}] Received EVENT message with id: {}", connection_id, event_id
                 );
 
-                if let Err(e) = connection.send_event(*event.clone()).await {
+                if let Err(e) = connection.save_signed_event(*event.clone()).await {
                     error!(
                         target: "relay_forwarder",
                         "[{}] Error sending event to relay: {:?}", connection_id, e
@@ -318,6 +320,7 @@ impl Middleware for RelayForwarder {
 
         let connection = match self
             .add_connection(
+                self.keys.clone(),
                 ctx.connection_id.clone(),
                 ctx.state.relay_url.clone(),
                 sender,
