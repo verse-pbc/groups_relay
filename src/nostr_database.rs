@@ -13,7 +13,7 @@ pub struct NostrDatabase {
 }
 
 impl NostrDatabase {
-    pub fn open(path: String, keys: Keys) -> Result<Self> {
+    pub fn new(path: String, keys: Keys) -> Result<Self> {
         let database = NdbDatabase::open(path)?;
         let (event_sender, _) = broadcast::channel(1024);
 
@@ -26,20 +26,6 @@ impl NostrDatabase {
 
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.event_sender.subscribe()
-    }
-
-    pub async fn query(&self, filters: Vec<Filter>) -> Result<Events> {
-        debug!("Querying database with filters: {:?}", filters);
-        match self.inner.query(filters).await {
-            Ok(events) => {
-                debug!("Found {} events", events.len());
-                Ok(events)
-            }
-            Err(e) => {
-                error!("Error querying database: {:?}", e);
-                Err(e.into())
-            }
-        }
     }
 
     fn save(&self, event_json: &str) -> Result<()> {
@@ -83,7 +69,7 @@ impl NostrDatabase {
         Ok(())
     }
 
-    pub async fn save_event(&self, unsigned_event: UnsignedEvent) -> Result<Event> {
+    pub async fn save_unsigned_event(&self, unsigned_event: UnsignedEvent) -> Result<Event> {
         debug!("Signing and saving event");
         let event = self.keys.sign_event(unsigned_event).await?;
         self.save_signed_event(&event)?;

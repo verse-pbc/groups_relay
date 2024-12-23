@@ -25,26 +25,35 @@ enum SubscriptionMessage {
 // Add after the SubscriptionMessage enum
 struct ReplaceableEventsBuffer {
     buffer: HashMap<(PublicKey, Kind), UnsignedEvent>,
+    sender: mpsc::UnboundedSender<UnsignedEvent>,
+    receiver: Option<mpsc::UnboundedReceiver<UnsignedEvent>>,
 }
 
 impl ReplaceableEventsBuffer {
     pub fn new() -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
         Self {
             buffer: HashMap::new(),
+            sender,
+            receiver: Some(receiver),
         }
+    }
+
+    pub fn get_sender(&self) -> mpsc::UnboundedSender<UnsignedEvent> {
+        self.sender.clone()
     }
 
     pub fn insert(&mut self, event: UnsignedEvent) {
         self.buffer.insert((event.pubkey, event.kind), event);
     }
 
-    pub async fn flush(&mut self, database: &Arc<NostrDatabase>) {
+    async fn flush(&mut self, database: &Arc<NostrDatabase>) {
         if self.buffer.is_empty() {
             return;
         }
 
         for (_, event) in self.buffer.drain() {
-            match database.save_event(event).await {
+            match database.save_unsigned_event(event).await {
                 Ok(event) => {
                     debug!(
                         target: "event_store",
@@ -61,6 +70,35 @@ impl ReplaceableEventsBuffer {
                 }
             }
         }
+    }
+
+    pub fn start(mut self, database: Arc<NostrDatabase>, token: CancellationToken, id: String) {
+        let mut receiver = self.receiver.take().expect("Receiver already taken");
+
+        tokio::spawn(Box::pin(async move {
+            loop {
+                tokio::select! {
+                    _ = token.cancelled() => {
+                        debug!(
+                            target: "event_store",
+                            "[{}] Replaceable events handler shutting down",
+                            id
+                        );
+                        self.flush(&database).await;
+                        return;
+                    }
+
+                    event = receiver.recv() => {
+                        if let Some(event) = event {
+                            self.insert(event);
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                        self.flush(&database).await;
+                    }
+                }
+            }
+        }));
     }
 }
 
@@ -91,7 +129,8 @@ impl EventStoreConnection {
             db_connection
         );
 
-        let (sender, receiver) = mpsc::unbounded_channel::<UnsignedEvent>();
+        let buffer = ReplaceableEventsBuffer::new();
+        let replaceable_event_queue = buffer.get_sender();
         let (subscription_sender, subscription_receiver) = mpsc::unbounded_channel();
 
         let connection = Self {
@@ -99,10 +138,17 @@ impl EventStoreConnection {
             database: database.clone(),
             db_connection,
             connection_token: cancellation_token.child_token(),
-            replaceable_event_queue: sender,
+            replaceable_event_queue,
             subscription_sender,
             outgoing_sender: Some(outgoing_sender.clone()),
         };
+
+        // Start the buffer task
+        buffer.start(
+            database.clone(),
+            connection.connection_token.clone(),
+            id_clone.clone(),
+        );
 
         // Spawn subscription management task
         let token = connection.connection_token.clone();
@@ -178,39 +224,6 @@ impl EventStoreConnection {
                                 }
                             }
                         }
-                    }
-                }
-            }
-        }));
-
-        // Spawn replaceable events handler
-        let database_clone = connection.database.clone();
-        let token = connection.connection_token.clone();
-        let id_clone2 = id_clone.clone();
-
-        tokio::spawn(Box::pin(async move {
-            let mut buffer = ReplaceableEventsBuffer::new();
-            let mut receiver = receiver;
-
-            loop {
-                tokio::select! {
-                    _ = token.cancelled() => {
-                        debug!(
-                            target: "event_store",
-                            "[{}] Replaceable events handler shutting down",
-                            id_clone2
-                        );
-                        buffer.flush(&database_clone).await;
-                        return;
-                    }
-
-                    event = receiver.recv() => {
-                        if let Some(event) = event {
-                            buffer.insert(event);
-                        }
-                    }
-                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                        buffer.flush(&database_clone).await;
                     }
                 }
             }
@@ -350,7 +363,7 @@ impl EventStoreConnection {
     }
 
     pub async fn fetch_events(&self, filters: Vec<Filter>) -> Result<Events, Error> {
-        match self.database.query(filters).await {
+        match self.database.fetch_events(filters).await {
             Ok(events) => Ok(events),
             Err(e) => Err(Error::notice(format!("Failed to fetch events: {:?}", e))),
         }

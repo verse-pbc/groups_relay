@@ -236,7 +236,7 @@ async fn main() -> Result<()> {
     }
 
     let relay_keys = settings.relay_keys()?;
-    let database = NostrDatabase::open(settings.db_path.clone(), relay_keys.clone())?;
+    let database = NostrDatabase::new(settings.db_path.clone(), relay_keys.clone())?;
     let database = Arc::new(database);
 
     let groups = Groups::load_groups(database.clone(), relay_keys.public_key)
