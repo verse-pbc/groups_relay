@@ -1,7 +1,7 @@
 pub mod group;
 
-use crate::database::NostrDatabase;
 use crate::error::Error;
+use crate::nostr_database::NostrDatabase;
 use anyhow::Result;
 use dashmap::{
     mapref::one::{Ref, RefMut},
@@ -23,10 +23,14 @@ use tracing::info;
 #[derive(Debug)]
 pub struct Groups {
     groups: DashMap<String, Group>,
+    relay_pubkey: PublicKey,
 }
 
 impl Groups {
-    pub async fn load_groups(database: Arc<NostrDatabase>) -> Result<Self, Error> {
+    pub async fn load_groups(
+        database: Arc<NostrDatabase>,
+        relay_pubkey: PublicKey,
+    ) -> Result<Self, Error> {
         let mut groups = HashMap::new();
         info!("Loading groups from relay...");
 
@@ -48,7 +52,12 @@ impl Groups {
         for event in metadata_events.clone() {
             let group_id = match Group::extract_group_id(&event) {
                 Some(id) => id,
-                None => return Err(Error::notice("Group ID not found")),
+                None => {
+                    return Err(Error::notice(format!(
+                        "Group ID not found in event: {}",
+                        event.as_json()
+                    )))
+                }
             };
 
             if event.kind == KIND_GROUP_METADATA {
@@ -112,6 +121,7 @@ impl Groups {
 
         Ok(Self {
             groups: DashMap::from_iter(groups),
+            relay_pubkey,
         })
     }
 
@@ -168,7 +178,7 @@ impl Groups {
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("Group not found"))?;
 
-        group.set_roles(event)
+        group.set_roles(event, &self.relay_pubkey)
     }
 
     pub fn handle_put_user(&self, event: &Event) -> Result<bool, Error> {
@@ -176,7 +186,7 @@ impl Groups {
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("Group not found"))?;
 
-        group.add_members(event)
+        group.add_members(event, &self.relay_pubkey)
     }
 
     pub fn handle_remove_user(&self, event: &Event) -> Result<bool, Error> {
@@ -184,7 +194,7 @@ impl Groups {
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("Group not found"))?;
 
-        group.remove_members(event)
+        group.remove_members(event, &self.relay_pubkey)
     }
 
     pub fn handle_edit_metadata(&self, event: &Event) -> Result<(), Error> {
@@ -192,7 +202,7 @@ impl Groups {
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("Group not found"))?;
 
-        group.set_metadata(event)
+        group.set_metadata(event, &self.relay_pubkey)
     }
 
     pub fn handle_create_invite(&self, event: &Event) -> Result<(), Error> {
@@ -200,7 +210,7 @@ impl Groups {
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("Group not found"))?;
 
-        group.create_invite(event)?;
+        group.create_invite(event, &self.relay_pubkey)?;
         Ok(())
     }
 
@@ -260,6 +270,7 @@ mod tests {
 
         let groups = Groups {
             groups: DashMap::new(),
+            relay_pubkey: admin_keys.public_key(),
         };
         groups.handle_group_create(&event).unwrap();
 
@@ -295,6 +306,7 @@ mod tests {
 
         let groups = Groups {
             groups: DashMap::new(),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         // Create the group
@@ -353,6 +365,7 @@ mod tests {
 
         let groups = Groups {
             groups: DashMap::new(),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         // Create the group
@@ -392,6 +405,7 @@ mod tests {
 
         let groups = Groups {
             groups: DashMap::new(),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         // Create the group

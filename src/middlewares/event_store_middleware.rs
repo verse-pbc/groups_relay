@@ -1,5 +1,5 @@
-use crate::database::NostrDatabase;
-use crate::event_store_connection::{EventStoreConfig, EventStoreConnection};
+use crate::event_store_connection::EventStoreConnection;
+use crate::nostr_database::NostrDatabase;
 use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -30,12 +30,12 @@ impl MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
 }
 
 #[derive(Debug)]
-pub struct EventStore {
+pub struct EventStoreMiddleware {
     database: Arc<NostrDatabase>,
     _token: CancellationToken,
 }
 
-impl EventStore {
+impl EventStoreMiddleware {
     pub fn new(database: Arc<NostrDatabase>) -> Self {
         let token = CancellationToken::new();
 
@@ -52,31 +52,31 @@ impl EventStore {
         sender: MessageSender<RelayMessage>,
         cancellation_token: CancellationToken,
     ) -> Result<EventStoreConnection> {
-        let config = EventStoreConfig {
-            id: connection_id,
-            database: self.database.clone(),
+        let connection = EventStoreConnection::new(
+            connection_id,
+            self.database.clone(),
             relay_url,
             cancellation_token,
-        };
-
-        let connection = EventStoreConnection::new(config, sender).await?;
+            sender,
+        )
+        .await?;
 
         Ok(connection)
     }
 
     async fn fetch_historical_events(
         &self,
-        connection: &EventStoreConnection,
+        _connection: &EventStoreConnection,
         subscription_id: &SubscriptionId,
         filters: &[Filter],
         mut sender: MessageSender<RelayMessage>,
     ) -> Result<()> {
-        // Fetch historical events
-        let events = match connection.fetch_events(filters.to_vec()).await {
+        // Fetch historical events from the database directly
+        let events = match self.database.fetch_events(filters.to_vec()).await {
             Ok(events) => events,
             Err(e) => {
                 error!("Failed to fetch historical events: {:?}", e);
-                return Err(e.into());
+                return Err(e);
             }
         };
 
@@ -118,7 +118,7 @@ impl EventStore {
 }
 
 #[async_trait]
-impl Middleware for EventStore {
+impl Middleware for EventStoreMiddleware {
     type State = NostrConnectionState;
     type IncomingMessage = ClientMessage;
     type OutgoingMessage = RelayMessage;
@@ -139,7 +139,7 @@ impl Middleware for EventStore {
                 filters,
             } => {
                 debug!(
-                    target: "relay_forwarder",
+                    target: "event_store",
                     "[{}] Processing REQ message for subscription {} with filters {:?}",
                     connection_id, subscription_id, filters
                 );
@@ -149,23 +149,15 @@ impl Middleware for EventStore {
                     panic!("Sender is None");
                 };
 
-                // Set the message sender for the connection if not already set
-                if connection.message_sender.is_none() {
-                    debug!(
-                        target: "relay_forwarder",
-                        "[{}] Setting message sender for connection",
-                        connection_id
-                    );
-                    connection.set_message_sender(sender.clone());
-                }
-
                 debug!(
-                    target: "relay_forwarder",
+                    target: "event_store",
                     "[{}] Adding subscription {} to connection",
                     connection_id,
                     subscription_id
                 );
-                connection.add_subscription(subscription_id.clone(), filters.clone());
+                connection
+                    .handle_subscription(subscription_id.clone(), filters.clone())
+                    .await?;
 
                 // Fetch historical events
                 if let Err(e) = self
@@ -173,16 +165,18 @@ impl Middleware for EventStore {
                     .await
                 {
                     error!(
-                        target: "relay_forwarder",
+                        target: "event_store",
                         "[{}] Error fetching historical events: {:?}", connection_id, e
                     );
                     debug!(
-                        target: "relay_forwarder",
+                        target: "event_store",
                         "[{}] Removing subscription {} due to error",
                         connection_id,
                         subscription_id
                     );
-                    connection.remove_subscription(subscription_id);
+                    connection
+                        .handle_unsubscribe(subscription_id.clone())
+                        .await?;
                     return ctx
                         .send_message(RelayMessage::Closed {
                             subscription_id: subscription_id.clone(),
@@ -195,19 +189,21 @@ impl Middleware for EventStore {
             }
             ClientMessage::Close(subscription_id) => {
                 debug!(
-                    target: "relay_forwarder",
+                    target: "event_store",
                     "[{}] Received CLOSE message with subscription_id: {}",
                     connection_id, subscription_id
                 );
 
                 // Remove subscription from the connection
                 debug!(
-                    target: "relay_forwarder",
+                    target: "event_store",
                     "[{}] Removing subscription {} due to CLOSE message",
                     connection_id,
                     subscription_id
                 );
-                connection.remove_subscription(subscription_id);
+                connection
+                    .handle_unsubscribe(subscription_id.clone())
+                    .await?;
 
                 ctx.send_message(RelayMessage::Closed {
                     subscription_id: subscription_id.clone(),
@@ -219,13 +215,13 @@ impl Middleware for EventStore {
             ClientMessage::Event(event) => {
                 let event_id = event.id;
                 debug!(
-                    target: "relay_forwarder",
+                    target: "event_store",
                     "[{}] Received EVENT message with id: {}", connection_id, event_id
                 );
 
-                if let Err(e) = connection.save_signed_event(*event.clone()).await {
+                if let Err(e) = connection.handle_event(*event.clone()).await {
                     error!(
-                        target: "relay_forwarder",
+                        target: "event_store",
                         "[{}] Error sending event to relay: {:?}", connection_id, e
                     );
                     ctx.send_message(RelayMessage::Ok {
@@ -247,35 +243,12 @@ impl Middleware for EventStore {
             }
             ClientMessage::Auth(_event) => {
                 debug!(
-                    target: "relay_forwarder",
-                    "[{}] Processing AUTH message",
-                    connection_id
+                    target: "event_store",
+                    "[{}] Received AUTH message", connection_id
                 );
-                return ctx.next().await;
-            }
-            ClientMessage::Count { .. } => {
-                debug!(
-                    target: "relay_forwarder",
-                    "[{}] Not implemented: COUNT message",
-                    connection_id
-                );
-                ctx.send_message(RelayMessage::Notice {
-                    message: "COUNT not implemented".to_string(),
-                })
-                .await?;
                 return ctx.next().await;
             }
             _ => {
-                debug!(
-                    target: "relay_forwarder",
-                    "[{}] Not implemented client message: {:?}",
-                    connection_id, ctx.message
-                );
-
-                ctx.send_message(RelayMessage::Notice {
-                    message: "Not implemented".to_string(),
-                })
-                .await?;
                 return ctx.next().await;
             }
         }
@@ -285,23 +258,6 @@ impl Middleware for EventStore {
         &'a self,
         ctx: &mut OutboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        let message = match ctx.message.as_ref() {
-            Some(msg) => msg,
-            None => return ctx.next().await,
-        };
-
-        if let RelayMessage::Closed {
-            subscription_id, ..
-        } = message
-        {
-            debug!(
-                target: "relay_forwarder",
-                "[{}] Subscription {} closed via CLOSED message",
-                ctx.connection_id,
-                subscription_id
-            );
-        }
-
         ctx.next().await
     }
 
@@ -316,7 +272,7 @@ impl Middleware for EventStore {
         };
 
         debug!(
-            target: "relay_forwarder",
+            target: "event_store",
             "[{}] Creating new connection to relay {}",
             ctx.connection_id,
             ctx.state.relay_url
@@ -334,7 +290,7 @@ impl Middleware for EventStore {
             Ok(connection) => connection,
             Err(e) => {
                 error!(
-                    target: "relay_forwarder",
+                    target: "event_store",
                     "[{}] Error adding connection to relay {}: {}",
                     ctx.connection_id,
                     ctx.state.relay_url,
@@ -345,7 +301,7 @@ impl Middleware for EventStore {
         };
 
         debug!(
-            target: "relay_forwarder",
+            target: "event_store",
             "[{}] Successfully created connection to relay {}",
             ctx.connection_id,
             ctx.state.relay_url
@@ -361,7 +317,7 @@ impl Middleware for EventStore {
         ctx: &mut DisconnectContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         debug!(
-            target: "relay_forwarder",
+            target: "event_store",
             "[{}] Connection disconnected",
             ctx.connection_id
         );

@@ -10,13 +10,16 @@ use axum::{
 use clap::Parser;
 use groups_relay::{
     app_state, config,
-    database::NostrDatabase,
     groups::Groups,
     handler,
     middlewares::{
-        EventStore, EventVerifierMiddleware, LoggerMiddleware, Nip29Middleware, Nip42Middleware,
-        Nip70Middleware, NostrMessageConverter,
+        event_store_middleware::{EventStoreMiddleware, NostrMessageConverter},
+        logger_middleware::LoggerMiddleware,
+        nip_29_groups::Nip29Middleware,
+        nip_70_protected_events::Nip70Middleware,
+        EventVerifierMiddleware, Nip42Middleware,
     },
+    nostr_database::NostrDatabase,
     nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
 };
 use nostr_sdk::{ClientMessage, RelayMessage};
@@ -236,7 +239,7 @@ async fn main() -> Result<()> {
     let database = NostrDatabase::open(settings.db_path.clone(), relay_keys.clone())?;
     let database = Arc::new(database);
 
-    let groups = Groups::load_groups(database.clone())
+    let groups = Groups::load_groups(database.clone(), relay_keys.public_key)
         .await
         .context("Failed to load groups")?;
 
@@ -257,7 +260,7 @@ async fn main() -> Result<()> {
     let nip_42 = Nip42Middleware::new(settings.auth_url.clone());
     let nip_70 = Nip70Middleware;
     let nip_29 = Nip29Middleware::new(shared_groups.clone(), relay_keys.public_key);
-    let event_store = EventStore::new(database.clone());
+    let event_store = EventStoreMiddleware::new(database.clone());
     let connection_state_factory = NostrConnectionFactory::new(settings.relay_url.clone());
 
     let websocket_handler = WebSocketBuilder::new(connection_state_factory, NostrMessageConverter)

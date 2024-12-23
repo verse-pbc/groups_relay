@@ -42,15 +42,15 @@ impl NostrDatabase {
         }
     }
 
-    pub fn process_event(&self, event_json: &str) -> Result<()> {
+    fn save(&self, event_json: &str) -> Result<()> {
         debug!("Processing event: {}", event_json);
         match self.inner.process_event(event_json) {
             Ok(_) => {
-                debug!("Event processed successfully");
+                debug!("Event saved successfully, event: {}", event_json);
                 Ok(())
             }
             Err(e) => {
-                error!("Error processing event: {:?}", e);
+                error!("Error saving event: {:?}", e);
                 Err(e.into())
             }
         }
@@ -73,7 +73,7 @@ impl NostrDatabase {
     pub fn save_signed_event(&self, event: &Event) -> Result<()> {
         debug!("Saving signed event: {}", event.id);
         let client_message = RelayMessage::event(SubscriptionId::new("save"), event.clone());
-        self.process_event(&client_message.as_json())?;
+        self.save(&client_message.as_json())?;
 
         // Broadcast the event after successful save
         if let Err(e) = self.event_sender.send(event.clone()) {

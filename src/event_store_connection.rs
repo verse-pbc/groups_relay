@@ -1,7 +1,8 @@
-use crate::database::NostrDatabase;
 use crate::error::Error;
+use crate::nostr_database::NostrDatabase;
 use anyhow::Result;
 use nostr_sdk::prelude::*;
+use snafu::Backtrace;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -19,15 +20,6 @@ enum SubscriptionMessage {
         event: Event,
         sender: MessageSender<RelayMessage>,
     },
-}
-
-// Configuration struct for EventStoreConnection
-#[derive(Debug)]
-pub struct EventStoreConfig {
-    pub id: String,
-    pub database: Arc<NostrDatabase>,
-    pub relay_url: String,
-    pub cancellation_token: CancellationToken,
 }
 
 // Add after the SubscriptionMessage enum
@@ -55,14 +47,14 @@ impl ReplaceableEventsBuffer {
             match database.save_event(event).await {
                 Ok(event) => {
                     debug!(
-                        target: "relay_client",
+                        target: "event_store",
                         "Saved replaceable event: kind={}",
                         event.kind
                     );
                 }
                 Err(e) => {
                     error!(
-                        target: "relay_client",
+                        target: "event_store",
                         "Error saving event: {:?}",
                         e
                     );
@@ -76,23 +68,27 @@ impl ReplaceableEventsBuffer {
 pub struct EventStoreConnection {
     id: String,
     database: Arc<NostrDatabase>,
-    pub connection_token: CancellationToken,
+    db_connection: String,
+    connection_token: CancellationToken,
     replaceable_event_queue: mpsc::UnboundedSender<UnsignedEvent>,
     subscription_sender: mpsc::UnboundedSender<SubscriptionMessage>,
-    pub message_sender: Option<MessageSender<RelayMessage>>,
+    pub outgoing_sender: Option<MessageSender<RelayMessage>>,
 }
 
 impl EventStoreConnection {
     pub async fn new(
-        config: EventStoreConfig,
+        id: String,
+        database: Arc<NostrDatabase>,
+        db_connection: String,
+        cancellation_token: CancellationToken,
         outgoing_sender: MessageSender<RelayMessage>,
     ) -> Result<Self> {
-        let id_clone = config.id.clone();
+        let id_clone = id.clone();
         debug!(
-            target: "relay_client",
-            "[{}] Creating new RelayClientConnection for {}",
+            target: "event_store",
+            "[{}] Creating new connection for {}",
             id_clone,
-            config.relay_url
+            db_connection
         );
 
         let (sender, receiver) = mpsc::unbounded_channel::<UnsignedEvent>();
@@ -100,11 +96,12 @@ impl EventStoreConnection {
 
         let connection = Self {
             id: id_clone.clone(),
-            database: config.database.clone(),
-            connection_token: config.cancellation_token.child_token(),
+            database: database.clone(),
+            db_connection,
+            connection_token: cancellation_token.child_token(),
             replaceable_event_queue: sender,
             subscription_sender,
-            message_sender: Some(outgoing_sender.clone()),
+            outgoing_sender: Some(outgoing_sender.clone()),
         };
 
         // Spawn subscription management task
@@ -115,7 +112,7 @@ impl EventStoreConnection {
             let mut subscription_receiver = subscription_receiver;
 
             debug!(
-                target: "relay_client",
+                target: "event_store",
                 "[{}] Starting subscription manager",
                 id_clone2
             );
@@ -124,7 +121,7 @@ impl EventStoreConnection {
                 tokio::select! {
                     _ = token.cancelled() => {
                         debug!(
-                            target: "relay_client",
+                            target: "event_store",
                             "[{}] Subscription manager shutting down",
                             id_clone2
                         );
@@ -134,7 +131,7 @@ impl EventStoreConnection {
                         match msg {
                             SubscriptionMessage::Add(subscription_id, filters) => {
                                 debug!(
-                                    target: "relay_client",
+                                    target: "event_store",
                                     "[{}] Adding subscription {} (current count: {})",
                                     id_clone2, subscription_id, subscriptions.len()
                                 );
@@ -143,7 +140,7 @@ impl EventStoreConnection {
                             SubscriptionMessage::Remove(subscription_id) => {
                                 if subscriptions.remove(&subscription_id).is_some() {
                                     debug!(
-                                        target: "relay_client",
+                                        target: "event_store",
                                         "[{}] Removed subscription {} (remaining count: {})",
                                         id_clone2,
                                         subscription_id,
@@ -157,7 +154,7 @@ impl EventStoreConnection {
                                     let matches = filters.iter().any(|filter| filter.match_event(&event));
                                     if matches {
                                         debug!(
-                                            target: "relay_client",
+                                            target: "event_store",
                                             "[{}] Matched event {} to subscription {}",
                                             id_clone2,
                                             event.id,
@@ -169,7 +166,7 @@ impl EventStoreConnection {
                                         };
                                         if let Err(e) = sender.send(message).await {
                                             error!(
-                                                target: "relay_client",
+                                                target: "event_store",
                                                 "[{}] Failed to send event {} to subscription {}: {:?}",
                                                 id_clone2,
                                                 event.id,
@@ -199,7 +196,7 @@ impl EventStoreConnection {
                 tokio::select! {
                     _ = token.cancelled() => {
                         debug!(
-                            target: "relay_client",
+                            target: "event_store",
                             "[{}] Replaceable events handler shutting down",
                             id_clone2
                         );
@@ -224,10 +221,10 @@ impl EventStoreConnection {
         let subscription_sender_clone = connection.subscription_sender.clone();
         let id_clone3 = id_clone.clone();
         let outgoing_sender = outgoing_sender.clone();
-        let mut broadcast_receiver = config.database.subscribe();
+        let mut broadcast_receiver = database.subscribe();
         tokio::spawn(Box::pin(async move {
             debug!(
-                target: "relay_client",
+                target: "event_store",
                 "[{}] Starting broadcast event handler",
                 id_clone3
             );
@@ -236,7 +233,7 @@ impl EventStoreConnection {
                 tokio::select! {
                     _ = token_clone.cancelled() => {
                         debug!(
-                            target: "relay_client",
+                            target: "event_store",
                             "[{}] Broadcast event handler shutting down",
                             id_clone3
                         );
@@ -248,7 +245,7 @@ impl EventStoreConnection {
                             sender: outgoing_sender.clone(),
                         }) {
                             error!(
-                                target: "relay_client",
+                                target: "event_store",
                                 "[{}] Failed to send event to subscription manager: {:?}",
                                 id_clone3,
                                 e
@@ -260,16 +257,16 @@ impl EventStoreConnection {
         }));
 
         debug!(
-            target: "relay_client",
-            "[{}] RelayClientConnection created successfully",
+            target: "event_store",
+            "[{}] Connection created successfully",
             id_clone
         );
 
         Ok(connection)
     }
 
-    pub fn set_message_sender(&mut self, sender: MessageSender<RelayMessage>) {
-        self.message_sender = Some(sender);
+    pub fn set_outgoing_sender(&mut self, sender: MessageSender<RelayMessage>) {
+        self.outgoing_sender = Some(sender);
     }
 
     pub fn add_subscription(&self, subscription_id: SubscriptionId, filters: Vec<Filter>) {
@@ -278,7 +275,7 @@ impl EventStoreConnection {
             .send(SubscriptionMessage::Add(subscription_id, filters))
         {
             error!(
-                target: "relay_client",
+                target: "event_store",
                 "[{}] Failed to send add subscription message: {:?}",
                 self.id,
                 e
@@ -292,7 +289,7 @@ impl EventStoreConnection {
             .send(SubscriptionMessage::Remove(subscription_id.clone()))
         {
             error!(
-                target: "relay_client",
+                target: "event_store",
                 "[{}] Failed to send remove subscription message: {:?}",
                 self.id,
                 e
@@ -301,10 +298,10 @@ impl EventStoreConnection {
     }
 
     pub async fn handle_broadcast_event(&self, event: &Event) -> Result<(), Error> {
-        let Some(sender) = &self.message_sender else {
+        let Some(sender) = &self.outgoing_sender else {
             error!(
-                target: "relay_client",
-                "[{}] No message sender available for connection", self.id
+                target: "event_store",
+                "[{}] No outgoing sender available for connection", self.id
             );
             return Ok(());
         };
@@ -317,7 +314,7 @@ impl EventStoreConnection {
             })
         {
             error!(
-                target: "relay_client",
+                target: "event_store",
                 "[{}] Failed to send check event message: {:?}",
                 self.id,
                 e
@@ -331,7 +328,7 @@ impl EventStoreConnection {
             EventToSave::UnsignedEvent(event) => {
                 if let Err(e) = self.replaceable_event_queue.send(event) {
                     error!(
-                        target: "relay_client",
+                        target: "event_store",
                         "[{}] Error sending event to replaceable events sender: {:?}",
                         self.id,
                         e
@@ -339,21 +336,15 @@ impl EventStoreConnection {
                 }
             }
             EventToSave::Event(event) => {
-                self.save_signed_event(event.clone()).await?;
+                if let Err(e) = self.database.save_signed_event(&event) {
+                    error!(
+                        target: "event_store",
+                        "[{}] Error saving signed event: {:?}",
+                        self.id,
+                        e
+                    );
+                }
             }
-        }
-        Ok(())
-    }
-
-    pub async fn save_signed_event(&self, event: Event) -> Result<(), Error> {
-        let client_message = RelayMessage::event(SubscriptionId::new("adfs"), event.clone());
-        if let Err(e) = self.database.process_event(&client_message.as_json()) {
-            error!(
-                target: "relay_client",
-                "[{}] Error sending event to database: {:?}",
-                self.id,
-                e
-            );
         }
         Ok(())
     }
@@ -363,6 +354,120 @@ impl EventStoreConnection {
             Ok(events) => Ok(events),
             Err(e) => Err(Error::notice(format!("Failed to fetch events: {:?}", e))),
         }
+    }
+
+    pub async fn handle_event(&self, event: Event) -> Result<(), Error> {
+        debug!(
+            target: "event_store",
+            "[{}] Handling event {} from {}",
+            self.id,
+            event.id,
+            self.db_connection
+        );
+
+        if let Some(sender) = &self.outgoing_sender {
+            if let Err(e) = self
+                .subscription_sender
+                .send(SubscriptionMessage::CheckEvent {
+                    event: event.clone(),
+                    sender: sender.clone(),
+                })
+            {
+                error!(
+                    target: "event_store",
+                    "[{}] Failed to send event {} to subscription manager: {:?}",
+                    self.id,
+                    event.id,
+                    e
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_unsigned_event(&self, event: UnsignedEvent) -> Result<(), Error> {
+        debug!(
+            target: "event_store",
+            "[{}] Handling unsigned event from {}",
+            self.id,
+            self.db_connection
+        );
+
+        if let Err(e) = self.replaceable_event_queue.send(event) {
+            error!(
+                target: "event_store",
+                "[{}] Failed to send event to replaceable events buffer: {:?}",
+                self.id,
+                e
+            );
+            return Err(Error::Internal {
+                message: format!("Failed to send event to replaceable events buffer: {}", e),
+                backtrace: Backtrace::capture(),
+            });
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_subscription(
+        &self,
+        subscription_id: SubscriptionId,
+        filters: Vec<Filter>,
+    ) -> Result<(), Error> {
+        debug!(
+            target: "event_store",
+            "[{}] Handling subscription {} from {}",
+            self.id,
+            subscription_id,
+            self.db_connection
+        );
+
+        if let Err(e) = self
+            .subscription_sender
+            .send(SubscriptionMessage::Add(subscription_id, filters))
+        {
+            error!(
+                target: "event_store",
+                "[{}] Failed to send subscription to manager: {:?}",
+                self.id,
+                e
+            );
+            return Err(Error::Internal {
+                message: format!("Failed to send subscription to manager: {}", e),
+                backtrace: Backtrace::capture(),
+            });
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_unsubscribe(&self, subscription_id: SubscriptionId) -> Result<(), Error> {
+        debug!(
+            target: "event_store",
+            "[{}] Handling unsubscribe {} from {}",
+            self.id,
+            subscription_id,
+            self.db_connection
+        );
+
+        if let Err(e) = self
+            .subscription_sender
+            .send(SubscriptionMessage::Remove(subscription_id))
+        {
+            error!(
+                target: "event_store",
+                "[{}] Failed to send unsubscribe to manager: {:?}",
+                self.id,
+                e
+            );
+            return Err(Error::Internal {
+                message: format!("Failed to send unsubscribe to manager: {}", e),
+                backtrace: Backtrace::capture(),
+            });
+        }
+
+        Ok(())
     }
 }
 

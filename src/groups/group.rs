@@ -338,8 +338,12 @@ impl Group {
         Ok(group)
     }
 
-    pub fn add_members(&mut self, members_event: &Event) -> Result<bool, Error> {
-        if !self.can_edit_members(&members_event.pubkey) {
+    pub fn add_members(
+        &mut self,
+        members_event: &Event,
+        relay_pubkey: &PublicKey,
+    ) -> Result<bool, Error> {
+        if !self.can_edit_members(&members_event.pubkey, relay_pubkey) {
             error!(
                 "User {} is not authorized to add users to this group",
                 members_event.pubkey
@@ -368,8 +372,12 @@ impl Group {
             .collect::<Vec<_>>()
     }
 
-    pub fn remove_members(&mut self, members_event: &Event) -> Result<bool, Error> {
-        if !self.can_edit_members(&members_event.pubkey) {
+    pub fn remove_members(
+        &mut self,
+        members_event: &Event,
+        relay_pubkey: &PublicKey,
+    ) -> Result<bool, Error> {
+        if !self.can_edit_members(&members_event.pubkey, relay_pubkey) {
             error!(
                 "User {} is not authorized to remove users from this group",
                 members_event.pubkey
@@ -398,7 +406,7 @@ impl Group {
         Ok(true)
     }
 
-    pub fn set_metadata(&mut self, event: &Event) -> Result<(), Error> {
+    pub fn set_metadata(&mut self, event: &Event, relay_pubkey: &PublicKey) -> Result<(), Error> {
         if event.kind != KIND_GROUP_METADATA
             && event.kind != KIND_GROUP_CREATE
             && event.kind != KIND_GROUP_EDIT_METADATA
@@ -409,7 +417,7 @@ impl Group {
             )));
         }
 
-        if !self.can_edit_metadata(&event.pubkey) {
+        if !self.can_edit_metadata(&event.pubkey, relay_pubkey) {
             return Err(Error::notice("User is not authorized to edit metadata"));
         }
 
@@ -449,8 +457,8 @@ impl Group {
         Ok(())
     }
 
-    pub fn set_roles(&mut self, event: &Event) -> Result<(), Error> {
-        if !self.can_edit_members(&event.pubkey) {
+    pub fn set_roles(&mut self, event: &Event, relay_pubkey: &PublicKey) -> Result<(), Error> {
+        if !self.can_edit_members(&event.pubkey, relay_pubkey) {
             return Err(Error::notice("User is not authorized to set roles"));
         }
 
@@ -520,7 +528,11 @@ impl Group {
         Ok(true)
     }
 
-    pub fn create_invite(&mut self, event: &Event) -> Result<bool, Error> {
+    pub fn create_invite(
+        &mut self,
+        event: &Event,
+        relay_pubkey: &PublicKey,
+    ) -> Result<bool, Error> {
         if event.kind != KIND_GROUP_CREATE_INVITE {
             return Err(Error::notice(format!(
                 "Invalid event kind for create invite {}",
@@ -528,7 +540,7 @@ impl Group {
             )));
         }
 
-        if !self.can_create_invites(&event.pubkey) {
+        if !self.can_create_invites(&event.pubkey, relay_pubkey) {
             return Err(Error::notice("User is not authorized to create invites"));
         }
 
@@ -733,15 +745,11 @@ impl Group {
     }
 
     pub fn extract_group_id(event: &Event) -> Option<&str> {
-        // For relay-generated events (30000 <= kind < 40000), use d tag
         match event.kind {
-            Kind::Custom(k) if (30000..40000).contains(&k) => {
+            Kind::ParameterizedReplaceable(_) => {
                 event.tags.find(TagKind::d()).and_then(|t| t.content())
             }
-            _ => {
-                // For all other events, use h tag
-                event.tags.find(TagKind::h()).and_then(|t| t.content())
-            }
+            _ => event.tags.find(TagKind::h()).and_then(|t| t.content()),
         }
     }
 
@@ -869,16 +877,46 @@ impl Group {
 
 // Authorization checks
 impl Group {
-    pub fn can_edit_members(&self, pubkey: &PublicKey) -> bool {
-        self.is_admin(pubkey)
+    pub fn can_edit_members(&self, pubkey: &PublicKey, relay_pubkey: &PublicKey) -> bool {
+        if self.is_admin(pubkey) {
+            return true;
+        }
+
+        // Relay pubkey can see all events
+        if relay_pubkey == pubkey {
+            debug!("Relay pubkey {} can edit members", relay_pubkey);
+            return true;
+        }
+
+        false
     }
 
-    pub fn can_edit_metadata(&self, pubkey: &PublicKey) -> bool {
-        self.is_admin(pubkey)
+    pub fn can_edit_metadata(&self, pubkey: &PublicKey, relay_pubkey: &PublicKey) -> bool {
+        if self.is_admin(pubkey) {
+            return true;
+        }
+
+        // Relay pubkey can see all events
+        if relay_pubkey == pubkey {
+            debug!("Relay pubkey {} can edit metadata", relay_pubkey);
+            return true;
+        }
+
+        false
     }
 
-    pub fn can_create_invites(&self, pubkey: &PublicKey) -> bool {
-        self.is_admin(pubkey)
+    pub fn can_create_invites(&self, pubkey: &PublicKey, relay_pubkey: &PublicKey) -> bool {
+        if self.is_admin(pubkey) {
+            return true;
+        }
+
+        // Relay pubkey can see all events
+        if relay_pubkey == pubkey {
+            debug!("Relay pubkey {} can create invites", relay_pubkey);
+            return true;
+        }
+
+        false
     }
 
     pub fn can_see_event(
@@ -1001,7 +1039,9 @@ mod tests {
         let tags = vec![Tag::public_key(member_keys.public_key())];
         let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, tags).await;
 
-        assert!(group.add_members(&add_event).is_ok());
+        assert!(group
+            .add_members(&add_event, &admin_keys.public_key())
+            .is_ok());
         assert!(group.is_member(&member_keys.public_key()));
         assert!(!group.is_admin(&member_keys.public_key()));
     }
@@ -1014,14 +1054,18 @@ mod tests {
         // First add a member
         let add_tags = vec![Tag::public_key(member_keys.public_key())];
         let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, add_tags).await;
-        group.add_members(&add_event).unwrap();
+        group
+            .add_members(&add_event, &admin_keys.public_key())
+            .unwrap();
 
         // Then remove them
         let remove_tags = vec![Tag::public_key(member_keys.public_key())];
         let remove_event =
             create_test_event(&admin_keys, KIND_GROUP_REMOVE_USER, remove_tags).await;
 
-        assert!(group.remove_members(&remove_event).is_ok());
+        assert!(group
+            .remove_members(&remove_event, &admin_keys.public_key())
+            .is_ok());
         assert!(!group.is_member(&member_keys.public_key()));
     }
 
@@ -1038,7 +1082,9 @@ mod tests {
         ];
         let metadata_event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA, tags).await;
 
-        assert!(group.set_metadata(&metadata_event).is_ok());
+        assert!(group
+            .set_metadata(&metadata_event, &admin_keys.public_key())
+            .is_ok());
         assert_eq!(group.metadata.name, "New Group Name");
         assert_eq!(group.metadata.about, Some("About text".to_string()));
         assert_eq!(group.metadata.picture, Some("picture_url".to_string()));
@@ -1056,7 +1102,9 @@ mod tests {
         let create_invite_event =
             create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE, create_tags).await;
 
-        assert!(group.create_invite(&create_invite_event).unwrap());
+        assert!(group
+            .create_invite(&create_invite_event, &admin_keys.public_key())
+            .unwrap());
         assert!(group.invites.contains_key(invite_code));
 
         // Use invite
@@ -1084,7 +1132,9 @@ mod tests {
         // Add member manually
         let add_tags = vec![Tag::public_key(member_keys.public_key())];
         let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, add_tags).await;
-        group.add_members(&add_event).unwrap();
+        group
+            .add_members(&add_event, &admin_keys.public_key())
+            .unwrap();
 
         // Test leave request
         let leave_event =
@@ -1102,7 +1152,9 @@ mod tests {
         // Add a member
         let add_tags = vec![Tag::public_key(member_keys.public_key())];
         let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, add_tags).await;
-        group.add_members(&add_event).unwrap();
+        group
+            .add_members(&add_event, &admin_keys.public_key())
+            .unwrap();
 
         // Create a test event
         let test_event = create_test_event(&member_keys, Kind::Custom(9), vec![]).await;
@@ -1129,7 +1181,9 @@ mod tests {
         let public_tags = vec![Tag::custom(TagKind::custom("public"), &[] as &[String])];
         let public_event =
             create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA, public_tags).await;
-        group.set_metadata(&public_event).unwrap();
+        group
+            .set_metadata(&public_event, &admin_keys.public_key())
+            .unwrap();
 
         assert!(group.can_see_event(&None, &admin_keys.public_key(), &test_event));
         assert!(group.can_see_event(
@@ -1151,7 +1205,9 @@ mod tests {
         )];
         let add_admin_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, add_tags).await;
 
-        group.add_members(&add_admin_event).unwrap();
+        group
+            .add_members(&add_admin_event, &admin_keys.public_key())
+            .unwrap();
         assert!(group.is_admin(&member_keys.public_key()));
 
         // Test admin permissions
@@ -1159,6 +1215,8 @@ mod tests {
         let metadata_event =
             create_test_event(&member_keys, KIND_GROUP_EDIT_METADATA, metadata_tags).await;
 
-        assert!(group.set_metadata(&metadata_event).is_ok());
+        assert!(group
+            .set_metadata(&metadata_event, &admin_keys.public_key())
+            .is_ok());
     }
 }
