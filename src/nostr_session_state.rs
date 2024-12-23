@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::{EventToSave, RelayClientConnection};
+use crate::{EventStoreConnection, EventToSave};
 use nostr_sdk::prelude::*;
 use std::backtrace::Backtrace;
 use tokio_util::sync::CancellationToken;
@@ -10,7 +10,7 @@ pub struct NostrConnectionState {
     pub relay_url: String,
     pub challenge: Option<String>,
     pub authed_pubkey: Option<PublicKey>,
-    pub relay_connection: Option<RelayClientConnection>,
+    pub relay_connection: Option<EventStoreConnection>,
     pub connection_token: CancellationToken,
 }
 

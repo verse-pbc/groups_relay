@@ -1,5 +1,5 @@
+use crate::event_store_connection::EventStoreConnection;
 use crate::nostr_session_state::NostrConnectionState;
-use crate::relay_client_connection::RelayClientConnection;
 use crate::Error;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -32,14 +32,14 @@ impl MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
 }
 
 #[derive(Debug)]
-pub struct RelayForwarder {
+pub struct EventStore {
     broadcast_sender: broadcast::Sender<Event>,
     database: Arc<NdbDatabase>,
     keys: Keys,
     _token: CancellationToken,
 }
 
-impl RelayForwarder {
+impl EventStore {
     pub fn new(database: Arc<NdbDatabase>, keys: Keys) -> Self {
         let (broadcast_sender, _) = broadcast::channel(1024); // Buffer size of 1024 events
         let token = CancellationToken::new();
@@ -63,8 +63,8 @@ impl RelayForwarder {
         relay_url: String,
         sender: MessageSender<RelayMessage>,
         cancellation_token: CancellationToken,
-    ) -> Result<RelayClientConnection> {
-        let connection = RelayClientConnection::new(
+    ) -> Result<EventStoreConnection> {
+        let connection = EventStoreConnection::new(
             connection_id,
             self.database.clone(),
             keys,
@@ -81,7 +81,7 @@ impl RelayForwarder {
 
     async fn fetch_historical_events(
         &self,
-        connection: &RelayClientConnection,
+        connection: &EventStoreConnection,
         subscription_id: &SubscriptionId,
         filters: &[Filter],
         mut sender: MessageSender<RelayMessage>,
@@ -133,7 +133,7 @@ impl RelayForwarder {
 }
 
 #[async_trait]
-impl Middleware for RelayForwarder {
+impl Middleware for EventStore {
     type State = NostrConnectionState;
     type IncomingMessage = ClientMessage;
     type OutgoingMessage = RelayMessage;

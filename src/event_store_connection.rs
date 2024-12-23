@@ -95,7 +95,7 @@ impl ReplaceableEventsBuffer {
 }
 
 #[derive(Debug, Clone)]
-pub struct RelayClientConnection {
+pub struct EventStoreConnection {
     id: String,
     database: Arc<NdbDatabase>,
     pub connection_token: CancellationToken,
@@ -105,7 +105,7 @@ pub struct RelayClientConnection {
     pub message_sender: Option<MessageSender<RelayMessage>>,
 }
 
-impl RelayClientConnection {
+impl EventStoreConnection {
     pub async fn new(
         id: String,
         database: Arc<NdbDatabase>,

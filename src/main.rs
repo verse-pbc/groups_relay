@@ -13,8 +13,8 @@ use groups_relay::{
     groups::Groups,
     handler,
     middlewares::{
-        EventVerifierMiddleware, LoggerMiddleware, Nip29Middleware, Nip42Middleware,
-        Nip70Middleware, NostrMessageConverter, RelayForwarder,
+        EventStore, EventVerifierMiddleware, LoggerMiddleware, Nip29Middleware, Nip42Middleware,
+        Nip70Middleware, NostrMessageConverter,
     },
     nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
 };
@@ -237,21 +237,6 @@ async fn main() -> Result<()> {
     let database = NdbDatabase::open(settings.db_path.clone())?;
     let database = Arc::new(database);
 
-    let filters = vec![Filter::new().kind(Kind::TextNote)];
-    let keys = Keys::generate();
-    let unsigned_event = EventBuilder::text_note("Hello, world!".to_string())
-        .build_with_ctx(&Instant::now(), keys.public_key());
-    let event = keys.sign_event(unsigned_event).await.unwrap();
-    let client_message = RelayMessage::event(SubscriptionId::new("adfs"), event);
-    match database.process_event(&client_message.as_json()) {
-        Ok(_) => info!("Event processed successfully"),
-        Err(e) => error!("Error processing event: {:?}", e),
-    }
-    let events = database.query(filters).await?;
-    for event in events {
-        info!("Event: {:?}", event);
-    }
-
     let groups = Groups::load_groups(database.clone())
         .await
         .context("Failed to load groups")?;
@@ -274,7 +259,7 @@ async fn main() -> Result<()> {
     let nip_42 = Nip42Middleware::new(settings.auth_url.clone());
     let nip_70 = Nip70Middleware;
     let nip_29 = Nip29Middleware::new(shared_groups.clone(), relay_keys.public_key);
-    let relay_forwarder = RelayForwarder::new(database.clone(), relay_keys);
+    let event_store = EventStore::new(database.clone(), relay_keys);
     let connection_state_factory = NostrConnectionFactory::new(settings.relay_url.clone());
 
     let websocket_handler = WebSocketBuilder::new(connection_state_factory, NostrMessageConverter)
@@ -283,7 +268,7 @@ async fn main() -> Result<()> {
         .with_middleware(nip_42)
         .with_middleware(nip_70)
         .with_middleware(nip_29)
-        .with_middleware(relay_forwarder)
+        .with_middleware(event_store)
         .build();
 
     let cancellation_token = CancellationToken::new();

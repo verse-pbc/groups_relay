@@ -1,13 +1,13 @@
+pub mod event_store;
 pub mod event_verifier;
 pub mod logger_middleware;
 pub mod nip_29_groups;
 pub mod nip_42_auth;
 pub mod nip_70_protected_events;
-pub mod relay_forwarder;
 
+pub use event_store::{EventStore, NostrMessageConverter};
 pub use event_verifier::EventVerifierMiddleware;
 pub use logger_middleware::LoggerMiddleware;
 pub use nip_29_groups::Nip29Middleware;
 pub use nip_42_auth::Nip42Auth as Nip42Middleware;
 pub use nip_70_protected_events::Nip70Middleware;
-pub use relay_forwarder::{NostrMessageConverter, RelayForwarder};
