@@ -314,34 +314,27 @@ impl Group {
     }
 
     pub fn new(event: &Event) -> Result<Self, Error> {
-        if event.kind != KIND_GROUP_CREATE {
-            return Err(Error::notice(format!(
-                "Invalid event kind for group creation {}",
-                event.kind
-            )));
-        }
-
-        let group_id = event
-            .tags
-            .find(TagKind::h())
-            .and_then(|t| t.content())
-            .ok_or(Error::notice("Group ID not found"))?;
-
-        let member = GroupMember::new_admin(event.pubkey);
-        let members = HashMap::from([(event.pubkey, member)]);
+        let Some(group_id) = Self::extract_group_id(event) else {
+            return Err(Error::notice("Group ID not found"));
+        };
 
         let mut group = Self {
             id: group_id.to_string(),
             metadata: GroupMetadata::new(group_id.to_string()),
-            members,
-            join_requests: HashSet::new(),
-            invites: HashMap::new(),
-            roles: HashSet::new(),
             created_at: event.created_at,
             updated_at: event.created_at,
+            ..Default::default()
         };
 
-        group.update_state();
+        // Add the creator as an admin
+        group.members.insert(
+            event.pubkey,
+            GroupMember {
+                pubkey: event.pubkey,
+                roles: HashSet::from([GroupRole::Admin]),
+            },
+        );
+
         Ok(group)
     }
 
@@ -356,16 +349,15 @@ impl Group {
             ));
         }
 
-        let mut added_admins = false;
-        for new_member in members_event.tags.filter(TagKind::p()) {
-            let member = GroupMember::try_from(new_member)?;
-            added_admins |= member.is(GroupRole::Admin);
+        for tag in members_event.tags.filter(TagKind::p()) {
+            let member = GroupMember::try_from(tag)?;
             self.join_requests.remove(&member.pubkey);
-            self.members.entry(member.pubkey).or_insert(member);
+            self.members.insert(member.pubkey, member);
         }
 
+        self.update_roles();
         self.update_state();
-        Ok(added_admins)
+        Ok(true)
     }
 
     pub fn admin_pubkeys(&self) -> Vec<PublicKey> {
@@ -389,12 +381,8 @@ impl Group {
 
         let admins = self.admin_pubkeys();
 
-        let mut removed_admins = false;
-        for removed_member in members_event.tags.filter(TagKind::p()) {
-            let Some(removed_pubkey) = removed_member
-                .content()
-                .and_then(|s| PublicKey::parse(s).ok())
-            else {
+        for tag in members_event.tags.filter(TagKind::p()) {
+            let Some(removed_pubkey) = tag.content().and_then(|s| PublicKey::parse(s).ok()) else {
                 return Err(Error::notice("Invalid tag format"));
             };
 
@@ -402,13 +390,12 @@ impl Group {
                 return Err(Error::notice("Cannot remove last admin"));
             }
 
-            if let Some(removed_user) = self.members.remove(&removed_pubkey) {
-                removed_admins |= removed_user.is(GroupRole::Admin);
-            }
+            self.members.remove(&removed_pubkey);
         }
 
+        self.update_roles();
         self.update_state();
-        Ok(removed_admins)
+        Ok(true)
     }
 
     pub fn set_metadata(&mut self, event: &Event) -> Result<(), Error> {
@@ -463,22 +450,18 @@ impl Group {
     }
 
     pub fn set_roles(&mut self, event: &Event) -> Result<(), Error> {
-        if !self.can_edit_metadata(&event.pubkey) {
-            return Err(Error::notice("User is not authorized to edit metadata"));
+        if !self.can_edit_members(&event.pubkey) {
+            return Err(Error::notice("User is not authorized to set roles"));
         }
 
-        if event.tags.find(TagKind::custom("private")).is_some() {
-            self.metadata.private = true;
-        } else if event.tags.find(TagKind::custom("public")).is_some() {
-            self.metadata.private = false;
+        for tag in event.tags.filter(TagKind::p()) {
+            let member = GroupMember::try_from(tag)?;
+            if let Some(existing_member) = self.members.get_mut(&member.pubkey) {
+                existing_member.roles = member.roles;
+            }
         }
 
-        if event.tags.find(TagKind::custom("closed")).is_some() {
-            self.metadata.closed = true;
-        } else if event.tags.find(TagKind::custom("open")).is_some() {
-            self.metadata.closed = false;
-        }
-
+        self.update_roles();
         self.update_state();
         Ok(())
     }
@@ -685,7 +668,7 @@ impl Group {
     // Real-time event handling methods - used for incoming events
     pub fn handle_join_request(&mut self, event: &Event) -> Result<bool, Error> {
         if event.kind != KIND_GROUP_USER_JOIN_REQUEST {
-            return Err(Error::notice(&format!(
+            return Err(Error::notice(format!(
                 "Invalid event kind for join request {}",
                 event.kind
             )));
@@ -750,11 +733,16 @@ impl Group {
     }
 
     pub fn extract_group_id(event: &Event) -> Option<&str> {
-        event
-            .tags
-            .iter()
-            .find(|t| t.kind() == TagKind::h() || t.kind() == TagKind::d())
-            .and_then(|t| t.content())
+        // For relay-generated events (30000 <= kind < 40000), use d tag
+        match event.kind {
+            Kind::Custom(k) if (30000..40000).contains(&k) => {
+                event.tags.find(TagKind::d()).and_then(|t| t.content())
+            }
+            _ => {
+                // For all other events, use h tag
+                event.tags.find(TagKind::h()).and_then(|t| t.content())
+            }
+        }
     }
 
     pub fn extract_group_h_tag(event: &Event) -> Option<&str> {

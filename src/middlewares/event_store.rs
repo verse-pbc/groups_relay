@@ -1,12 +1,10 @@
-use crate::event_store_connection::EventStoreConnection;
+use crate::database::NostrDatabase;
+use crate::event_store_connection::{EventStoreConfig, EventStoreConnection};
 use crate::nostr_session_state::NostrConnectionState;
-use crate::Error;
 use anyhow::Result;
 use async_trait::async_trait;
-use nostr_ndb::NdbDatabase;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
-use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 use websocket_builder::{
@@ -33,48 +31,35 @@ impl MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
 
 #[derive(Debug)]
 pub struct EventStore {
-    broadcast_sender: broadcast::Sender<Event>,
-    database: Arc<NdbDatabase>,
-    keys: Keys,
+    database: Arc<NostrDatabase>,
     _token: CancellationToken,
 }
 
 impl EventStore {
-    pub fn new(database: Arc<NdbDatabase>, keys: Keys) -> Self {
-        let (broadcast_sender, _) = broadcast::channel(1024); // Buffer size of 1024 events
+    pub fn new(database: Arc<NostrDatabase>) -> Self {
         let token = CancellationToken::new();
 
         Self {
-            broadcast_sender,
             database,
-            keys,
             _token: token,
         }
     }
 
-    pub fn get_broadcast_sender(&self) -> broadcast::Sender<Event> {
-        self.broadcast_sender.clone()
-    }
-
     pub async fn add_connection(
         &self,
-        keys: Keys,
         connection_id: String,
         relay_url: String,
         sender: MessageSender<RelayMessage>,
         cancellation_token: CancellationToken,
     ) -> Result<EventStoreConnection> {
-        let connection = EventStoreConnection::new(
-            connection_id,
-            self.database.clone(),
-            keys,
-            relay_url.clone(),
-            cancellation_token.clone(),
-            self.broadcast_sender.clone(),
-            self.broadcast_sender.subscribe(),
-            sender,
-        )
-        .await?;
+        let config = EventStoreConfig {
+            id: connection_id,
+            database: self.database.clone(),
+            relay_url,
+            cancellation_token,
+        };
+
+        let connection = EventStoreConnection::new(config, sender).await?;
 
         Ok(connection)
     }
@@ -85,13 +70,13 @@ impl EventStore {
         subscription_id: &SubscriptionId,
         filters: &[Filter],
         mut sender: MessageSender<RelayMessage>,
-    ) -> Result<(), Error> {
-        // Fetch historical events with a 10-second timeout
+    ) -> Result<()> {
+        // Fetch historical events
         let events = match connection.fetch_events(filters.to_vec()).await {
             Ok(events) => events,
             Err(e) => {
                 error!("Failed to fetch historical events: {:?}", e);
-                return Err(e);
+                return Err(e.into());
             }
         };
 
@@ -201,7 +186,7 @@ impl Middleware for EventStore {
                     return ctx
                         .send_message(RelayMessage::Closed {
                             subscription_id: subscription_id.clone(),
-                            message: "".to_string(),
+                            message: "Error fetching historical events".to_string(),
                         })
                         .await;
                 }
@@ -246,7 +231,7 @@ impl Middleware for EventStore {
                     ctx.send_message(RelayMessage::Ok {
                         event_id,
                         status: false,
-                        message: "Error sending event".to_string(),
+                        message: "Error saving event".to_string(),
                     })
                     .await?;
                     return ctx.next().await;
@@ -256,6 +241,26 @@ impl Middleware for EventStore {
                     event_id,
                     status: true,
                     message: "".to_string(),
+                })
+                .await?;
+                return ctx.next().await;
+            }
+            ClientMessage::Auth(_event) => {
+                debug!(
+                    target: "relay_forwarder",
+                    "[{}] Processing AUTH message",
+                    connection_id
+                );
+                return ctx.next().await;
+            }
+            ClientMessage::Count { .. } => {
+                debug!(
+                    target: "relay_forwarder",
+                    "[{}] Not implemented: COUNT message",
+                    connection_id
+                );
+                ctx.send_message(RelayMessage::Notice {
+                    message: "COUNT not implemented".to_string(),
                 })
                 .await?;
                 return ctx.next().await;
@@ -319,7 +324,6 @@ impl Middleware for EventStore {
 
         let connection = match self
             .add_connection(
-                self.keys.clone(),
                 ctx.connection_id.clone(),
                 ctx.state.relay_url.clone(),
                 sender,

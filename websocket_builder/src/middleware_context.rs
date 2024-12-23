@@ -78,8 +78,8 @@ impl<'a, S: Send + Sync + 'static, I: Send + Sync + 'static, O: Send + Sync + 's
 }
 
 #[async_trait]
-impl<'a, S: Send + Sync + 'static, I: Send + Sync + 'static, O: Send + Sync + 'static>
-    SendMessage<O> for ConnectionContext<'a, S, I, O>
+impl<S: Send + Sync + 'static, I: Send + Sync + 'static, O: Send + Sync + 'static> SendMessage<O>
+    for ConnectionContext<'_, S, I, O>
 {
     async fn send_message(&mut self, message: O) -> Result<()> {
         if let Some(sender) = &mut self.sender {
@@ -161,6 +161,7 @@ pub struct InboundContext<
     pub(crate) middlewares:
         &'a [Arc<dyn Middleware<State = S, IncomingMessage = M, OutgoingMessage = O>>],
 }
+
 impl<'a, S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 'static>
     InboundContext<'a, S, M, O>
 {
@@ -200,8 +201,8 @@ impl<'a, S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 's
 }
 
 #[async_trait]
-impl<'a, S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 'static>
-    SendMessage<O> for InboundContext<'a, S, M, O>
+impl<S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 'static> SendMessage<O>
+    for InboundContext<'_, S, M, O>
 {
     async fn send_message(&mut self, message: O) -> Result<()> {
         if let Some(sender) = &mut self.sender {
@@ -266,8 +267,8 @@ impl<'a, S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 's
 }
 
 #[async_trait]
-impl<'a, S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 'static>
-    SendMessage<O> for OutboundContext<'a, S, M, O>
+impl<S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 'static> SendMessage<O>
+    for OutboundContext<'_, S, M, O>
 {
     async fn send_message(&mut self, message: O) -> Result<()> {
         if let Some(sender) = &mut self.sender {

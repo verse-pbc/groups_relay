@@ -1,11 +1,10 @@
+use crate::database::NostrDatabase;
 use crate::error::Error;
 use anyhow::Result;
-use nostr_database::NostrEventsDatabase;
-use nostr_ndb::NdbDatabase;
 use nostr_sdk::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
@@ -22,17 +21,24 @@ enum SubscriptionMessage {
     },
 }
 
+// Configuration struct for EventStoreConnection
+#[derive(Debug)]
+pub struct EventStoreConfig {
+    pub id: String,
+    pub database: Arc<NostrDatabase>,
+    pub relay_url: String,
+    pub cancellation_token: CancellationToken,
+}
+
 // Add after the SubscriptionMessage enum
 struct ReplaceableEventsBuffer {
     buffer: HashMap<(PublicKey, Kind), UnsignedEvent>,
-    keys: Keys,
 }
 
 impl ReplaceableEventsBuffer {
-    pub fn new(keys: Keys) -> Self {
+    pub fn new() -> Self {
         Self {
             buffer: HashMap::new(),
-            keys,
         }
     }
 
@@ -40,52 +46,24 @@ impl ReplaceableEventsBuffer {
         self.buffer.insert((event.pubkey, event.kind), event);
     }
 
-    pub async fn flush(
-        &mut self,
-        database: &Arc<NdbDatabase>,
-        broadcast_sender: &broadcast::Sender<Event>,
-    ) {
+    pub async fn flush(&mut self, database: &Arc<NostrDatabase>) {
         if self.buffer.is_empty() {
             return;
         }
 
         for (_, event) in self.buffer.drain() {
-            match self.keys.sign_event(event).await {
+            match database.save_event(event).await {
                 Ok(event) => {
                     debug!(
                         target: "relay_client",
-                        "Saving replaceable event: kind={}",
+                        "Saved replaceable event: kind={}",
                         event.kind
                     );
-
-                    //TODO: save_signed_event should be a method on the database
-                    let client_message =
-                        RelayMessage::event(SubscriptionId::new("adfs"), event.clone());
-                    if let Err(e) = database.process_event(&client_message.as_json()) {
-                        error!(
-                            target: "relay_client",
-                            "Error sending replaceable event: {:?}",
-                            e
-                        );
-                    } else {
-                        debug!(
-                            target: "relay_client",
-                            "Broadcasting replaceable event: kind={}",
-                            event.kind
-                        );
-                        if let Err(e) = broadcast_sender.send(event) {
-                            error!(
-                                target: "relay_client",
-                                "Error sending event to broadcast channel: {:?}",
-                                e
-                            );
-                        }
-                    }
                 }
                 Err(e) => {
                     error!(
                         target: "relay_client",
-                        "Error signing event: {:?}",
+                        "Error saving event: {:?}",
                         e
                     );
                 }
@@ -97,31 +75,24 @@ impl ReplaceableEventsBuffer {
 #[derive(Debug, Clone)]
 pub struct EventStoreConnection {
     id: String,
-    database: Arc<NdbDatabase>,
+    database: Arc<NostrDatabase>,
     pub connection_token: CancellationToken,
     replaceable_event_queue: mpsc::UnboundedSender<UnsignedEvent>,
-    broadcast_sender: broadcast::Sender<Event>,
     subscription_sender: mpsc::UnboundedSender<SubscriptionMessage>,
     pub message_sender: Option<MessageSender<RelayMessage>>,
 }
 
 impl EventStoreConnection {
     pub async fn new(
-        id: String,
-        database: Arc<NdbDatabase>,
-        keys: Keys,
-        relay_url: String,
-        cancellation_token: CancellationToken,
-        broadcast_sender: broadcast::Sender<Event>,
-        mut broadcast_receiver: broadcast::Receiver<Event>,
+        config: EventStoreConfig,
         outgoing_sender: MessageSender<RelayMessage>,
     ) -> Result<Self> {
-        let id_clone = id.clone();
+        let id_clone = config.id.clone();
         debug!(
             target: "relay_client",
             "[{}] Creating new RelayClientConnection for {}",
             id_clone,
-            relay_url
+            config.relay_url
         );
 
         let (sender, receiver) = mpsc::unbounded_channel::<UnsignedEvent>();
@@ -129,10 +100,9 @@ impl EventStoreConnection {
 
         let connection = Self {
             id: id_clone.clone(),
-            database,
-            connection_token: cancellation_token.child_token(),
+            database: config.database.clone(),
+            connection_token: config.cancellation_token.child_token(),
             replaceable_event_queue: sender,
-            broadcast_sender,
             subscription_sender,
             message_sender: Some(outgoing_sender.clone()),
         };
@@ -219,11 +189,10 @@ impl EventStoreConnection {
         // Spawn replaceable events handler
         let database_clone = connection.database.clone();
         let token = connection.connection_token.clone();
-        let broadcast_sender_clone = connection.broadcast_sender.clone();
         let id_clone2 = id_clone.clone();
 
         tokio::spawn(Box::pin(async move {
-            let mut buffer = ReplaceableEventsBuffer::new(keys);
+            let mut buffer = ReplaceableEventsBuffer::new();
             let mut receiver = receiver;
 
             loop {
@@ -234,7 +203,7 @@ impl EventStoreConnection {
                             "[{}] Replaceable events handler shutting down",
                             id_clone2
                         );
-                        buffer.flush(&database_clone, &broadcast_sender_clone).await;
+                        buffer.flush(&database_clone).await;
                         return;
                     }
 
@@ -244,7 +213,7 @@ impl EventStoreConnection {
                         }
                     }
                     _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                        buffer.flush(&database_clone, &broadcast_sender_clone).await;
+                        buffer.flush(&database_clone).await;
                     }
                 }
             }
@@ -255,6 +224,7 @@ impl EventStoreConnection {
         let subscription_sender_clone = connection.subscription_sender.clone();
         let id_clone3 = id_clone.clone();
         let outgoing_sender = outgoing_sender.clone();
+        let mut broadcast_receiver = config.database.subscribe();
         tokio::spawn(Box::pin(async move {
             debug!(
                 target: "relay_client",
@@ -267,10 +237,10 @@ impl EventStoreConnection {
                     _ = token_clone.cancelled() => {
                         debug!(
                             target: "relay_client",
-                            "[{}] Broadcast handler shutting down",
+                            "[{}] Broadcast event handler shutting down",
                             id_clone3
                         );
-                        return;
+                        break;
                     }
                     Ok(event) = broadcast_receiver.recv() => {
                         if let Err(e) = subscription_sender_clone.send(SubscriptionMessage::CheckEvent {
@@ -279,7 +249,7 @@ impl EventStoreConnection {
                         }) {
                             error!(
                                 target: "relay_client",
-                                "[{}] Failed to forward event to subscription manager: {:?}",
+                                "[{}] Failed to send event to subscription manager: {:?}",
                                 id_clone3,
                                 e
                             );
@@ -381,14 +351,6 @@ impl EventStoreConnection {
             error!(
                 target: "relay_client",
                 "[{}] Error sending event to database: {:?}",
-                self.id,
-                e
-            );
-        }
-        if let Err(e) = self.broadcast_sender.send(event) {
-            error!(
-                target: "relay_client",
-                "[{}] Error sending event to broadcast channel: {:?}",
                 self.id,
                 e
             );

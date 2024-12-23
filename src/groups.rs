@@ -1,5 +1,6 @@
 pub mod group;
 
+use crate::database::NostrDatabase;
 use crate::error::Error;
 use anyhow::Result;
 use dashmap::{
@@ -13,8 +14,6 @@ pub use group::{
     KIND_GROUP_REMOVE_USER, KIND_GROUP_SET_ROLES, KIND_GROUP_USER_JOIN_REQUEST,
     KIND_GROUP_USER_LEAVE_REQUEST, METADATA_EVENT_KINDS,
 };
-use nostr_database::NostrEventsDatabase;
-use nostr_ndb::NdbDatabase;
 use nostr_sdk::prelude::*;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
@@ -27,7 +26,7 @@ pub struct Groups {
 }
 
 impl Groups {
-    pub async fn load_groups(database: Arc<NdbDatabase>) -> Result<Self, Error> {
+    pub async fn load_groups(database: Arc<NostrDatabase>) -> Result<Self, Error> {
         let mut groups = HashMap::new();
         info!("Loading groups from relay...");
 
@@ -132,13 +131,13 @@ impl Groups {
             return Ok(None);
         };
 
-        let mut group = self.get_group_mut(group_id);
+        let mut group_ref = self.get_group_mut(group_id);
 
-        if let Some(ref mut group) = group {
-            group.verify_member_access(&event.pubkey, event.kind)?;
+        if let Some(ref mut group_ref) = group_ref {
+            group_ref.verify_member_access(&event.pubkey, event.kind)?;
         }
 
-        Ok(group)
+        Ok(group_ref)
     }
 
     pub fn find_group_from_event<'a>(&'a self, event: &Event) -> Option<Ref<'a, String, Group>> {
@@ -155,7 +154,7 @@ impl Groups {
     }
 
     pub fn handle_group_create(&self, event: &Event) -> Result<Group, Error> {
-        if let Some(group) = self.find_group_from_event(event) {
+        if self.find_group_from_event(event).is_some() {
             return Err(Error::notice("Group already exists"));
         }
 
@@ -283,65 +282,151 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_set_roles() {
-        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+        let (admin_keys, member_keys, _) = create_test_keys().await;
 
-        // Add a member with admin role
-        let tags = vec![
-            Tag::custom(TagKind::h(), [group_id.clone()]),
-            Tag::custom(
-                TagKind::p(),
-                [member_keys.public_key().to_string(), "Admin".to_string()],
-            ),
-        ];
-        let event = create_test_event(&admin_keys, KIND_GROUP_SET_ROLES, tags).await;
-        assert!(groups.handle_set_roles(&event).is_ok());
+        // Create a group first
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_CREATE,
+            vec![Tag::custom(TagKind::h(), [group_id.to_string()])],
+        )
+        .await;
 
-        // Verify member has admin role
-        let group = groups.get_group(&group_id).unwrap();
-        assert!(group.is_admin(&member_keys.public_key()));
+        let groups = Groups {
+            groups: DashMap::new(),
+        };
+
+        // Create the group
+        let group = groups.handle_group_create(&create_event).unwrap();
+        assert!(group.id == group_id);
+
+        // Add a member first
+        let add_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_ADD_USER,
+            vec![
+                Tag::custom(TagKind::h(), [group_id.to_string()]),
+                Tag::public_key(member_keys.public_key()),
+            ],
+        )
+        .await;
+
+        groups.handle_put_user(&add_event).unwrap();
+
+        // Set roles
+        let set_roles_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_SET_ROLES,
+            vec![
+                Tag::custom(TagKind::h(), [group_id.to_string()]),
+                Tag::custom(
+                    TagKind::p(),
+                    [member_keys.public_key().to_string(), "admin".to_string()],
+                ),
+            ],
+        )
+        .await;
+
+        groups.handle_set_roles(&set_roles_event).unwrap();
+
+        let group = groups.get_group(group_id).unwrap();
+        assert!(group
+            .members
+            .get(&member_keys.public_key())
+            .unwrap()
+            .is(GroupRole::Admin));
     }
 
     #[tokio::test]
     async fn test_handle_put_user() {
-        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+
+        // Create a group first
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_CREATE,
+            vec![Tag::custom(TagKind::h(), [group_id.to_string()])],
+        )
+        .await;
+
+        let groups = Groups {
+            groups: DashMap::new(),
+        };
+
+        // Create the group
+        let group = groups.handle_group_create(&create_event).unwrap();
+        assert!(group.id == group_id);
 
         // Add a member
-        let tags = vec![
-            Tag::custom(TagKind::h(), [group_id.clone()]),
-            Tag::public_key(member_keys.public_key()),
-        ];
-        let event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, tags).await;
-        assert!(groups.handle_put_user(&event).unwrap());
+        let add_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_ADD_USER,
+            vec![
+                Tag::custom(TagKind::h(), [group_id.to_string()]),
+                Tag::public_key(member_keys.public_key()),
+            ],
+        )
+        .await;
 
-        // Verify member was added
-        let group = groups.get_group(&group_id).unwrap();
-        assert!(group.is_member(&member_keys.public_key()));
+        let result = groups.handle_put_user(&add_event).unwrap();
+        assert!(result);
+
+        let group = groups.get_group(group_id).unwrap();
+        assert!(group.members.contains_key(&member_keys.public_key()));
     }
 
     #[tokio::test]
     async fn test_handle_remove_user() {
-        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+        let (admin_keys, member_keys, _) = create_test_keys().await;
 
-        // First add a member
-        let add_tags = vec![
-            Tag::custom(TagKind::h(), [group_id.clone()]),
-            Tag::public_key(member_keys.public_key()),
-        ];
-        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, add_tags).await;
+        // Create a group first
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_CREATE,
+            vec![Tag::custom(TagKind::h(), [group_id.to_string()])],
+        )
+        .await;
+
+        let groups = Groups {
+            groups: DashMap::new(),
+        };
+
+        // Create the group
+        let group = groups.handle_group_create(&create_event).unwrap();
+        assert!(group.id == group_id);
+
+        // Add a member first
+        let add_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_ADD_USER,
+            vec![
+                Tag::custom(TagKind::h(), [group_id.to_string()]),
+                Tag::public_key(member_keys.public_key()),
+            ],
+        )
+        .await;
+
         groups.handle_put_user(&add_event).unwrap();
 
-        // Then remove them
-        let remove_tags = vec![
-            Tag::custom(TagKind::h(), [group_id.clone()]),
-            Tag::public_key(member_keys.public_key()),
-        ];
-        let remove_event =
-            create_test_event(&admin_keys, KIND_GROUP_REMOVE_USER, remove_tags).await;
-        assert!(groups.handle_remove_user(&remove_event).unwrap());
+        // Remove the member
+        let remove_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_REMOVE_USER,
+            vec![
+                Tag::custom(TagKind::h(), [group_id.to_string()]),
+                Tag::public_key(member_keys.public_key()),
+            ],
+        )
+        .await;
 
-        // Verify member was removed
-        let group = groups.get_group(&group_id).unwrap();
-        assert!(!group.is_member(&member_keys.public_key()));
+        let result = groups.handle_remove_user(&remove_event).unwrap();
+        assert!(result);
+
+        let group = groups.get_group(group_id).unwrap();
+        assert!(!group.members.contains_key(&member_keys.public_key()));
     }
 
     #[tokio::test]

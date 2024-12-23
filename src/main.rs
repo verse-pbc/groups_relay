@@ -10,6 +10,7 @@ use axum::{
 use clap::Parser;
 use groups_relay::{
     app_state, config,
+    database::NostrDatabase,
     groups::Groups,
     handler,
     middlewares::{
@@ -18,9 +19,6 @@ use groups_relay::{
     },
     nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
 };
-use nostr_database::NostrEventsDatabase;
-use nostr_ndb::NdbDatabase;
-use nostr_sdk::prelude::*;
 use nostr_sdk::{ClientMessage, RelayMessage};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -234,7 +232,8 @@ async fn main() -> Result<()> {
         settings.auth_url = auth_url;
     }
 
-    let database = NdbDatabase::open(settings.db_path.clone())?;
+    let relay_keys = settings.relay_keys()?;
+    let database = NostrDatabase::open(settings.db_path.clone(), relay_keys.clone())?;
     let database = Arc::new(database);
 
     let groups = Groups::load_groups(database.clone())
@@ -252,14 +251,13 @@ async fn main() -> Result<()> {
     info!("Proxied relay URL: {}", settings.relay_url);
     info!("Auth requests must match this URL: {}", settings.auth_url);
 
-    let relay_keys = settings.relay_keys()?;
     let logger = LoggerMiddleware::new();
     // TODO: this is a temporary solution to verify events while we forward requests to the relay
     let event_verifier = EventVerifierMiddleware;
     let nip_42 = Nip42Middleware::new(settings.auth_url.clone());
     let nip_70 = Nip70Middleware;
     let nip_29 = Nip29Middleware::new(shared_groups.clone(), relay_keys.public_key);
-    let event_store = EventStore::new(database.clone(), relay_keys);
+    let event_store = EventStore::new(database.clone());
     let connection_state_factory = NostrConnectionFactory::new(settings.relay_url.clone());
 
     let websocket_handler = WebSocketBuilder::new(connection_state_factory, NostrMessageConverter)
