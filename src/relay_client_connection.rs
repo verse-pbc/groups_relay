@@ -399,7 +399,7 @@ impl RelayClientConnection {
     pub async fn fetch_events(&self, filters: Vec<Filter>) -> Result<Events, Error> {
         match self.database.query(filters).await {
             Ok(events) => Ok(events),
-            Err(e) => Err(Error::notice(&format!("Failed to fetch events: {:?}", e))),
+            Err(e) => Err(Error::notice(format!("Failed to fetch events: {:?}", e))),
         }
     }
 }

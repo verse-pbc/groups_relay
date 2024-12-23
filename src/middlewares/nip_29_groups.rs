@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::error::Error;
 use crate::groups::{

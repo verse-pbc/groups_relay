@@ -315,7 +315,7 @@ impl Group {
 
     pub fn new(event: &Event) -> Result<Self, Error> {
         if event.kind != KIND_GROUP_CREATE {
-            return Err(Error::notice(&format!(
+            return Err(Error::notice(format!(
                 "Invalid event kind for group creation {}",
                 event.kind
             )));
@@ -416,7 +416,7 @@ impl Group {
             && event.kind != KIND_GROUP_CREATE
             && event.kind != KIND_GROUP_EDIT_METADATA
         {
-            return Err(Error::notice(&format!(
+            return Err(Error::notice(format!(
                 "Invalid event kind for group metadata {}",
                 event.kind
             )));
@@ -485,7 +485,7 @@ impl Group {
 
     pub fn join_request(&mut self, event: &Event) -> Result<bool, Error> {
         if event.kind != KIND_GROUP_USER_JOIN_REQUEST {
-            return Err(Error::notice(&format!(
+            return Err(Error::notice(format!(
                 "Invalid event kind for join request {}",
                 event.kind
             )));
@@ -539,7 +539,7 @@ impl Group {
 
     pub fn create_invite(&mut self, event: &Event) -> Result<bool, Error> {
         if event.kind != KIND_GROUP_CREATE_INVITE {
-            return Err(Error::notice(&format!(
+            return Err(Error::notice(format!(
                 "Invalid event kind for create invite {}",
                 event.kind
             )));
@@ -564,7 +564,7 @@ impl Group {
 
     pub fn leave_request(&mut self, event: &Event) -> Result<bool, Error> {
         if event.kind != KIND_GROUP_USER_LEAVE_REQUEST {
-            return Err(Error::notice(&format!(
+            return Err(Error::notice(format!(
                 "Invalid event kind for leave request {}",
                 event.kind
             )));
@@ -620,7 +620,7 @@ impl Group {
             .tags
             .iter()
             .filter(|t| t.kind() == TagKind::p())
-            .map(|t| {
+            .filter_map(|t| {
                 let [_, pubkey, roles @ ..] = t.as_slice() else {
                     return None;
                 };
@@ -628,7 +628,6 @@ impl Group {
                 let pubkey = PublicKey::parse(pubkey).ok()?;
                 Some((pubkey, roles))
             })
-            .flatten()
             .collect::<Vec<_>>();
 
         for (pubkey, roles) in pubkey_and_roles {

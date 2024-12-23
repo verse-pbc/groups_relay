@@ -3,7 +3,6 @@ use crate::relay_client_connection::RelayClientConnection;
 use crate::Error;
 use anyhow::Result;
 use async_trait::async_trait;
-use nostr_database::NostrEventsDatabase;
 use nostr_ndb::NdbDatabase;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
