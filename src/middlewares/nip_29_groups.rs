@@ -7,10 +7,10 @@ use tracing::debug;
 
 use crate::error::Error;
 use crate::groups::{
-    Group, Groups, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER, KIND_GROUP_CREATE,
-    KIND_GROUP_CREATE_INVITE, KIND_GROUP_DELETE, KIND_GROUP_DELETE_EVENT, KIND_GROUP_EDIT_METADATA,
-    KIND_GROUP_REMOVE_USER, KIND_GROUP_SET_ROLES, KIND_GROUP_USER_JOIN_REQUEST,
-    KIND_GROUP_USER_LEAVE_REQUEST, METADATA_EVENT_KINDS,
+    Groups, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER, KIND_GROUP_CREATE, KIND_GROUP_CREATE_INVITE,
+    KIND_GROUP_DELETE, KIND_GROUP_DELETE_EVENT, KIND_GROUP_EDIT_METADATA, KIND_GROUP_REMOVE_USER,
+    KIND_GROUP_SET_ROLES, KIND_GROUP_USER_JOIN_REQUEST, KIND_GROUP_USER_LEAVE_REQUEST,
+    METADATA_EVENT_KINDS,
 };
 use crate::nostr_session_state::NostrConnectionState;
 use crate::EventToSave;
@@ -30,190 +30,148 @@ impl Nip29Middleware {
         }
     }
 
-    /// Handles the creation of a group (`kind:9007`)
-    async fn handle_group_create(&self, event: &Event) -> Result<Vec<EventToSave>, Error> {
-        debug!("Handling group creation event");
+    async fn handle_event<'a>(&'a self, event: &Event) -> Result<Option<Vec<EventToSave>>, Error> {
+        if event.kind == KIND_GROUP_CREATE {
+            debug!("Admin -> Relay: Creating group");
+            let group = self.groups.handle_group_create(event)?;
 
-        if let Some(group) = self.groups.find_group_from_event(event) {
-            debug!("Group already exists: {:?}", group);
-            return Err(Error::notice("Group already exists"));
-        }
-
-        let group = Group::new(event)?;
-
-        let metadata_event = group.generate_metadata_event();
-        let put_user_event = group.generate_put_user_event(&event.pubkey);
-        let admins_event = group.generate_admins_event();
-        let members_event = group.generate_members_event();
-        let roles_event = group.generate_roles_event();
-
-        debug!("New group: {:?}", group);
-        let _ = self.groups.insert(group.id.to_string(), group);
-
-        Ok(vec![
-            EventToSave::Event(event.clone()),
-            EventToSave::UnsignedEvent(metadata_event.build(self.relay_pubkey)),
-            EventToSave::UnsignedEvent(put_user_event.build(self.relay_pubkey)),
-            EventToSave::UnsignedEvent(admins_event.build(self.relay_pubkey)),
-            EventToSave::UnsignedEvent(members_event.build(self.relay_pubkey)),
-            EventToSave::UnsignedEvent(roles_event.build(self.relay_pubkey)),
-        ])
-    }
-
-    async fn handle_set_roles<'a>(&'a self, event: &Event) -> Result<Vec<EventToSave>, Error> {
-        debug!("Handling set-roles event");
-        let mut group = self
-            .groups
-            .find_group_from_event_mut(event)?
-            .ok_or(Error::notice("Group not found"))?;
-
-        group.set_roles(event)?;
-
-        Ok(vec![])
-    }
-
-    /// Handles the deletion of a group (`kind:9008`)
-    async fn handle_group_delete<'a>(&'a self, _event: &Event) -> Result<Vec<EventToSave>, Error> {
-        debug!("Handling group deletion event");
-        Err(Error::notice("Group deletion is not supported yet"))
-    }
-
-    /// Handles adding a user to the group (`kind:9000`)
-    async fn handle_put_user<'a>(&'a self, event: &Event) -> Result<Vec<EventToSave>, Error> {
-        let mut group = self
-            .groups
-            .find_group_from_event_mut(event)?
-            .ok_or(Error::notice("Group not found"))?;
-
-        let added_admins = group.add_members(event)?;
-
-        let mut events = vec![EventToSave::Event(event.clone())];
-        if added_admins {
+            let metadata_event = group.generate_metadata_event();
+            let put_user_event = group.generate_put_user_event(&event.pubkey);
             let admins_event = group.generate_admins_event();
-            events.push(EventToSave::UnsignedEvent(
-                admins_event.build(self.relay_pubkey),
-            ));
-        }
-
-        let members_event = group.generate_members_event();
-        events.push(EventToSave::UnsignedEvent(
-            members_event.build(self.relay_pubkey),
-        ));
-
-        Ok(events)
-    }
-
-    /// Handles removing a user from the group (`kind:9001`)
-    async fn handle_remove_user<'a>(&'a self, event: &Event) -> Result<Vec<EventToSave>, Error> {
-        debug!("Handling remove-user event");
-        let mut group = self
-            .groups
-            .find_group_from_event_mut(event)?
-            .ok_or(Error::notice("Group not found"))?;
-
-        let removed_admins = group.remove_members(event)?;
-
-        let mut events = vec![EventToSave::Event(event.clone())];
-        if removed_admins {
-            let admins_event = group.generate_admins_event();
-            events.push(EventToSave::UnsignedEvent(
-                admins_event.build(self.relay_pubkey),
-            ));
-        }
-
-        let members_event = group.generate_members_event();
-        events.push(EventToSave::UnsignedEvent(
-            members_event.build(self.relay_pubkey),
-        ));
-
-        Ok(events)
-    }
-
-    /// Handles editing group metadata (`kind:9002`)
-    async fn handle_edit_metadata<'a>(
-        &'a self,
-        edit_metadata_event: &Event,
-    ) -> Result<Vec<EventToSave>, Error> {
-        debug!("Handling edit-metadata event");
-        let mut group = self
-            .groups
-            .find_group_from_event_mut(edit_metadata_event)?
-            .ok_or(Error::notice("Group not found"))?;
-
-        group.set_metadata(edit_metadata_event)?;
-
-        let metadata_event = group.generate_metadata_event();
-
-        Ok(vec![
-            EventToSave::Event(edit_metadata_event.clone()),
-            EventToSave::UnsignedEvent(metadata_event.build(self.relay_pubkey)),
-        ])
-    }
-
-    /// Handles deleting an event within the group (`kind:9005`)
-    async fn handle_delete_event<'a>(&'a self, _event: &Event) -> Result<Vec<EventToSave>, Error> {
-        debug!("Handling delete-event");
-        Err(Error::notice("Event deletion is not supported yet"))
-    }
-
-    /// Handles creating an invite (`kind:9009`)
-    async fn handle_create_invite<'a>(&'a self, event: &Event) -> Result<Vec<EventToSave>, Error> {
-        debug!("Handling create-invite event");
-        let mut group = self
-            .groups
-            .find_group_from_event_mut(event)?
-            .ok_or(Error::notice("Group not found"))?;
-
-        group.create_invite(event)?;
-
-        Ok(vec![EventToSave::Event(event.clone())])
-    }
-
-    /// Handles a join request (`kind:9021`)
-    async fn handle_join_request<'a>(
-        &'a self,
-        join_request_event: &Event,
-    ) -> Result<Vec<EventToSave>, Error> {
-        debug!("Handling join-request event");
-        let mut group = self
-            .groups
-            .find_group_from_event_mut(join_request_event)?
-            .ok_or(Error::notice("Group not found"))?;
-
-        // May auto-join the user if the invite code matches or the group is public
-        let auto_joined = group.join_request(join_request_event)?;
-
-        if auto_joined {
-            let put_user_event = group.generate_put_user_event(&join_request_event.pubkey);
             let members_event = group.generate_members_event();
-            return Ok(vec![
-                EventToSave::Event(join_request_event.clone()),
-                EventToSave::UnsignedEvent(put_user_event.build(self.relay_pubkey)),
-                EventToSave::UnsignedEvent(members_event.build(self.relay_pubkey)),
-            ]);
-        }
+            let roles_event = group.generate_roles_event();
 
-        Ok(vec![EventToSave::Event(join_request_event.clone())])
-    }
-
-    /// Handles a leave request (`kind:9022`)
-    async fn handle_leave_request<'a>(&'a self, event: &Event) -> Result<Vec<EventToSave>, Error> {
-        debug!("Handling leave-request event");
-
-        let mut group = self
-            .groups
-            .find_group_from_event_mut(event)?
-            .ok_or(Error::notice("Group not found"))?;
-
-        if group.leave_request(event)? {
-            let members_event = group.generate_members_event();
-            return Ok(vec![
+            return Ok(Some(vec![
                 EventToSave::Event(event.clone()),
+                EventToSave::UnsignedEvent(metadata_event.build(self.relay_pubkey)),
+                EventToSave::UnsignedEvent(put_user_event.build(self.relay_pubkey)),
+                EventToSave::UnsignedEvent(admins_event.build(self.relay_pubkey)),
                 EventToSave::UnsignedEvent(members_event.build(self.relay_pubkey)),
-            ]);
+                EventToSave::UnsignedEvent(roles_event.build(self.relay_pubkey)),
+            ]));
         }
 
-        Ok(vec![])
+        let events_to_save = match event.kind {
+            k if k == KIND_GROUP_EDIT_METADATA => {
+                debug!("Admin -> Relay: Editing group metadata");
+                self.groups.handle_edit_metadata(event)?;
+                let group = self.groups.find_group_from_event(event).unwrap();
+                let metadata_event = group.generate_metadata_event();
+                vec![
+                    EventToSave::Event(event.clone()),
+                    EventToSave::UnsignedEvent(metadata_event.build(self.relay_pubkey)),
+                ]
+            }
+
+            k if k == KIND_GROUP_USER_JOIN_REQUEST => {
+                debug!("User -> Relay: Requesting to join group");
+                let auto_joined = self.groups.handle_join_request(event)?;
+                if auto_joined {
+                    let group = self.groups.find_group_from_event(event).unwrap();
+                    let put_user_event = group.generate_put_user_event(&event.pubkey);
+                    let members_event = group.generate_members_event();
+                    vec![
+                        EventToSave::Event(event.clone()),
+                        EventToSave::UnsignedEvent(put_user_event.build(self.relay_pubkey)),
+                        EventToSave::UnsignedEvent(members_event.build(self.relay_pubkey)),
+                    ]
+                } else {
+                    vec![EventToSave::Event(event.clone())]
+                }
+            }
+
+            k if k == KIND_GROUP_USER_LEAVE_REQUEST => {
+                debug!("User -> Relay: Requesting to leave group");
+                if self.groups.handle_leave_request(event)? {
+                    let group = self.groups.find_group_from_event(event).unwrap();
+                    let members_event = group.generate_members_event();
+                    vec![
+                        EventToSave::Event(event.clone()),
+                        EventToSave::UnsignedEvent(members_event.build(self.relay_pubkey)),
+                    ]
+                } else {
+                    vec![]
+                }
+            }
+
+            k if k == KIND_GROUP_SET_ROLES => {
+                debug!("Admin/Relay -> Relay: Setting roles");
+                self.groups.handle_set_roles(event)?;
+                vec![]
+            }
+
+            k if k == KIND_GROUP_ADD_USER => {
+                debug!("Admin/Relay -> Relay: Adding user to group");
+                let added_admins = self.groups.handle_put_user(event)?;
+                let group = self.groups.find_group_from_event(event).unwrap();
+                let mut events = vec![EventToSave::Event(event.clone())];
+                if added_admins {
+                    let admins_event = group.generate_admins_event();
+                    events.push(EventToSave::UnsignedEvent(
+                        admins_event.build(self.relay_pubkey),
+                    ));
+                }
+                let members_event = group.generate_members_event();
+                events.push(EventToSave::UnsignedEvent(
+                    members_event.build(self.relay_pubkey),
+                ));
+                events
+            }
+
+            k if k == KIND_GROUP_REMOVE_USER => {
+                debug!("Admin/Relay -> Relay: Removing user from group");
+                let removed_admins = self.groups.handle_remove_user(event)?;
+                let group = self.groups.find_group_from_event(event).unwrap();
+                let mut events = vec![EventToSave::Event(event.clone())];
+                if removed_admins {
+                    let admins_event = group.generate_admins_event();
+                    events.push(EventToSave::UnsignedEvent(
+                        admins_event.build(self.relay_pubkey),
+                    ));
+                }
+                let members_event = group.generate_members_event();
+                events.push(EventToSave::UnsignedEvent(
+                    members_event.build(self.relay_pubkey),
+                ));
+                events
+            }
+
+            k if k == KIND_GROUP_DELETE => {
+                debug!("Admin -> Relay: Deleting group");
+                return Err(Error::notice("Group deletion is not supported yet"));
+            }
+
+            k if k == KIND_GROUP_DELETE_EVENT => {
+                debug!("Admin -> Relay: Deleting event");
+                return Err(Error::notice("Event deletion is not supported yet"));
+            }
+
+            k if k == KIND_GROUP_CREATE_INVITE => {
+                debug!("Admin -> Relay: Creating invite");
+                self.groups.handle_create_invite(event)?;
+                vec![EventToSave::Event(event.clone())]
+            }
+
+            // Group content events
+            k => {
+                debug!("User -> Relay: Group content event");
+                let group = match self.groups.find_group_from_event(event) {
+                    None => return Ok(None),
+                    Some(group) => group,
+                };
+
+                if GROUP_CONTENT_KINDS.contains(&k) {
+                    if !group.is_member(&event.pubkey) {
+                        return Err(Error::notice("User is not a member of this group"));
+                    }
+                    vec![EventToSave::Event(event.clone())]
+                } else {
+                    return Err(Error::notice("Event kind not supported by this group"));
+                }
+            }
+        };
+
+        Ok(Some(events_to_save))
     }
 
     fn verify_filters(
@@ -319,81 +277,6 @@ impl Nip29Middleware {
         }
 
         Ok(())
-    }
-
-    async fn handle_event<'a>(&'a self, event: &Event) -> Result<Option<Vec<EventToSave>>, Error> {
-        if event.kind == KIND_GROUP_CREATE {
-            debug!("Admin -> Relay: Creating group");
-            let events_to_save = self.handle_group_create(event).await?;
-            return Ok(Some(events_to_save));
-        }
-
-        let events_to_save = match event.kind {
-            k if k == KIND_GROUP_EDIT_METADATA => {
-                debug!("Admin -> Relay: Editing group metadata");
-                self.handle_edit_metadata(event).await?
-            }
-
-            k if k == KIND_GROUP_USER_JOIN_REQUEST => {
-                debug!("User -> Relay: Requesting to join group");
-                self.handle_join_request(event).await?
-            }
-
-            k if k == KIND_GROUP_USER_LEAVE_REQUEST => {
-                debug!("User -> Relay: Requesting to leave group");
-                self.handle_leave_request(event).await?
-            }
-
-            k if k == KIND_GROUP_SET_ROLES => {
-                debug!("Admin/Relay -> Relay: Setting roles");
-                self.handle_set_roles(event).await?
-            }
-
-            k if k == KIND_GROUP_ADD_USER => {
-                debug!("Admin/Relay -> Relay: Adding user to group");
-                self.handle_put_user(event).await?
-            }
-
-            k if k == KIND_GROUP_REMOVE_USER => {
-                debug!("Admin/Relay -> Relay: Removing user from group");
-                self.handle_remove_user(event).await?
-            }
-
-            k if k == KIND_GROUP_DELETE => {
-                debug!("Admin -> Relay: Deleting group");
-                self.handle_group_delete(event).await?
-            }
-
-            k if k == KIND_GROUP_DELETE_EVENT => {
-                debug!("Admin -> Relay: Deleting event");
-                self.handle_delete_event(event).await?
-            }
-
-            k if k == KIND_GROUP_CREATE_INVITE => {
-                debug!("Admin -> Relay: Creating invite");
-                self.handle_create_invite(event).await?
-            }
-
-            // Group content events
-            k => {
-                debug!("User -> Relay: Group content event");
-                let group = match self.groups.find_group_from_event(event) {
-                    None => return Ok(None),
-                    Some(group) => group,
-                };
-
-                if GROUP_CONTENT_KINDS.contains(&k) {
-                    if !group.is_member(&event.pubkey) {
-                        return Err(Error::notice("User is not a member of this group"));
-                    }
-                    vec![EventToSave::Event(event.clone())]
-                } else {
-                    return Err(Error::notice("Event kind not supported by this group"));
-                }
-            }
-        };
-
-        Ok(Some(events_to_save))
     }
 }
 

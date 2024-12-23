@@ -153,6 +153,73 @@ impl Groups {
         let group_id = Group::extract_group_h_tag(event)?;
         self.get_group(group_id)
     }
+
+    pub fn handle_group_create(&self, event: &Event) -> Result<Group, Error> {
+        if let Some(group) = self.find_group_from_event(event) {
+            return Err(Error::notice("Group already exists"));
+        }
+
+        let group = Group::new(event)?;
+        self.groups.insert(group.id.to_string(), group.clone());
+        Ok(group)
+    }
+
+    pub fn handle_set_roles(&self, event: &Event) -> Result<(), Error> {
+        let mut group = self
+            .find_group_from_event_mut(event)?
+            .ok_or(Error::notice("Group not found"))?;
+
+        group.set_roles(event)
+    }
+
+    pub fn handle_put_user(&self, event: &Event) -> Result<bool, Error> {
+        let mut group = self
+            .find_group_from_event_mut(event)?
+            .ok_or(Error::notice("Group not found"))?;
+
+        group.add_members(event)
+    }
+
+    pub fn handle_remove_user(&self, event: &Event) -> Result<bool, Error> {
+        let mut group = self
+            .find_group_from_event_mut(event)?
+            .ok_or(Error::notice("Group not found"))?;
+
+        group.remove_members(event)
+    }
+
+    pub fn handle_edit_metadata(&self, event: &Event) -> Result<(), Error> {
+        let mut group = self
+            .find_group_from_event_mut(event)?
+            .ok_or(Error::notice("Group not found"))?;
+
+        group.set_metadata(event)
+    }
+
+    pub fn handle_create_invite(&self, event: &Event) -> Result<(), Error> {
+        let mut group = self
+            .find_group_from_event_mut(event)?
+            .ok_or(Error::notice("Group not found"))?;
+
+        group.create_invite(event)?;
+        Ok(())
+    }
+
+    pub fn handle_join_request(&self, event: &Event) -> Result<bool, Error> {
+        let mut group = self
+            .find_group_from_event_mut(event)?
+            .ok_or(Error::notice("Group not found"))?;
+
+        group.join_request(event)
+    }
+
+    pub fn handle_leave_request(&self, event: &Event) -> Result<bool, Error> {
+        let mut group = self
+            .find_group_from_event_mut(event)?
+            .ok_or(Error::notice("Group not found"))?;
+
+        group.leave_request(event)
+    }
 }
 
 impl Deref for Groups {
@@ -166,5 +233,200 @@ impl Deref for Groups {
 impl DerefMut for Groups {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.groups
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr_sdk::{EventBuilder, Keys, NostrSigner};
+    use std::time::Instant;
+
+    async fn create_test_keys() -> (Keys, Keys, Keys) {
+        (Keys::generate(), Keys::generate(), Keys::generate())
+    }
+
+    async fn create_test_event(keys: &Keys, kind: Kind, tags: Vec<Tag>) -> Event {
+        let unsigned_event = EventBuilder::new(kind, "")
+            .tags(tags)
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        keys.sign_event(unsigned_event).await.unwrap()
+    }
+
+    async fn setup_test_groups() -> (Groups, Keys, Keys, Keys, String) {
+        let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
+        let group_id = "test_group_123".to_string();
+        let tags = vec![Tag::custom(TagKind::h(), [group_id.clone()])];
+        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE, tags).await;
+
+        let groups = Groups {
+            groups: DashMap::new(),
+        };
+        groups.handle_group_create(&event).unwrap();
+
+        (groups, admin_keys, member_keys, non_member_keys, group_id)
+    }
+
+    #[tokio::test]
+    async fn test_handle_group_create() {
+        let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
+
+        // Test creating a duplicate group
+        let tags = vec![Tag::custom(TagKind::h(), [group_id.clone()])];
+        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE, tags).await;
+        assert!(groups.handle_group_create(&event).is_err());
+
+        // Verify group exists and admin is set
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(group.is_admin(&admin_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_set_roles() {
+        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+
+        // Add a member with admin role
+        let tags = vec![
+            Tag::custom(TagKind::h(), [group_id.clone()]),
+            Tag::custom(
+                TagKind::p(),
+                [member_keys.public_key().to_string(), "Admin".to_string()],
+            ),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_SET_ROLES, tags).await;
+        assert!(groups.handle_set_roles(&event).is_ok());
+
+        // Verify member has admin role
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(group.is_admin(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_put_user() {
+        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+
+        // Add a member
+        let tags = vec![
+            Tag::custom(TagKind::h(), [group_id.clone()]),
+            Tag::public_key(member_keys.public_key()),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, tags).await;
+        assert!(groups.handle_put_user(&event).unwrap());
+
+        // Verify member was added
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(group.is_member(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_remove_user() {
+        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+
+        // First add a member
+        let add_tags = vec![
+            Tag::custom(TagKind::h(), [group_id.clone()]),
+            Tag::public_key(member_keys.public_key()),
+        ];
+        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, add_tags).await;
+        groups.handle_put_user(&add_event).unwrap();
+
+        // Then remove them
+        let remove_tags = vec![
+            Tag::custom(TagKind::h(), [group_id.clone()]),
+            Tag::public_key(member_keys.public_key()),
+        ];
+        let remove_event =
+            create_test_event(&admin_keys, KIND_GROUP_REMOVE_USER, remove_tags).await;
+        assert!(groups.handle_remove_user(&remove_event).unwrap());
+
+        // Verify member was removed
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(!group.is_member(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_edit_metadata() {
+        let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
+
+        // Edit metadata
+        let tags = vec![
+            Tag::custom(TagKind::h(), [group_id.clone()]),
+            Tag::custom(TagKind::Name, ["New Group Name"]),
+            Tag::custom(TagKind::custom("about"), ["About text"]),
+            Tag::custom(TagKind::custom("picture"), ["picture_url"]),
+            Tag::custom(TagKind::custom("public"), &[] as &[String]),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA, tags).await;
+        assert!(groups.handle_edit_metadata(&event).is_ok());
+
+        // Verify metadata was updated
+        let group = groups.get_group(&group_id).unwrap();
+        assert_eq!(group.metadata.name, "New Group Name");
+        assert_eq!(group.metadata.about, Some("About text".to_string()));
+        assert_eq!(group.metadata.picture, Some("picture_url".to_string()));
+        assert!(!group.metadata.private);
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_invite() {
+        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+
+        // Create invite
+        let invite_code = "test_invite_123";
+        let tags = vec![
+            Tag::custom(TagKind::h(), [group_id.clone()]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE, tags).await;
+        assert!(groups.handle_create_invite(&event).is_ok());
+
+        // Verify invite was created
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(group.invites.contains_key(invite_code));
+
+        // Drop the group reference before proceeding
+        drop(group);
+
+        // Test using invite
+        let join_tags = vec![
+            Tag::custom(TagKind::h(), [group_id.clone()]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let join_event =
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST, join_tags).await;
+        assert!(groups.handle_join_request(&join_event).unwrap());
+
+        // Verify member was added
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(group.is_member(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_join_leave_requests() {
+        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+
+        // Test join request
+        let join_tags = vec![Tag::custom(TagKind::h(), [group_id.clone()])];
+        let join_event =
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST, join_tags).await;
+        assert!(!groups.handle_join_request(&join_event).unwrap());
+
+        // Manually add member
+        let add_tags = vec![
+            Tag::custom(TagKind::h(), [group_id.clone()]),
+            Tag::public_key(member_keys.public_key()),
+        ];
+        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, add_tags).await;
+        groups.handle_put_user(&add_event).unwrap();
+
+        // Test leave request
+        let leave_tags = vec![Tag::custom(TagKind::h(), [group_id.clone()])];
+        let leave_event =
+            create_test_event(&member_keys, KIND_GROUP_USER_LEAVE_REQUEST, leave_tags).await;
+        assert!(groups.handle_leave_request(&leave_event).unwrap());
+
+        // Verify member was removed
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(!group.is_member(&member_keys.public_key()));
     }
 }
