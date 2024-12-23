@@ -265,9 +265,9 @@ async fn main() -> Result<()> {
 
     let websocket_handler = WebSocketBuilder::new(connection_state_factory, NostrMessageConverter)
         .with_middleware(logger)
-        .with_middleware(event_verifier)
+        //.with_middleware(event_verifier)
         .with_middleware(nip_42)
-        .with_middleware(nip_70)
+        //.with_middleware(nip_70)
         .with_middleware(nip_29)
         .with_middleware(event_store)
         .build();

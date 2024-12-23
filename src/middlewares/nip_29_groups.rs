@@ -290,7 +290,7 @@ impl Middleware for Nip29Middleware {
         &'a self,
         ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<()> {
-        let message = match ctx.message {
+        let message = match &ctx.message {
             ClientMessage::Event(ref event) => match self.handle_event(event).await {
                 Ok(Some(events_to_save)) => {
                     let event_id = event.id;
@@ -306,11 +306,23 @@ impl Middleware for Nip29Middleware {
                     return Ok(());
                 }
             },
-            ClientMessage::Req { ref filters, .. } => {
+            ClientMessage::Req {
+                ref filters,
+                subscription_id,
+            } => {
+                debug!(
+                    "[{}] Received REQ message for subscription {}",
+                    ctx.connection_id, subscription_id
+                );
                 if let Err(e) = self.verify_filters(ctx.state.authed_pubkey, filters) {
                     e.handle_inbound_error(ctx).await;
                     return Ok(());
                 }
+
+                debug!(
+                    "[{}] Subscribing to subscription {}",
+                    ctx.connection_id, subscription_id
+                );
                 None
             }
             _ => None,

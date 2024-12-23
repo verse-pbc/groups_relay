@@ -378,6 +378,19 @@ impl EventStoreConnection {
             self.db_connection
         );
 
+        // First save the event to the database
+        if let Err(e) = self.database.save_signed_event(&event) {
+            error!(
+                target: "event_store",
+                "[{}] Failed to save event {}: {:?}",
+                self.id,
+                event.id,
+                e
+            );
+            return Err(Error::notice(format!("Failed to save event: {:?}", e)));
+        }
+
+        // Then check subscriptions
         if let Some(sender) = &self.outgoing_sender {
             if let Err(e) = self
                 .subscription_sender
