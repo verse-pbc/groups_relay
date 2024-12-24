@@ -325,9 +325,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use websocket_builder::{StateFactory, WebSocketBuilder, WebSocketHandler};
 
-    struct TestStateFactory {
-        database: Arc<NostrDatabase>,
-    }
+    struct TestStateFactory;
 
     impl StateFactory<NostrConnectionState> for TestStateFactory {
         fn create_state(&self, token: CancellationToken) -> NostrConnectionState {
@@ -380,14 +378,9 @@ mod tests {
         let cancellation_token = CancellationToken::new();
         let token = cancellation_token.clone();
 
-        let ws_handler = WebSocketBuilder::new(
-            TestStateFactory {
-                database: database.clone(),
-            },
-            NostrMessageConverter,
-        )
-        .with_middleware(EventStoreMiddleware::new(database))
-        .build();
+        let ws_handler = WebSocketBuilder::new(TestStateFactory, NostrMessageConverter)
+            .with_middleware(EventStoreMiddleware::new(database))
+            .build();
 
         let server_state = ServerState {
             ws_handler,

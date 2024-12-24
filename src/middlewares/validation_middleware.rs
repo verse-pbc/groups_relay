@@ -69,14 +69,10 @@ impl ValidationMiddleware {
             .generic_tags
             .contains_key(&SingleLetterTag::lowercase(Alphabet::D));
 
-        if !has_h_tag && !has_d_tag {
-            return Err("invalid: filter must contain either 'h' or 'd' tag");
-        }
-
-        // Check if kinds are supported
-        if let Some(kinds) = &filter.kinds {
-            for kind in kinds {
-                let supported = GROUP_CONTENT_KINDS.contains(kind)
+        // Check if kinds are supported (if specified)
+        let has_valid_kinds = if let Some(kinds) = &filter.kinds {
+            kinds.iter().all(|kind| {
+                GROUP_CONTENT_KINDS.contains(kind)
                     || matches!(
                         kind,
                         k if *k == KIND_GROUP_CREATE
@@ -90,12 +86,15 @@ impl ValidationMiddleware {
                             || *k == KIND_GROUP_USER_JOIN_REQUEST
                             || *k == KIND_GROUP_USER_LEAVE_REQUEST
                             || METADATA_EVENT_KINDS.contains(k)
-                    );
+                    )
+            })
+        } else {
+            false
+        };
 
-                if !supported {
-                    return Err("invalid: filter contains unsupported event kind");
-                }
-            }
+        // Filter must either have valid tags or valid kinds
+        if !has_h_tag && !has_d_tag && !has_valid_kinds {
+            return Err("invalid: filter must contain either 'h'/'d' tag or supported kinds");
         }
 
         Ok(())
@@ -164,5 +163,95 @@ impl Middleware for ValidationMiddleware {
             }
             _ => ctx.next().await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr_sdk::{EventBuilder, Keys};
+    use std::collections::BTreeSet;
+    use std::time::Instant;
+
+    fn create_test_keys() -> Keys {
+        Keys::generate()
+    }
+
+    async fn create_test_event(keys: &Keys, kind: Kind, tags: Vec<Tag>) -> Event {
+        let event = EventBuilder::new(kind, "test")
+            .tags(tags)
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        keys.sign_event(event).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_event_validation() {
+        let keys = create_test_keys();
+        let relay_keys = create_test_keys();
+        let middleware = ValidationMiddleware::new(relay_keys.public_key());
+
+        // Test valid event with supported kind and h tag
+        let event = create_test_event(
+            &keys,
+            GROUP_CONTENT_KINDS[0],
+            vec![Tag::custom(TagKind::h(), ["test_group"])],
+        )
+        .await;
+        assert!(middleware.validate_event(&event).is_ok());
+
+        // Test event with supported kind but no h tag
+        let event = create_test_event(&keys, GROUP_CONTENT_KINDS[0], vec![]).await;
+        assert!(middleware.validate_event(&event).is_err());
+
+        // Test event with unsupported kind but h tag
+        let event = create_test_event(
+            &keys,
+            Kind::Custom(65000),
+            vec![Tag::custom(TagKind::h(), ["test_group"])],
+        )
+        .await;
+        assert!(middleware.validate_event(&event).is_err());
+    }
+
+    #[test]
+    fn test_filter_validation() {
+        let relay_keys = create_test_keys();
+        let middleware = ValidationMiddleware::new(relay_keys.public_key());
+
+        // Test filter with h tag
+        let mut filter = Filter::new();
+        let mut tag_set = BTreeSet::new();
+        tag_set.insert("test".to_string());
+        filter
+            .generic_tags
+            .insert(SingleLetterTag::lowercase(Alphabet::H), tag_set);
+        assert!(middleware.validate_filter(&filter, None).is_ok());
+
+        // Test filter with d tag
+        let mut filter = Filter::new();
+        let mut tag_set = BTreeSet::new();
+        tag_set.insert("test".to_string());
+        filter
+            .generic_tags
+            .insert(SingleLetterTag::lowercase(Alphabet::D), tag_set);
+        assert!(middleware.validate_filter(&filter, None).is_ok());
+
+        // Test filter with supported kinds
+        let filter = Filter::new().kinds(vec![GROUP_CONTENT_KINDS[0]]);
+        assert!(middleware.validate_filter(&filter, None).is_ok());
+
+        // Test filter with unsupported kinds
+        let filter = Filter::new().kinds(vec![Kind::Custom(65000)]);
+        assert!(middleware.validate_filter(&filter, None).is_err());
+
+        // Test filter with no tags and no kinds
+        let filter = Filter::new();
+        assert!(middleware.validate_filter(&filter, None).is_err());
+
+        // Test filter with relay pubkey should skip validation
+        let filter = Filter::new(); // Invalid filter
+        assert!(middleware
+            .validate_filter(&filter, Some(&relay_keys.public_key))
+            .is_ok());
     }
 }
