@@ -76,7 +76,7 @@ impl EventStoreMiddleware {
             Ok(events) => events,
             Err(e) => {
                 error!("Failed to fetch historical events: {:?}", e);
-                return Err(e.into());
+                return Err(e);
             }
         };
 

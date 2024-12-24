@@ -38,7 +38,13 @@ pub const METADATA_EVENT_KINDS: [Kind; 4] = [
 ];
 
 // Regular content kinds allowed in groups
-pub const GROUP_CONTENT_KINDS: [Kind; 3] = [Kind::Custom(9), Kind::Custom(11), Kind::Custom(10010)];
+pub const GROUP_CONTENT_KINDS: [Kind; 5] = [
+    Kind::Custom(9),
+    Kind::Custom(10),
+    Kind::Custom(11),
+    Kind::Custom(12),
+    Kind::Custom(10010),
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupMetadata {
