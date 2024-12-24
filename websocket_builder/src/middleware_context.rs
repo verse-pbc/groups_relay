@@ -2,6 +2,7 @@ use crate::Middleware;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, error};
 
@@ -16,17 +17,27 @@ impl<O> MessageSender<O> {
         Self { sender, index }
     }
 
-    pub async fn send(&mut self, message: O) -> Result<()> {
+    pub async fn send(&mut self, message: O) -> Result<(), TrySendError<(O, usize)>> {
         debug!(
             "MessageSender sending message from middleware index: {}",
             self.index
         );
-        if let Err(e) = self.sender.send((message, self.index)).await {
-            error!("Failed to send message: {}", e);
-            return Err(anyhow::anyhow!("Failed to send message: {}", e));
+
+        if let Err(e) = self.sender.try_send((message, self.index)) {
+            error!(
+                "Failed to send message. Current capacity: {}. Error: {}",
+                self.capacity(),
+                e
+            );
+            return Err(e);
         }
+
         debug!("MessageSender successfully sent message");
         Ok(())
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.sender.capacity()
     }
 }
 
@@ -89,14 +100,20 @@ impl<S: Send + Sync + 'static, I: Send + Sync + 'static, O: Send + Sync + 'stati
         if let Some(sender) = &mut self.sender {
             sender.send(message).await?;
         }
-
         Ok(())
+    }
+
+    fn capacity(&self) -> usize {
+        self.sender.as_ref().map_or(0, |s| s.capacity())
     }
 }
 
 #[async_trait]
 pub trait SendMessage<O> {
     async fn send_message(&mut self, message: O) -> Result<()>;
+
+    /// Returns the number of available slots in the channel
+    fn capacity(&self) -> usize;
 }
 
 #[derive(Debug)]
@@ -212,8 +229,11 @@ impl<S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 'stati
         if let Some(sender) = &mut self.sender {
             sender.send(message).await?;
         }
-
         Ok(())
+    }
+
+    fn capacity(&self) -> usize {
+        self.sender.as_ref().map_or(0, |s| s.capacity())
     }
 }
 
@@ -278,7 +298,11 @@ impl<S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 'stati
         if let Some(sender) = &mut self.sender {
             sender.send(message).await?;
         }
-
         Ok(())
+    }
+
+    /// Returns the number of available slots in the channel
+    fn capacity(&self) -> usize {
+        self.sender.as_ref().map_or(0, |s| s.capacity())
     }
 }

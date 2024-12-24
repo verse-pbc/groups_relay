@@ -72,7 +72,6 @@ impl EventStoreMiddleware {
         filters: &[Filter],
         mut sender: MessageSender<RelayMessage>,
     ) -> Result<(), Error> {
-        // Fetch historical events from the database directly
         let events = match connection.fetch_events(filters.to_vec()).await {
             Ok(events) => events,
             Err(e) => {
@@ -83,7 +82,9 @@ impl EventStoreMiddleware {
 
         // Send each event
         let len = events.len();
-        for event in events {
+        let capacity = connection.sender_capacity() / 2;
+
+        for event in events.into_iter().take(capacity) {
             if let Err(e) = sender
                 .send(RelayMessage::Event {
                     subscription_id: subscription_id.clone(),

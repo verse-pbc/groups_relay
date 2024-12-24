@@ -270,6 +270,7 @@ async fn main() -> Result<()> {
         .with_middleware(nip_70)
         .with_middleware(nip_29)
         .with_middleware(event_store)
+        .with_channel_size(1000)
         .build();
 
     let cancellation_token = CancellationToken::new();

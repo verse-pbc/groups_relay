@@ -148,8 +148,23 @@ impl Middleware for FloodMiddleware {
         // Send 200 messages (more than the channel size of 10)
         for i in 0..200 {
             println!("FloodMiddleware: Attempting to send message {}", i);
-            ctx.send_message(format!("flood message {}", i)).await?;
-            println!("FloodMiddleware: Successfully sent message {}", i);
+            // We could use capacity() here, but let's let it fail
+            // to demonstrate the deadlock scenario is not triggered
+            // by the channel being full.
+
+            // if ctx.capacity() == 0 {
+            //     println!("FloodMiddleware: Channel is full, skipping message {}", i);
+            //     break;
+            // }
+
+            match ctx.send_message(format!("flood message {}", i)).await {
+                Ok(_) => {
+                    println!("FloodMiddleware: Successfully sent message {}", i);
+                }
+                Err(e) => {
+                    println!("FloodMiddleware: Failed to send message {}: {}", i, e);
+                }
+            }
         }
         println!("FloodMiddleware: Finished sending all messages");
         ctx.next().await
@@ -321,7 +336,6 @@ async fn test_flood_middleware() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting flood middleware test");
     let addr = SocketAddr::from(([127, 0, 0, 1], 8083));
 
-    // Set up a small channel size to demonstrate deadlock
     let ws_handler = WebSocketBuilder::new(TestStateFactory, Converter)
         .with_channel_size(10)
         .with_middleware(FloodMiddleware)
@@ -330,25 +344,27 @@ async fn test_flood_middleware() -> Result<(), Box<dyn std::error::Error>> {
     let server = TestServer::start(addr, ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
-    // This message triggers FloodMiddleware to send 200 messages through a channel of size 10
-    // The middleware will block on the 11th message because:
-    // 1. We're in the socket.next() branch of the message loop
-    // 2. Can't process channel messages until we exit this branch
-    // 3. Can't exit because we're blocked trying to send
     client
         .send(Message::Text("trigger flood".to_string()))
         .await?;
 
-    // We should receive exactly 10 messages (the channel capacity) before deadlock
     let mut received_count = 0;
-    while let Ok(Some(_msg)) = tokio::time::timeout(Duration::from_millis(100), client.next()).await
+    while let Ok(Some(msg)) = tokio::time::timeout(Duration::from_millis(100), client.next()).await
     {
-        received_count += 1;
+        match msg {
+            Ok(Message::Text(msg)) => {
+                received_count += 1;
+                println!("Received message: {}", msg);
+            }
+            _ => {
+                panic!("Received unexpected message: {:?}", msg);
+            }
+        }
     }
 
     assert_eq!(
         received_count, 10,
-        "Expected to receive exactly 10 messages (channel capacity) before deadlock, got {}",
+        "Expected to receive exactly 10 messages (channel capacity) got {}",
         received_count
     );
 

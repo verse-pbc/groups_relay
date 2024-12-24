@@ -210,6 +210,7 @@ impl EventStoreConnection {
                                             event: Box::new(event.clone()),
                                             subscription_id: subscription_id.clone(),
                                         };
+
                                         if let Err(e) = sender.send(message).await {
                                             error!(
                                                 target: "event_store",
@@ -276,6 +277,14 @@ impl EventStoreConnection {
         );
 
         Ok(connection)
+    }
+
+    /// Returns the capacity of the outgoing sender
+    pub fn sender_capacity(&self) -> usize {
+        match &self.outgoing_sender {
+            Some(sender) => sender.capacity(),
+            None => 0,
+        }
     }
 
     pub fn set_outgoing_sender(&mut self, sender: MessageSender<RelayMessage>) {
