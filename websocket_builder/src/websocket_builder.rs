@@ -239,6 +239,7 @@ async fn message_loop<
     debug!("[{}] Starting message loop", connection_id);
 
     loop {
+        debug!("[{}] Message loop iteration starting", connection_id);
         tokio::select! {
             biased;
 
