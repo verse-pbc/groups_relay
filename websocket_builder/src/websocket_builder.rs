@@ -236,17 +236,25 @@ async fn message_loop<
     cancellation_token: CancellationToken,
     mut state: TapState,
 ) -> Result<TapState, WebsocketError<TapState>> {
+    debug!("[{}] Starting message loop", connection_id);
+
     loop {
         tokio::select! {
             biased;
 
             _ = cancellation_token.cancelled() => {
+                debug!("[{}] Cancellation token triggered", connection_id);
                 return Ok(state);
             }
 
             server_message = server_receiver.recv() => {
+                debug!("[{}] Server receiver got message", connection_id);
                 match server_message {
                     Some((message, middleware_index)) => {
+                        debug!(
+                            "[{}] Processing outbound message from middleware {}",
+                            connection_id, middleware_index
+                        );
                         let (new_state, message) = match handler
                             .handle_outbound_message(
                                 connection_id.to_string(),
@@ -285,6 +293,7 @@ async fn message_loop<
                         state = new_state;
                     }
                     None => {
+                        debug!("[{}] Receiver closed", connection_id);
                         return Ok(state);
                     }
                 }
@@ -305,7 +314,9 @@ async fn message_loop<
                             warn!("Pong failed: {}", e);
                         }
                     }
-                    Some(Ok(Message::Pong(_))) => {}
+                    Some(Ok(Message::Pong(_))) => {
+
+                    }
                     Some(Ok(Message::Close(_))) => {
                         info!("Client closed");
                         return Ok(state);
