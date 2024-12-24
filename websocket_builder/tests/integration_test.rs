@@ -8,9 +8,13 @@ use axum::{
     routing::get,
     Router,
 };
+use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 use utils::{assert_proxy_response, create_websocket_client};
 use websocket_builder::message_handler::MessageConverter;
@@ -123,6 +127,39 @@ impl Middleware for ThreeMiddleware {
         ctx.state.lock().await.outbound_count += 1;
         let payload = ctx.message.as_ref().unwrap();
         ctx.message = Some(format!("Tres({})", payload));
+        ctx.next().await
+    }
+}
+
+#[derive(Debug)]
+pub struct FloodMiddleware;
+
+#[async_trait]
+impl Middleware for FloodMiddleware {
+    type State = Arc<Mutex<ClientState>>;
+    type IncomingMessage = String;
+    type OutgoingMessage = String;
+
+    async fn process_inbound<'a>(
+        &'a self,
+        ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
+        println!("FloodMiddleware: Starting to send 200 messages");
+        // Send 200 messages (more than the channel size of 10)
+        for i in 0..200 {
+            println!("FloodMiddleware: Attempting to send message {}", i);
+            ctx.send_message(format!("flood message {}", i)).await?;
+            println!("FloodMiddleware: Successfully sent message {}", i);
+        }
+        println!("FloodMiddleware: Finished sending all messages");
+        ctx.next().await
+    }
+
+    async fn process_outbound<'a>(
+        &'a self,
+        ctx: &mut OutboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
+        ctx.message = Some(format!("Flood({})", ctx.message.as_ref().unwrap()));
         ctx.next().await
     }
 }
@@ -274,6 +311,46 @@ async fn test_stateful_message_processing() -> Result<(), Box<dyn std::error::Er
     );
     response1?;
     response2?;
+
+    server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_flood_middleware() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Starting flood middleware test");
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8083));
+
+    // Set up a small channel size to demonstrate deadlock
+    let ws_handler = WebSocketBuilder::new(TestStateFactory, Converter)
+        .with_channel_size(10)
+        .with_middleware(FloodMiddleware)
+        .build();
+
+    let server = TestServer::start(addr, ws_handler).await?;
+    let mut client = create_websocket_client(addr.to_string().as_str()).await?;
+
+    // This message triggers FloodMiddleware to send 200 messages through a channel of size 10
+    // The middleware will block on the 11th message because:
+    // 1. We're in the socket.next() branch of the message loop
+    // 2. Can't process channel messages until we exit this branch
+    // 3. Can't exit because we're blocked trying to send
+    client
+        .send(Message::Text("trigger flood".to_string()))
+        .await?;
+
+    // We should receive exactly 10 messages (the channel capacity) before deadlock
+    let mut received_count = 0;
+    while let Ok(Some(_msg)) = tokio::time::timeout(Duration::from_millis(100), client.next()).await
+    {
+        received_count += 1;
+    }
+
+    assert_eq!(
+        received_count, 10,
+        "Expected to receive exactly 10 messages (channel capacity) before deadlock, got {}",
+        received_count
+    );
 
     server.shutdown().await?;
     Ok(())

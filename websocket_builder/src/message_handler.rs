@@ -17,19 +17,20 @@ pub struct MessageHandler<
     TapState: Send + Sync + 'static,
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
-    Converter: MessageConverter<I, O> + 'static,
+    Converter: MessageConverter<I, O> + Send + Sync + 'static,
 > {
     middlewares: Arc<MiddlewareVec<TapState, I, O>>,
     message_converter: Arc<Converter>,
     sender: Option<MpscSender<(O, usize)>>,
     cancellation_token: CancellationToken,
+    channel_size: usize,
 }
 
 impl<
         TapState: Send + Sync + 'static,
         I: Send + Sync + 'static,
         O: Send + Sync + 'static,
-        Converter: MessageConverter<I, O>,
+        Converter: MessageConverter<I, O> + Send + Sync + 'static,
     > MessageHandler<TapState, I, O, Converter>
 {
     pub fn new(
@@ -37,12 +38,14 @@ impl<
         message_converter: Arc<Converter>,
         sender: Option<MpscSender<(O, usize)>>,
         cancellation_token: CancellationToken,
+        channel_size: usize,
     ) -> Self {
         Self {
             middlewares,
             message_converter,
             sender,
             cancellation_token,
+            channel_size,
         }
     }
 
@@ -162,8 +165,8 @@ impl<
         connection_id: String,
         mut state: TapState,
     ) -> Result<(TapState, MpscReceiver<(O, usize)>), WebsocketError<TapState>> {
-        let (channel_sender, channel_receiver) = tokio::sync::mpsc::channel::<(O, usize)>(100);
-        self.sender = Some(channel_sender);
+        let (sender, receiver) = tokio::sync::mpsc::channel(self.channel_size);
+        self.sender = Some(sender);
 
         let mut ctx = ConnectionContext::new(
             connection_id,
@@ -177,7 +180,7 @@ impl<
             return Err(WebsocketError::HandlerError(e.into(), state));
         };
 
-        Ok((state, channel_receiver))
+        Ok((state, receiver))
     }
 
     pub async fn on_disconnect(

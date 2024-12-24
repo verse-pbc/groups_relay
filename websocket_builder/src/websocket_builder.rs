@@ -75,13 +75,14 @@ pub struct WebSocketBuilder<
     TapState: Send + Sync + 'static,
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
-    Converter: MessageConverter<I, O>,
+    Converter: MessageConverter<I, O> + Send + Sync + 'static,
     Factory: StateFactory<TapState>,
 > {
     state_factory: Factory,
     middlewares:
         Vec<Arc<dyn Middleware<State = TapState, IncomingMessage = I, OutgoingMessage = O>>>,
     message_converter: Converter,
+    channel_size: usize,
 }
 
 impl<
@@ -97,6 +98,7 @@ impl<
             state_factory,
             middlewares: Vec::new(),
             message_converter,
+            channel_size: 100, // Default size
         }
     }
 
@@ -111,11 +113,17 @@ impl<
         self
     }
 
+    pub fn with_channel_size(mut self, size: usize) -> Self {
+        self.channel_size = size;
+        self
+    }
+
     pub fn build(self) -> WebSocketHandler<TapState, I, O, Converter, Factory> {
         WebSocketHandler {
             middlewares: Arc::new(self.middlewares),
             message_converter: Arc::new(self.message_converter),
             state_factory: self.state_factory,
+            channel_size: self.channel_size,
         }
     }
 }
@@ -123,10 +131,18 @@ impl<
 pub type MiddlewareVec<S, I, O> =
     Vec<Arc<dyn Middleware<State = S, IncomingMessage = I, OutgoingMessage = O>>>;
 
-pub struct WebSocketHandler<S, I, O, C, F> {
+pub struct WebSocketHandler<S, I, O, C, F>
+where
+    S: Send + Sync + 'static,
+    I: Send + Sync + 'static,
+    O: Send + Sync + 'static,
+    C: MessageConverter<I, O> + Send + Sync + 'static,
+    F: StateFactory<S> + Send + Sync + 'static,
+{
     middlewares: Arc<MiddlewareVec<S, I, O>>,
     message_converter: Arc<C>,
     state_factory: F,
+    channel_size: usize,
 }
 
 impl<TapState, I, O, Converter, Factory> WebSocketHandler<TapState, I, O, Converter, Factory>
@@ -154,6 +170,7 @@ where
             message_converter,
             None,
             connection_token.clone(),
+            self.channel_size,
         );
 
         let state = match handle_connection_lifecycle(
@@ -185,7 +202,7 @@ async fn handle_connection_lifecycle<
     TapState: Send + Sync + 'static,
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
-    Converter: MessageConverter<I, O> + 'static,
+    Converter: MessageConverter<I, O> + Send + Sync + 'static,
 >(
     connection_id: String,
     socket: WebSocket,
@@ -227,7 +244,7 @@ async fn message_loop<
     TapState: Send + Sync + 'static,
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
-    Converter: MessageConverter<I, O>,
+    Converter: MessageConverter<I, O> + Send + Sync + 'static,
 >(
     connection_id: &str,
     mut socket: WebSocket,

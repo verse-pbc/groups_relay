@@ -3,8 +3,7 @@ pub mod middleware;
 pub mod middleware_context;
 pub mod websocket_builder;
 
-pub use message_handler::MessageConverter;
-pub(crate) use message_handler::MessageHandler;
+pub use message_handler::{MessageConverter, MessageHandler};
 pub use middleware::Middleware;
 pub use middleware_context::{
     ConnectionContext, DisconnectContext, InboundContext, MessageSender, OutboundContext,
