@@ -1,3 +1,4 @@
+use crate::error::Error;
 use crate::event_store_connection::EventStoreConnection;
 use crate::nostr_database::NostrDatabase;
 use crate::nostr_session_state::NostrConnectionState;
@@ -66,17 +67,17 @@ impl EventStoreMiddleware {
 
     async fn fetch_historical_events(
         &self,
-        _connection: &EventStoreConnection,
+        connection: &EventStoreConnection,
         subscription_id: &SubscriptionId,
         filters: &[Filter],
         mut sender: MessageSender<RelayMessage>,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         // Fetch historical events from the database directly
-        let events = match self.database.fetch_events(filters.to_vec()).await {
+        let events = match connection.fetch_events(filters.to_vec()).await {
             Ok(events) => events,
             Err(e) => {
                 error!("Failed to fetch historical events: {:?}", e);
-                return Err(e);
+                return Err(e.into());
             }
         };
 

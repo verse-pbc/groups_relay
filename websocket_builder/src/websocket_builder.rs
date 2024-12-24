@@ -257,10 +257,21 @@ async fn message_loop<
                             .await?;
 
                         if let Some(message) = message {
+                            debug!(
+                                "[{}] Sending message to websocket",
+                                connection_id
+                            );
                             if let Err(e) = socket.send(Message::Text(message)).await {
-                                warn!("Send failed: {}", e);
+                                error!(
+                                    "[{}] Failed to send message to websocket: {}",
+                                    connection_id, e
+                                );
                                 return Err(WebsocketError::WebsocketError(e, new_state));
                             }
+                            debug!(
+                                "[{}] Successfully sent message to websocket",
+                                connection_id
+                            );
                         }
 
                         state = new_state;

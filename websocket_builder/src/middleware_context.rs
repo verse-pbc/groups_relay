@@ -3,7 +3,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
-use tracing::error;
+use tracing::{debug, error};
 
 #[derive(Debug, Clone)]
 pub struct MessageSender<O> {
@@ -17,11 +17,15 @@ impl<O> MessageSender<O> {
     }
 
     pub async fn send(&mut self, message: O) -> Result<()> {
+        debug!(
+            "MessageSender sending message from middleware index: {}",
+            self.index
+        );
         if let Err(e) = self.sender.send((message, self.index)).await {
             error!("Failed to send message: {}", e);
             return Err(anyhow::anyhow!("Failed to send message: {}", e));
         }
-
+        debug!("MessageSender successfully sent message");
         Ok(())
     }
 }

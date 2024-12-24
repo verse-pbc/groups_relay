@@ -6,6 +6,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver as MpscReceiver, Sender as MpscSender};
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error};
 
 pub trait MessageConverter<I, O> {
     fn outbound_to_string(&self, message: O) -> Result<String>;
@@ -85,9 +86,14 @@ impl<
         middleware_index: usize,
         mut state: TapState,
     ) -> Result<(TapState, Option<String>), WebsocketError<TapState>> {
+        debug!(
+            "[{}] Starting outbound message processing from middleware {}",
+            connection_id, middleware_index
+        );
+
         let message = if middleware_index > 0 {
             let mut ctx = OutboundContext::new(
-                connection_id,
+                connection_id.clone(),
                 message,
                 self.sender.clone(),
                 &mut state,
@@ -95,30 +101,59 @@ impl<
                 middleware_index,
             );
 
+            debug!(
+                "[{}] Processing through remaining middlewares starting at {}",
+                connection_id, middleware_index
+            );
+
             if let Err(e) = self.middlewares[middleware_index]
                 .process_outbound(&mut ctx)
                 .await
             {
+                error!(
+                    "[{}] Error processing outbound message in middleware {}: {:?}",
+                    connection_id, middleware_index, e
+                );
                 return Err(WebsocketError::HandlerError(e.into(), state));
             };
 
+            debug!(
+                "[{}] Middleware processing complete, message present: {:?}",
+                connection_id,
+                ctx.message.is_some()
+            );
             ctx.message
         } else {
+            debug!(
+                "[{}] No middleware processing needed (index 0)",
+                connection_id
+            );
             Some(message)
         };
 
         match message {
             Some(message) => {
+                debug!("[{}] Converting outbound message to string", connection_id);
                 let Ok(string_message) = self.message_converter.outbound_to_string(message) else {
+                    error!(
+                        "[{}] Failed to convert outbound message to string",
+                        connection_id
+                    );
                     return Err(WebsocketError::OutboundMessageConversionError(
                         "Failed to convert outbound message to string".to_string(),
                         state,
                     ));
                 };
-
+                debug!(
+                    "[{}] Successfully converted message to string",
+                    connection_id
+                );
                 Ok((state, Some(string_message)))
             }
-            None => Ok((state, None)),
+            None => {
+                debug!("[{}] No message to send after processing", connection_id);
+                Ok((state, None))
+            }
         }
     }
 
