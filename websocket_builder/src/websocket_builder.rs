@@ -255,13 +255,100 @@ async fn message_loop<
 ) -> Result<TapState, WebsocketError<TapState>> {
     debug!("[{}] Starting message loop", connection_id);
 
+    // Helper function to handle a single message
+    async fn handle_outgoing_message<TapState, I, O, Converter>(
+        connection_id: &str,
+        socket: &mut WebSocket,
+        message: O,
+        middleware_index: usize,
+        handler: &mut MessageHandler<TapState, I, O, Converter>,
+        state: TapState,
+        is_flush: bool,
+    ) -> Result<TapState, WebsocketError<TapState>>
+    where
+        TapState: Send + Sync + 'static,
+        I: Send + Sync + 'static,
+        O: Send + Sync + 'static,
+        Converter: MessageConverter<I, O> + Send + Sync + 'static,
+    {
+        let log_prefix = if is_flush { "Flushing" } else { "Processing" };
+        debug!(
+            "[{}] {} outbound message from middleware {}",
+            connection_id, log_prefix, middleware_index
+        );
+
+        let (new_state, message) = match handler
+            .handle_outbound_message(connection_id.to_string(), message, middleware_index, state)
+            .await
+        {
+            Ok((new_state, message)) => (new_state, message),
+            Err(e) => {
+                error!(
+                    "[{}] Error handling outbound message{}: {}",
+                    connection_id,
+                    if is_flush { " during flush" } else { "" },
+                    e
+                );
+                return Err(e);
+            }
+        };
+
+        if let Some(message) = message {
+            debug!(
+                "[{}] Sending{} message to websocket",
+                connection_id,
+                if is_flush { " final" } else { "" }
+            );
+            if let Err(e) = socket.send(Message::Text(message)).await {
+                error!(
+                    "[{}] Failed to send{} message to websocket: {}",
+                    connection_id,
+                    if is_flush { " final" } else { "" },
+                    e
+                );
+                return Err(WebsocketError::WebsocketError(e, new_state));
+            }
+            debug!(
+                "[{}] Successfully sent{} message to websocket",
+                connection_id,
+                if is_flush { " final" } else { "" }
+            );
+        } else {
+            debug!("[{}] No message to send", connection_id);
+        }
+
+        Ok(new_state)
+    }
+
     loop {
         debug!("[{}] Message loop iteration starting", connection_id);
         tokio::select! {
             biased;
 
             _ = cancellation_token.cancelled() => {
-                debug!("[{}] Cancellation token triggered", connection_id);
+                debug!("[{}] Cancellation token triggered, flushing pending messages", connection_id);
+
+                // Flush any pending messages in the channel
+                while let Ok(msg) = server_receiver.try_recv() {
+                    let (message, middleware_index) = msg;
+                    state = handle_outgoing_message(
+                        connection_id,
+                        &mut socket,
+                        message,
+                        middleware_index,
+                        handler,
+                        state,
+                        true,
+                    )
+                    .await?;
+                }
+
+                // Send a close frame
+                if let Err(e) = socket.send(Message::Close(None)).await {
+                    warn!("[{}] Failed to send close frame: {}", connection_id, e);
+                }
+
+                debug!("[{}] Finished flushing messages", connection_id);
                 return Ok(state);
             }
 
@@ -269,46 +356,16 @@ async fn message_loop<
                 debug!("[{}] Server receiver got message", connection_id);
                 match server_message {
                     Some((message, middleware_index)) => {
-                        debug!(
-                            "[{}] Processing outbound message from middleware {}",
-                            connection_id, middleware_index
-                        );
-                        let (new_state, message) = match handler
-                            .handle_outbound_message(
-                                connection_id.to_string(),
-                                message,
-                                middleware_index,
-                                state,
-                            )
-                            .await {
-                                Ok((new_state, message)) => (new_state, message),
-                                Err(e) => {
-                                    error!("[{}] Error handling outbound message: {}", connection_id, e);
-                                    return Err(e);
-                                }
-                            };
-
-                        if let Some(message) = message {
-                            debug!(
-                                "[{}] Sending message to websocket",
-                                connection_id
-                            );
-                            if let Err(e) = socket.send(Message::Text(message)).await {
-                                error!(
-                                    "[{}] Failed to send message to websocket: {}",
-                                    connection_id, e
-                                );
-                                return Err(WebsocketError::WebsocketError(e, new_state));
-                            }
-                            debug!(
-                                "[{}] Successfully sent message to websocket",
-                                connection_id
-                            );
-                        } else {
-                            debug!("[{}] No message to send", connection_id);
-                        }
-
-                        state = new_state;
+                        state = handle_outgoing_message(
+                            connection_id,
+                            &mut socket,
+                            message,
+                            middleware_index,
+                            handler,
+                            state,
+                            false,
+                        )
+                        .await?;
                     }
                     None => {
                         debug!("[{}] Receiver closed", connection_id);
@@ -321,7 +378,7 @@ async fn message_loop<
                 match message {
                     Some(Ok(Message::Text(text))) => {
                         state = handler
-                            .handle_inbound_message(connection_id.to_string(), text, state)
+                            .handle_incoming_message(connection_id.to_string(), text, state)
                             .await?
                     }
                     Some(Ok(Message::Binary(_))) => {

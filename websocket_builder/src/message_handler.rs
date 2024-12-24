@@ -49,7 +49,7 @@ impl<
         }
     }
 
-    pub async fn handle_inbound_message(
+    pub async fn handle_incoming_message(
         &self,
         connection_id: String,
         payload: String,

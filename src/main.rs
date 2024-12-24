@@ -13,11 +13,8 @@ use groups_relay::{
     groups::Groups,
     handler,
     middlewares::{
-        event_store_middleware::{EventStoreMiddleware, NostrMessageConverter},
-        logger_middleware::LoggerMiddleware,
-        nip_29_groups::Nip29Middleware,
-        nip_70_protected_events::Nip70Middleware,
-        EventVerifierMiddleware, Nip42Middleware,
+        EventStoreMiddleware, EventVerifierMiddleware, LoggerMiddleware, Nip29Middleware,
+        Nip42Middleware, Nip70Middleware, NostrMessageConverter, ValidationMiddleware,
     },
     nostr_database::NostrDatabase,
     nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
@@ -262,15 +259,17 @@ async fn main() -> Result<()> {
     let nip_29 = Nip29Middleware::new(shared_groups.clone(), relay_keys.public_key);
     let event_store = EventStoreMiddleware::new(database.clone());
     let connection_state_factory = NostrConnectionFactory::new(settings.relay_url.clone());
+    let validation_middleware = ValidationMiddleware::new(relay_keys.public_key);
 
     let websocket_handler = WebSocketBuilder::new(connection_state_factory, NostrMessageConverter)
+        .with_channel_size(1000)
         .with_middleware(logger)
-        .with_middleware(event_verifier)
         .with_middleware(nip_42)
+        .with_middleware(validation_middleware)
+        .with_middleware(event_verifier)
         .with_middleware(nip_70)
         .with_middleware(nip_29)
         .with_middleware(event_store)
-        .with_channel_size(1000)
         .build();
 
     let cancellation_token = CancellationToken::new();
