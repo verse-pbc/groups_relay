@@ -247,14 +247,20 @@ async fn message_loop<
             server_message = server_receiver.recv() => {
                 match server_message {
                     Some((message, middleware_index)) => {
-                        let (new_state, message) = handler
+                        let (new_state, message) = match handler
                             .handle_outbound_message(
                                 connection_id.to_string(),
                                 message,
                                 middleware_index,
                                 state,
                             )
-                            .await?;
+                            .await {
+                                Ok((new_state, message)) => (new_state, message),
+                                Err(e) => {
+                                    error!("[{}] Error handling outbound message: {}", connection_id, e);
+                                    return Err(e);
+                                }
+                            };
 
                         if let Some(message) = message {
                             debug!(
@@ -272,6 +278,8 @@ async fn message_loop<
                                 "[{}] Successfully sent message to websocket",
                                 connection_id
                             );
+                        } else {
+                            debug!("[{}] No message to send", connection_id);
                         }
 
                         state = new_state;
