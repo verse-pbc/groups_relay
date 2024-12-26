@@ -1,7 +1,6 @@
 import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import { Group } from '../types'
-import { LogoutButton } from './LogoutButton'
 
 interface CreateGroupFormProps {
   updateGroupsMap: (updater: (map: Map<string, Group>) => void) => void
