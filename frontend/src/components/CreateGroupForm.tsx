@@ -87,71 +87,98 @@ export class CreateGroupForm extends Component<CreateGroupFormProps, CreateGroup
       <div class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] p-4">
         <h2 class="text-lg font-semibold text-[var(--color-text-primary)] mb-4">Create New Group</h2>
         <form onSubmit={this.handleSubmit} class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
-              Name
-            </label>
-            <input
-              type="text"
-              value={this.state.name}
-              onChange={(e) => this.setState({ name: (e.target as HTMLInputElement).value })}
-              placeholder="Enter group name"
-              class="w-full p-2 border border-[var(--color-border)] rounded bg-[var(--color-bg-primary)]
-                     text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)]
-                     focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
-              required
-            />
-          </div>
+          <div class="space-y-4">
+            <div class="space-y-3">
+              <label class="block text-sm font-medium text-[var(--color-text-secondary)]">
+                Name
+              </label>
+              <input
+                type="text"
+                value={this.state.name}
+                onInput={(e) => this.setState({ name: (e.target as HTMLInputElement).value })}
+                placeholder="Enter group name"
+                class="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
+                       text-sm rounded-lg text-[var(--color-text-primary)]
+                       placeholder-[var(--color-text-tertiary)]
+                       focus:outline-none focus:ring-1 focus:ring-accent
+                       hover:border-[var(--color-border-hover)] transition-colors"
+                required
+                disabled={isSubmitting}
+              />
+            </div>
 
-          <div>
-            <label class="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
-              Description
-            </label>
-            <textarea
-              value={this.state.about}
-              onChange={(e) => this.setState({ about: (e.target as HTMLTextAreaElement).value })}
-              placeholder="Enter group description"
-              class="w-full p-2 border border-[var(--color-border)] rounded bg-[var(--color-bg-primary)]
-                     text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)]
-                     focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
-              rows={3}
-            />
-          </div>
+            <div class="space-y-3">
+              <label class="block text-sm font-medium text-[var(--color-text-secondary)]">
+                Description
+              </label>
+              <textarea
+                value={this.state.about}
+                onInput={(e) => this.setState({ about: (e.target as HTMLTextAreaElement).value })}
+                placeholder="Enter group description"
+                rows={3}
+                class="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
+                       text-sm rounded-lg text-[var(--color-text-primary)]
+                       placeholder-[var(--color-text-tertiary)]
+                       focus:outline-none focus:ring-1 focus:ring-accent
+                       hover:border-[var(--color-border-hover)] transition-colors resize-none"
+                disabled={isSubmitting}
+              />
+            </div>
 
-          <div>
-            <label class="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
-              Picture URL
-            </label>
-            <input
-              type="url"
-              value={this.state.picture}
-              onChange={(e) => this.setState({ picture: (e.target as HTMLInputElement).value })}
-              placeholder="Enter picture URL"
-              class="w-full p-2 border border-[var(--color-border)] rounded bg-[var(--color-bg-primary)]
-                     text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)]
-                     focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
-            />
-          </div>
+            <div class="space-y-3">
+              <label class="block text-sm font-medium text-[var(--color-text-secondary)]">
+                Picture URL
+              </label>
+              <input
+                type="url"
+                value={this.state.picture}
+                onInput={(e) => this.setState({ picture: (e.target as HTMLInputElement).value })}
+                placeholder="Enter picture URL"
+                class="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
+                       text-sm rounded-lg text-[var(--color-text-primary)]
+                       placeholder-[var(--color-text-tertiary)]
+                       focus:outline-none focus:ring-1 focus:ring-accent
+                       hover:border-[var(--color-border-hover)] transition-colors"
+                disabled={isSubmitting}
+              />
+            </div>
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            class="w-full px-4 py-2 bg-[var(--color-accent)] text-white rounded
-                   hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed
-                   transition-colors flex items-center justify-center gap-2"
-          >
-            {isSubmitting ? (
-              <>
-                <span class="animate-spin">⚡</span>
-                Creating...
-              </>
-            ) : (
-              'Create Group'
-            )}
-          </button>
+            <div class="pt-2">
+              <button
+                type="submit"
+                disabled={isSubmitting || !this.state.name.trim()}
+                class="w-full px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium
+                       hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed
+                       transition-colors flex items-center justify-center gap-2"
+              >
+                {isSubmitting ? (
+                  <>
+                    <span class="animate-spin">⚡</span>
+                    Creating...
+                  </>
+                ) : (
+                  <>
+                    <span>✨</span>
+                    Create Group
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div class="pt-2">
+              <button
+                type="button"
+                onClick={onLogout}
+                class="w-full px-4 py-2 bg-[var(--color-bg-secondary)] text-[var(--color-text-tertiary)]
+                       rounded-lg text-sm hover:text-[var(--color-text-secondary)] transition-colors
+                       flex items-center justify-center gap-2"
+              >
+                <span>🚪</span>
+                Sign Out
+              </button>
+            </div>
+          </div>
         </form>
-
-        <LogoutButton onLogout={onLogout} />
       </div>
     )
   }

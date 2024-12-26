@@ -6,6 +6,7 @@ import { PubkeyDisplay } from './PubkeyDisplay'
 interface ContentSectionProps {
   group: Group
   client: NostrClient
+  showMessage: (message: string, type: 'success' | 'error' | 'info') => void
 }
 
 interface ContentSectionState {
@@ -28,8 +29,10 @@ export class ContentSection extends Component<ContentSectionProps, ContentSectio
     try {
       await this.props.client.deleteEvent(this.props.group.id, eventId)
       this.props.group.content = this.props.group.content?.filter(item => item.id !== eventId) || []
+      this.props.showMessage('Event deleted successfully', 'success')
     } catch (error) {
       console.error('Failed to delete event:', error)
+      this.props.showMessage('Failed to delete event: ' + error, 'error')
     } finally {
       this.setState(prev => {
         const newSet = new Set(prev.deletingEvents)

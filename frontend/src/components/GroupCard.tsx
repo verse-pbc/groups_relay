@@ -3,6 +3,7 @@ import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
 import { InviteSection } from './InviteSection'
 import { JoinRequestSection } from './JoinRequestSection'
+import { ContentSection } from './ContentSection'
 import { GroupInfo } from './GroupInfo'
 import { GroupTimestamps } from './GroupTimestamps'
 import { MembersSection } from './MembersSection'
@@ -21,7 +22,7 @@ interface GroupCardState {
   newAbout: string
   newMemberPubkey: string
   isAddingMember: boolean
-  activeTab: 'members' | 'invites' | 'requests'
+  activeTab: 'members' | 'invites' | 'requests' | 'content'
   copiedId: boolean
   showEditName: boolean
   editingName: string
@@ -41,7 +42,7 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
       newAbout: props.group.about || '',
       newMemberPubkey: '',
       isAddingMember: false,
-      activeTab: 'members',
+      activeTab: 'content',
       copiedId: false,
       showEditName: false,
       editingName: '',
@@ -180,19 +181,46 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
                         class="px-2 py-1 text-sm bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded"
                         placeholder="Enter group name"
                       />
-                      <button
-                        type="submit"
-                        class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
-                      >
-                        Save
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => this.setState({ showEditName: false })}
-                        class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
-                      >
-                        Cancel
-                      </button>
+                      <div class="flex items-center gap-2">
+                        <button
+                          type="submit"
+                          class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => this.setState({ showEditName: false })}
+                          class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        {showConfirmDelete ? (
+                          <div class="flex items-center gap-2 text-xs ml-4">
+                            <button
+                              onClick={this.handleDeleteGroup}
+                              disabled={isDeleting}
+                              class="text-red-400 hover:text-red-300 transition-colors"
+                            >
+                              {isDeleting ? <span class="animate-spin">⚡</span> : 'Delete'}
+                            </button>
+                            <span class="text-[var(--color-text-tertiary)]">·</span>
+                            <button
+                              onClick={() => this.setState({ showConfirmDelete: false })}
+                              class="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => this.setState({ showConfirmDelete: true })}
+                            class="text-xs text-[var(--color-text-tertiary)] hover:text-red-400 transition-colors ml-4"
+                          >
+                            Delete Group
+                          </button>
+                        )}
+                      </div>
                     </form>
                   ) : (
                     <div class="flex items-center gap-2">
@@ -208,30 +236,32 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
                 </div>
               </div>
 
-              {showConfirmDelete ? (
-                <div class="flex items-center gap-2 text-xs">
+              {!showEditName && (
+                showConfirmDelete ? (
+                  <div class="flex items-center gap-2 text-xs">
+                    <button
+                      onClick={this.handleDeleteGroup}
+                      disabled={isDeleting}
+                      class="text-red-400 hover:text-red-300 transition-colors"
+                    >
+                      {isDeleting ? <span class="animate-spin">⚡</span> : 'Delete'}
+                    </button>
+                    <span class="text-[var(--color-text-tertiary)]">·</span>
+                    <button
+                      onClick={() => this.setState({ showConfirmDelete: false })}
+                      class="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
                   <button
-                    onClick={this.handleDeleteGroup}
-                    disabled={isDeleting}
-                    class="text-red-400 hover:text-red-300 transition-colors"
+                    onClick={() => this.setState({ showConfirmDelete: true })}
+                    class="text-xs text-[var(--color-text-tertiary)] hover:text-red-400 transition-colors"
                   >
-                    {isDeleting ? <span class="animate-spin">⚡</span> : 'Delete'}
+                    Delete Group
                   </button>
-                  <span class="text-[var(--color-text-tertiary)]">·</span>
-                  <button
-                    onClick={() => this.setState({ showConfirmDelete: false })}
-                    class="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => this.setState({ showConfirmDelete: true })}
-                  class="text-xs text-[var(--color-text-tertiary)] hover:text-red-400 transition-colors"
-                >
-                  Delete Group
-                </button>
+                )
               )}
             </div>
 
@@ -270,40 +300,57 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
 
           {/* Right Column - Content */}
           <div class="lg:w-2/3 flex flex-col">
-            <div class="flex items-center gap-4 p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+            <div class="flex items-center gap-2 p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-x-auto">
+              <button
+                onClick={() => this.setState({ activeTab: 'content' })}
+                class={`shrink-0 text-sm font-medium px-3 py-1.5 rounded-full transition-all ${
+                  activeTab === 'content'
+                    ? 'text-[var(--color-accent)] bg-[var(--color-accent)]/10'
+                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
+                }`}
+              >
+                Content {group.content?.length ? `(${group.content.length})` : ''}
+              </button>
               <button
                 onClick={() => this.setState({ activeTab: 'members' })}
-                class={`text-sm font-medium ${
+                class={`shrink-0 text-sm font-medium px-3 py-1.5 rounded-full transition-all ${
                   activeTab === 'members'
-                    ? 'text-[var(--color-accent)]'
-                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'
-                } transition-colors`}
+                    ? 'text-[var(--color-accent)] bg-[var(--color-accent)]/10'
+                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
+                }`}
               >
-                Members
+                Members {group.members?.length ? `(${group.members.length})` : ''}
               </button>
               <button
                 onClick={() => this.setState({ activeTab: 'invites' })}
-                class={`text-sm font-medium ${
+                class={`shrink-0 text-sm font-medium px-3 py-1.5 rounded-full transition-all ${
                   activeTab === 'invites'
-                    ? 'text-[var(--color-accent)]'
-                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'
-                } transition-colors`}
+                    ? 'text-[var(--color-accent)] bg-[var(--color-accent)]/10'
+                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
+                }`}
               >
-                Invites
+                Invites {group.invites ? `(${Object.keys(group.invites).length})` : ''}
               </button>
               <button
                 onClick={() => this.setState({ activeTab: 'requests' })}
-                class={`text-sm font-medium ${
+                class={`shrink-0 text-sm font-medium px-3 py-1.5 rounded-full transition-all ${
                   activeTab === 'requests'
-                    ? 'text-[var(--color-accent)]'
-                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'
-                } transition-colors`}
+                    ? 'text-[var(--color-accent)] bg-[var(--color-accent)]/10'
+                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
+                }`}
               >
-                Requests
+                Requests {group.joinRequests?.length ? `(${group.joinRequests.length})` : ''}
               </button>
             </div>
 
             <div class="flex-grow">
+              {activeTab === 'content' && (
+                <ContentSection
+                  group={group}
+                  client={client}
+                  showMessage={this.props.showMessage}
+                />
+              )}
               {activeTab === 'members' && (
                 <MembersSection
                   group={group}

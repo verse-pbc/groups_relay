@@ -85,14 +85,15 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
               <button
                 type="submit"
                 disabled={isAddingMember || !newMemberPubkey.trim()}
-                class="shrink-0 px-3 py-1.5 bg-accent text-white rounded-lg text-sm font-medium
-                       hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed
-                       transition-colors flex items-center justify-center w-[70px]"
+                class={`shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium
+                       transition-colors flex items-center justify-center w-[70px]
+                       ${newMemberPubkey.trim()
+                         ? 'bg-accent text-white hover:bg-accent/90'
+                         : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'
+                       } disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 {isAddingMember ? (
-                  <>
-                    <span class="animate-spin">⚡</span>
-                  </>
+                  <span class="animate-spin">⚡</span>
                 ) : (
                   'Add'
                 )}
@@ -105,19 +106,33 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
           {group.members.map(member => (
             <div
               key={member.pubkey}
-              class="flex items-center gap-2 p-3 bg-[var(--color-bg-primary)]
+              class="group flex items-center gap-2 p-3 bg-[var(--color-bg-primary)]
                      rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-hover)]
-                     transition-colors"
+                     hover:shadow-sm transition-all duration-150"
             >
               <div class="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-                <PubkeyDisplay pubkey={member.pubkey} showCopy={false} />
+                <div class="flex items-center gap-2">
+                  <PubkeyDisplay pubkey={member.pubkey} showCopy={false} />
+                  <button
+                    onClick={() => navigator.clipboard.writeText(member.pubkey)}
+                    class="opacity-0 group-hover:opacity-100 text-xs text-[var(--color-text-tertiary)]
+                           hover:text-[var(--color-text-secondary)] transition-all"
+                    title="Copy pubkey"
+                  >
+                    Copy
+                  </button>
+                </div>
                 {member.roles.map(role => (
                   <span
                     key={role}
-                    class="shrink-0 px-1.5 py-0.5 text-xs font-medium bg-[var(--color-bg-secondary)]
-                           text-[var(--color-text-secondary)] rounded"
+                    class={`shrink-0 px-2 py-1 text-xs font-medium rounded-full
+                            ${role.toLowerCase() === 'admin'
+                              ? 'bg-purple-500/10 text-purple-400'
+                              : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]'
+                            }`}
+                    title={`${this.formatRole(role)} of this group`}
                   >
-                    {this.formatRole(role)}
+                    {role.toLowerCase() === 'admin' ? '👑 Admin' : '👤 Member'}
                   </span>
                 ))}
               </div>
@@ -141,8 +156,9 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
                 <button
                   onClick={() => this.setState({ showConfirmRemove: member.pubkey })}
                   disabled={removingMembers.has(member.pubkey)}
-                  class="shrink-0 px-2 py-1 text-xs text-[var(--color-text-tertiary)] hover:text-red-400 transition-colors
-                         disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                  class="opacity-0 group-hover:opacity-100 shrink-0 px-2 py-1 text-xs text-[var(--color-text-tertiary)]
+                         hover:text-red-400 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed
+                         flex items-center gap-1"
                 >
                   {removingMembers.has(member.pubkey) ? (
                     <>

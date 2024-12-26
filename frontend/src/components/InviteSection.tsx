@@ -11,10 +11,12 @@ interface InviteSectionState {
   isCreatingInvite: boolean
   inviteCode: string
   error: string
+  showCopied: boolean
 }
 
 export class InviteSection extends Component<InviteSectionProps, InviteSectionState> {
   private instanceId: string;
+  private copyTimeout: number | null = null;
 
   constructor(props: InviteSectionProps) {
     super(props)
@@ -22,7 +24,14 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
     this.state = {
       isCreatingInvite: false,
       inviteCode: '',
-      error: ''
+      error: '',
+      showCopied: false
+    }
+  }
+
+  componentWillUnmount() {
+    if (this.copyTimeout) {
+      window.clearTimeout(this.copyTimeout)
     }
   }
 
@@ -42,39 +51,72 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
     }
   }
 
+  generateRandomCode = () => {
+    const array = new Uint8Array(12)
+    crypto.getRandomValues(array)
+    const code = Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('')
+    this.setState({ inviteCode: code })
+  }
+
+  copyInviteLink = (code: string) => {
+    const link = `plur://join-community?group-id=${this.props.group.id}&code=${code}`
+    navigator.clipboard.writeText(link)
+    this.setState({ showCopied: true })
+
+    if (this.copyTimeout) {
+      window.clearTimeout(this.copyTimeout)
+    }
+
+    this.copyTimeout = window.setTimeout(() => {
+      this.setState({ showCopied: false })
+    }, 2000)
+  }
+
   render() {
     const { group } = this.props
-    const { isCreatingInvite, inviteCode, error } = this.state
-
-    const truncatePubkey = (pubkey: string) => {
-      return pubkey.slice(0, 8) + '...'
-    }
+    const { isCreatingInvite, inviteCode, error, showCopied } = this.state
+    const invites = group.invites || {}
+    const hasInvites = Object.keys(invites).length > 0
 
     return (
       <div class="space-y-4">
         <div class="p-4 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]">
-          <form onSubmit={this.handleCreateInvite}>
-            <div class="flex gap-2">
-              <input
-                type="text"
-                id={`create-invite-code-${this.instanceId}`}
-                value={inviteCode}
-                onInput={e => this.setState({ inviteCode: (e.target as HTMLInputElement).value })}
-                placeholder="Enter invite code"
-                class="min-w-0 flex-1 px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
-                       text-sm rounded-lg text-[var(--color-text-primary)]
-                       placeholder-[var(--color-text-tertiary)]
-                       focus:outline-none focus:ring-1 focus:ring-accent
-                       hover:border-[var(--color-border-hover)] transition-colors"
-                required
-                disabled={isCreatingInvite}
-              />
+          <form onSubmit={this.handleCreateInvite} class="space-y-3">
+            <div class="flex items-center gap-2">
+              <div class="flex-1">
+                <div class="relative">
+                  <input
+                    type="text"
+                    id={`create-invite-code-${this.instanceId}`}
+                    value={inviteCode}
+                    onInput={e => this.setState({ inviteCode: (e.target as HTMLInputElement).value })}
+                    placeholder="Enter invite code"
+                    maxLength={32}
+                    class="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
+                           text-sm rounded-lg text-[var(--color-text-primary)] font-mono
+                           placeholder-[var(--color-text-tertiary)]
+                           focus:outline-none focus:ring-1 focus:ring-accent
+                           hover:border-[var(--color-border-hover)] transition-colors"
+                    required
+                    disabled={isCreatingInvite}
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={this.generateRandomCode}
+                class="shrink-0 px-3 py-2 text-sm text-[var(--color-text-tertiary)]
+                       hover:text-[var(--color-text-secondary)] transition-colors"
+                title="Generate random code"
+              >
+                🎲
+              </button>
               <button
                 type="submit"
                 disabled={isCreatingInvite || !inviteCode.trim()}
-                class="shrink-0 px-3 py-1.5 bg-accent text-white rounded-lg text-sm font-medium
+                class="shrink-0 px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium
                        hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed
-                       transition-colors flex items-center justify-center w-[80px]"
+                       transition-colors flex items-center justify-center min-w-[80px]"
               >
                 {isCreatingInvite ? (
                   <span class="animate-spin">⚡</span>
@@ -84,7 +126,7 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
               </button>
             </div>
             {error && (
-              <div class="mt-2 text-xs text-red-400">
+              <div class="text-xs text-red-400">
                 {error}
               </div>
             )}
@@ -92,32 +134,31 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
         </div>
 
         <div class="space-y-2">
-          {group.invites && Object.entries(group.invites).length > 0 ? (
+          {hasInvites ? (
             <ul class="space-y-2">
-              {Object.entries(group.invites).map(([code, invite]) => (
-                <li key={code} class="p-2.5 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]">
+              {Object.entries(invites).map(([code, invite]) => (
+                <li key={code} class="group p-3 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]
+                                   hover:border-[var(--color-border-hover)] transition-all duration-150">
                   <div class="space-y-2">
                     <div class="flex items-center justify-between gap-2">
-                      <div class="text-xs font-mono text-[var(--color-text-primary)]">
-                        Code: {code}
+                      <div class="flex items-center gap-2">
+                        <span class="text-sm font-mono text-[var(--color-text-primary)]">
+                          {code}
+                        </span>
+                        {invite.pubkey && (
+                          <span class="text-xs text-[var(--color-text-tertiary)]">
+                            • Used
+                          </span>
+                        )}
                       </div>
-                      <a
-                        href={`plur://join-community?group-id=${group.id}&code=${code}`}
-                        class="text-xs text-accent hover:text-accent/90 transition-colors"
+                      <button
+                        onClick={() => this.copyInviteLink(code)}
+                        class="opacity-0 group-hover:opacity-100 text-xs text-[var(--color-text-tertiary)]
+                               hover:text-[var(--color-text-secondary)] transition-all"
                       >
-                        Join Link
-                      </a>
+                        {showCopied ? 'Copied!' : 'Copy Join Link'}
+                      </button>
                     </div>
-                    {invite.pubkey && (
-                      <div class="flex items-center justify-between gap-2">
-                        <div
-                          class="text-xs font-mono text-[var(--color-text-secondary)]"
-                          title={invite.pubkey}
-                        >
-                          Used by: {truncatePubkey(invite.pubkey)}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </li>
               ))}
@@ -127,8 +168,17 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
               <div class="mb-3 text-2xl">🎟️</div>
               <p class="text-sm text-[var(--color-text-tertiary)]">No invites created yet</p>
               <p class="text-xs text-[var(--color-text-tertiary)] mt-1">
-                Create an invite code to let others join
+                Create an invite code to let others join this group
               </p>
+              <button
+                onClick={this.generateRandomCode}
+                class="mt-4 px-4 py-2 bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]
+                       rounded-lg text-sm hover:text-[var(--color-text-primary)] transition-colors
+                       flex items-center gap-2 mx-auto"
+              >
+                <span>🎲</span>
+                Generate Random Code
+              </button>
             </div>
           )}
         </div>

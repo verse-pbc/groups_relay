@@ -19,22 +19,22 @@ export class FlashMessage extends Component<FlashMessageProps> {
     const { message, type = 'info' } = this.props
     if (!message) return null
 
-    const bgColor = {
-      success: 'bg-green-500',
-      error: 'bg-red-500',
-      info: 'bg-blue-500'
+    const styles = {
+      success: 'bg-green-500/10 text-green-500 border-green-500/20',
+      error: 'bg-red-500/10 text-red-500 border-red-500/20',
+      info: 'bg-accent/10 text-accent border-accent/20'
     }[type]
 
     return (
-      <div class={`fixed top-0 left-0 right-0 z-50 flex items-center justify-center transition-transform duration-300 ${message ? 'translate-y-0' : '-translate-y-full'}`}>
-        <div class={`${bgColor} text-white px-6 py-3 rounded-b-lg shadow-lg flex items-center gap-2 max-w-2xl mx-auto`}>
+      <div class="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl mx-auto px-4">
+        <div class={`${styles} px-4 py-3 rounded-lg shadow-lg border flex items-center justify-between`}>
           <span class="text-sm font-medium">{message}</span>
           <button
             onClick={this.props.onDismiss}
-            class="ml-2 text-white hover:text-gray-200 transition-colors"
+            class="ml-3 text-current opacity-60 hover:opacity-100 transition-opacity"
             aria-label="Dismiss message"
           >
-            ✕
+            ×
           </button>
         </div>
       </div>

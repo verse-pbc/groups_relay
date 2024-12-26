@@ -3,6 +3,7 @@ import { NostrClient, GroupEventKind } from '../api/nostr_client'
 import type { Group, GroupContent as GroupChatMessage, GroupMember } from '../types'
 import { CreateGroupForm } from './CreateGroupForm'
 import { GroupCard } from './GroupCard'
+import { FlashMessage } from './FlashMessage'
 import type { NDKKind } from '@nostr-dev-kit/ndk'
 
 const metadataKinds = [39000, 39001, 39002, 39003];
@@ -22,9 +23,6 @@ interface AppState {
   flashMessage: FlashMessageData | null
   groupsMap: Map<string, Group>
   selectedGroup: Group | null
-  showToast: boolean
-  toastMessage: string
-  toastType: 'success' | 'error' | 'info'
 }
 
 export class App extends Component<AppProps, AppState> {
@@ -36,10 +34,7 @@ export class App extends Component<AppProps, AppState> {
       groups: [],
       flashMessage: null,
       groupsMap: new Map(),
-      selectedGroup: null,
-      showToast: false,
-      toastMessage: '',
-      toastType: 'info'
+      selectedGroup: null
     }
   }
 
@@ -246,18 +241,16 @@ export class App extends Component<AppProps, AppState> {
 
   showMessage = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     this.setState({
-      showToast: true,
-      toastMessage: message,
-      toastType: type
+      flashMessage: { message, type }
     })
+  }
 
-    setTimeout(() => {
-      this.setState({ showToast: false })
-    }, 3000)
+  dismissMessage = () => {
+    this.setState({ flashMessage: null })
   }
 
   render() {
-    const { groups, showToast, toastMessage, toastType } = this.state
+    const { groups, flashMessage } = this.state
 
     return (
       <div class="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
@@ -270,14 +263,12 @@ export class App extends Component<AppProps, AppState> {
         <main class="max-w-7xl mx-auto p-4">
           <div class="flex flex-col lg:flex-row gap-4">
             <div class="lg:w-[240px] flex-shrink-0">
-              <div class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] p-4">
-                <CreateGroupForm
-                  client={this.props.client}
-                  updateGroupsMap={this.updateGroupsMap}
-                  showMessage={this.showMessage}
-                  onLogout={this.props.onLogout}
-                />
-              </div>
+              <CreateGroupForm
+                client={this.props.client}
+                updateGroupsMap={this.updateGroupsMap}
+                showMessage={this.showMessage}
+                onLogout={this.props.onLogout}
+              />
             </div>
 
             <div class="flex-1 space-y-4">
@@ -294,17 +285,11 @@ export class App extends Component<AppProps, AppState> {
           </div>
         </main>
 
-        {showToast && (
-          <div class="fixed bottom-4 right-4 p-4 rounded-lg shadow-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
-            <p class={`text-sm ${
-              toastType === 'error' ? 'text-red-400' :
-              toastType === 'success' ? 'text-green-400' :
-              'text-[var(--color-text-primary)]'
-            }`}>
-              {toastMessage}
-            </p>
-          </div>
-        )}
+        <FlashMessage
+          message={flashMessage?.message || null}
+          type={flashMessage?.type}
+          onDismiss={this.dismissMessage}
+        />
       </div>
     )
   }
