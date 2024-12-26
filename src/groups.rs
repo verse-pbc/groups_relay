@@ -22,6 +22,7 @@ use tracing::info;
 
 #[derive(Debug)]
 pub struct Groups {
+    db: Arc<NostrDatabase>,
     groups: DashMap<String, Group>,
     relay_pubkey: PublicKey,
 }
@@ -120,6 +121,7 @@ impl Groups {
         }
 
         Ok(Self {
+            db: database,
             groups: DashMap::from_iter(groups),
             relay_pubkey,
         })
@@ -163,9 +165,32 @@ impl Groups {
         self.get_group(group_id)
     }
 
-    pub fn handle_group_create(&self, event: &Event) -> Result<Group, Error> {
+    pub async fn handle_group_create(&self, event: &Event) -> Result<Group, Error> {
+        let Some(group_id) = Group::extract_group_id(event) else {
+            return Err(Error::notice("Group ID not found in event"));
+        };
+
         if self.find_group_from_event(event).is_some() {
             return Err(Error::notice("Group already exists"));
+        }
+
+        // If a group with this id existed (kind 9008), we don't let it be created again
+        let deleted_events = match self
+            .db
+            .query(vec![Filter::new()
+                .kinds(vec![KIND_GROUP_DELETE])
+                .custom_tag(
+                    SingleLetterTag::lowercase(Alphabet::H),
+                    vec![group_id],
+                )])
+            .await
+        {
+            Ok(events) => events,
+            Err(e) => return Err(Error::notice(format!("Error querying database: {}", e))),
+        };
+
+        if !deleted_events.is_empty() {
+            return Err(Error::notice("Group existed before and was deleted"));
         }
 
         let group = Group::new(event)?;
@@ -248,8 +273,12 @@ impl DerefMut for Groups {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::NostrDatabase;
     use nostr_sdk::{EventBuilder, Keys, NostrSigner};
     use std::time::Instant;
+    use tempfile::TempDir;
+
+    const TEST_GROUP_ID: &str = "test_group_123";
 
     async fn create_test_keys() -> (Keys, Keys, Keys) {
         (Keys::generate(), Keys::generate(), Keys::generate())
@@ -262,19 +291,44 @@ mod tests {
         keys.sign_event(unsigned_event).await.unwrap()
     }
 
-    async fn setup_test_groups() -> (Groups, Keys, Keys, Keys, String) {
-        let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
-        let group_id = "test_group_123".to_string();
-        let tags = vec![Tag::custom(TagKind::h(), [group_id.clone()])];
-        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE, tags).await;
+    async fn create_test_groups_with_db(admin_keys: &Keys) -> Groups {
+        let temp_dir = TempDir::new().unwrap();
+        let db = Arc::new(
+            NostrDatabase::new(
+                temp_dir
+                    .path()
+                    .join("test.db")
+                    .to_string_lossy()
+                    .to_string(),
+                admin_keys.clone(),
+            )
+            .unwrap(),
+        );
 
-        let groups = Groups {
+        std::mem::forget(temp_dir);
+
+        Groups {
+            db,
             groups: DashMap::new(),
             relay_pubkey: admin_keys.public_key(),
-        };
-        groups.handle_group_create(&event).unwrap();
+        }
+    }
 
-        (groups, admin_keys, member_keys, non_member_keys, group_id)
+    async fn setup_test_groups() -> (Groups, Keys, Keys, Keys, String) {
+        let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
+        let tags = vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])];
+        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE, tags).await;
+
+        let groups = create_test_groups_with_db(&admin_keys).await;
+        groups.handle_group_create(&event).await.unwrap();
+
+        (
+            groups,
+            admin_keys,
+            member_keys,
+            non_member_keys,
+            TEST_GROUP_ID.to_string(),
+        )
     }
 
     #[tokio::test]
@@ -282,9 +336,9 @@ mod tests {
         let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
 
         // Test creating a duplicate group
-        let tags = vec![Tag::custom(TagKind::h(), [group_id.clone()])];
+        let tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let event = create_test_event(&admin_keys, KIND_GROUP_CREATE, tags).await;
-        assert!(groups.handle_group_create(&event).is_err());
+        assert!(groups.handle_group_create(&event).await.is_err());
 
         // Verify group exists and admin is set
         let group = groups.get_group(&group_id).unwrap();
@@ -296,29 +350,25 @@ mod tests {
         let (admin_keys, member_keys, _) = create_test_keys().await;
 
         // Create a group first
-        let group_id = "test_group";
         let create_event = create_test_event(
             &admin_keys,
             KIND_GROUP_CREATE,
-            vec![Tag::custom(TagKind::h(), [group_id.to_string()])],
+            vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
 
-        let groups = Groups {
-            groups: DashMap::new(),
-            relay_pubkey: admin_keys.public_key(),
-        };
+        let groups = create_test_groups_with_db(&admin_keys).await;
 
         // Create the group
-        let group = groups.handle_group_create(&create_event).unwrap();
-        assert!(group.id == group_id);
+        let group = groups.handle_group_create(&create_event).await.unwrap();
+        assert!(group.id == TEST_GROUP_ID);
 
         // Add a member first
         let add_event = create_test_event(
             &admin_keys,
             KIND_GROUP_ADD_USER,
             vec![
-                Tag::custom(TagKind::h(), [group_id.to_string()]),
+                Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
                 Tag::public_key(member_keys.public_key()),
             ],
         )
@@ -331,7 +381,7 @@ mod tests {
             &admin_keys,
             KIND_GROUP_SET_ROLES,
             vec![
-                Tag::custom(TagKind::h(), [group_id.to_string()]),
+                Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
                 Tag::custom(
                     TagKind::p(),
                     [member_keys.public_key().to_string(), "admin".to_string()],
@@ -342,7 +392,7 @@ mod tests {
 
         groups.handle_set_roles(&set_roles_event).unwrap();
 
-        let group = groups.get_group(group_id).unwrap();
+        let group = groups.get_group(TEST_GROUP_ID).unwrap();
         assert!(group
             .members
             .get(&member_keys.public_key())
@@ -355,29 +405,25 @@ mod tests {
         let (admin_keys, member_keys, _) = create_test_keys().await;
 
         // Create a group first
-        let group_id = "test_group";
         let create_event = create_test_event(
             &admin_keys,
             KIND_GROUP_CREATE,
-            vec![Tag::custom(TagKind::h(), [group_id.to_string()])],
+            vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
 
-        let groups = Groups {
-            groups: DashMap::new(),
-            relay_pubkey: admin_keys.public_key(),
-        };
+        let groups = create_test_groups_with_db(&admin_keys).await;
 
         // Create the group
-        let group = groups.handle_group_create(&create_event).unwrap();
-        assert!(group.id == group_id);
+        let group = groups.handle_group_create(&create_event).await.unwrap();
+        assert!(group.id == TEST_GROUP_ID);
 
         // Add a member
         let add_event = create_test_event(
             &admin_keys,
             KIND_GROUP_ADD_USER,
             vec![
-                Tag::custom(TagKind::h(), [group_id.to_string()]),
+                Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
                 Tag::public_key(member_keys.public_key()),
             ],
         )
@@ -386,7 +432,7 @@ mod tests {
         let result = groups.handle_put_user(&add_event).unwrap();
         assert!(result);
 
-        let group = groups.get_group(group_id).unwrap();
+        let group = groups.get_group(TEST_GROUP_ID).unwrap();
         assert!(group.members.contains_key(&member_keys.public_key()));
     }
 
@@ -395,29 +441,25 @@ mod tests {
         let (admin_keys, member_keys, _) = create_test_keys().await;
 
         // Create a group first
-        let group_id = "test_group";
         let create_event = create_test_event(
             &admin_keys,
             KIND_GROUP_CREATE,
-            vec![Tag::custom(TagKind::h(), [group_id.to_string()])],
+            vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
 
-        let groups = Groups {
-            groups: DashMap::new(),
-            relay_pubkey: admin_keys.public_key(),
-        };
+        let groups = create_test_groups_with_db(&admin_keys).await;
 
         // Create the group
-        let group = groups.handle_group_create(&create_event).unwrap();
-        assert!(group.id == group_id);
+        let group = groups.handle_group_create(&create_event).await.unwrap();
+        assert!(group.id == TEST_GROUP_ID);
 
         // Add a member first
         let add_event = create_test_event(
             &admin_keys,
             KIND_GROUP_ADD_USER,
             vec![
-                Tag::custom(TagKind::h(), [group_id.to_string()]),
+                Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
                 Tag::public_key(member_keys.public_key()),
             ],
         )
@@ -430,7 +472,7 @@ mod tests {
             &admin_keys,
             KIND_GROUP_REMOVE_USER,
             vec![
-                Tag::custom(TagKind::h(), [group_id.to_string()]),
+                Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
                 Tag::public_key(member_keys.public_key()),
             ],
         )
@@ -439,7 +481,7 @@ mod tests {
         let result = groups.handle_remove_user(&remove_event).unwrap();
         assert!(result);
 
-        let group = groups.get_group(group_id).unwrap();
+        let group = groups.get_group(TEST_GROUP_ID).unwrap();
         assert!(!group.members.contains_key(&member_keys.public_key()));
     }
 
@@ -449,7 +491,7 @@ mod tests {
 
         // Edit metadata
         let tags = vec![
-            Tag::custom(TagKind::h(), [group_id.clone()]),
+            Tag::custom(TagKind::h(), [&group_id]),
             Tag::custom(TagKind::Name, ["New Group Name"]),
             Tag::custom(TagKind::custom("about"), ["About text"]),
             Tag::custom(TagKind::custom("picture"), ["picture_url"]),
@@ -473,7 +515,7 @@ mod tests {
         // Create invite
         let invite_code = "test_invite_123";
         let tags = vec![
-            Tag::custom(TagKind::h(), [group_id.clone()]),
+            Tag::custom(TagKind::h(), [&group_id]),
             Tag::custom(TagKind::custom("code"), [invite_code]),
         ];
         let event = create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE, tags).await;
@@ -488,7 +530,7 @@ mod tests {
 
         // Test using invite
         let join_tags = vec![
-            Tag::custom(TagKind::h(), [group_id.clone()]),
+            Tag::custom(TagKind::h(), [&group_id]),
             Tag::custom(TagKind::custom("code"), [invite_code]),
         ];
         let join_event =
@@ -505,21 +547,21 @@ mod tests {
         let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
 
         // Test join request
-        let join_tags = vec![Tag::custom(TagKind::h(), [group_id.clone()])];
+        let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let join_event =
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST, join_tags).await;
         assert!(!groups.handle_join_request(&join_event).unwrap());
 
         // Manually add member
         let add_tags = vec![
-            Tag::custom(TagKind::h(), [group_id.clone()]),
+            Tag::custom(TagKind::h(), [&group_id]),
             Tag::public_key(member_keys.public_key()),
         ];
         let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, add_tags).await;
         groups.handle_put_user(&add_event).unwrap();
 
         // Test leave request
-        let leave_tags = vec![Tag::custom(TagKind::h(), [group_id.clone()])];
+        let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event =
             create_test_event(&member_keys, KIND_GROUP_USER_LEAVE_REQUEST, leave_tags).await;
         assert!(groups.handle_leave_request(&leave_event).unwrap());

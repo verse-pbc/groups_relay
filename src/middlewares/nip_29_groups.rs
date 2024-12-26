@@ -30,14 +30,14 @@ impl Nip29Middleware {
         }
     }
 
-    fn handle_event(
+    async fn handle_event(
         &self,
         event: &Event,
         authed_pubkey: &Option<PublicKey>,
     ) -> Result<Option<Vec<StoreCommand>>, Error> {
         if event.kind == KIND_GROUP_CREATE {
             debug!("Admin -> Relay: Creating group");
-            let group = self.groups.handle_group_create(event)?;
+            let group = self.groups.handle_group_create(event).await?;
 
             let metadata_event = group.generate_metadata_event();
             let put_user_event = group.generate_put_user_event(&event.pubkey);
@@ -320,7 +320,7 @@ impl Middleware for Nip29Middleware {
     ) -> Result<()> {
         let message = match &ctx.message {
             ClientMessage::Event(ref event) => {
-                match self.handle_event(event, &ctx.state.authed_pubkey) {
+                match self.handle_event(event, &ctx.state.authed_pubkey).await {
                     Ok(Some(events_to_save)) => {
                         let event_id = event.id;
                         if let Err(e) = ctx.state.save_events(events_to_save).await {
