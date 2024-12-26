@@ -83,50 +83,49 @@ export class JoinRequestForm extends Component<JoinRequestFormProps, JoinRequest
     const { sec, inviteCode, isSubmitting, error } = this.state
 
     return (
-      <form onSubmit={this.handleSubmit} class="space-y-4">
-        <input
-          type="text"
-          value={sec}
-          onInput={e => this.setState({ sec: (e.target as HTMLInputElement).value })}
-          placeholder="Your nsec or hex key"
-          class="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
-                 text-sm rounded-lg text-[var(--color-text-primary)]
-                 placeholder-[var(--color-text-tertiary)]
-                 focus:outline-none focus:ring-1 focus:ring-accent
-                 hover:border-[var(--color-border-hover)] transition-colors"
-          required
-          disabled={isSubmitting}
-        />
+      <form onSubmit={this.handleSubmit} class="p-4">
+        <div class="flex gap-2">
+          <input
+            type="text"
+            value={sec}
+            onInput={e => this.setState({ sec: (e.target as HTMLInputElement).value })}
+            placeholder="Your nsec or hex key"
+            class="flex-1 px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
+                   text-sm rounded-lg text-[var(--color-text-primary)]
+                   placeholder-[var(--color-text-tertiary)]
+                   focus:outline-none focus:ring-1 focus:ring-accent
+                   hover:border-[var(--color-border-hover)] transition-colors"
+            required
+            disabled={isSubmitting}
+          />
 
-        <input
-          type="text"
-          value={inviteCode}
-          onInput={e => this.setState({ inviteCode: (e.target as HTMLInputElement).value })}
-          placeholder="Invite Code (optional)"
-          class="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
-                 text-sm rounded-lg text-[var(--color-text-primary)]
-                 placeholder-[var(--color-text-tertiary)]
-                 focus:outline-none focus:ring-1 focus:ring-accent
-                 hover:border-[var(--color-border-hover)] transition-colors"
-          disabled={isSubmitting}
-        />
+          <input
+            type="text"
+            value={inviteCode}
+            onInput={e => this.setState({ inviteCode: (e.target as HTMLInputElement).value })}
+            placeholder="Invite Code (optional)"
+            class="flex-1 px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
+                   text-sm rounded-lg text-[var(--color-text-primary)]
+                   placeholder-[var(--color-text-tertiary)]
+                   focus:outline-none focus:ring-1 focus:ring-accent
+                   hover:border-[var(--color-border-hover)] transition-colors"
+            disabled={isSubmitting}
+          />
 
-        <button
-          type="submit"
-          disabled={isSubmitting || !sec.trim()}
-          class="w-full px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium
-                 hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed
-                 transition-colors flex items-center justify-center gap-2"
-        >
-          {isSubmitting ? (
-            <>
+          <button
+            type="submit"
+            disabled={isSubmitting || !sec.trim()}
+            class="shrink-0 px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium
+                   hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed
+                   transition-colors flex items-center justify-center w-[100px]"
+          >
+            {isSubmitting ? (
               <span class="animate-spin">⚡</span>
-              Joining...
-            </>
-          ) : (
-            'Join Group'
-          )}
-        </button>
+            ) : (
+              'Join'
+            )}
+          </button>
+        </div>
 
         {error && (
           <div class="mt-2 text-xs text-red-400">
