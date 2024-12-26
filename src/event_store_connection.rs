@@ -373,13 +373,8 @@ impl EventStoreConnection {
                     event.id
                 );
             }
-            StoreCommand::DeleteEvents(event_ids) => {
-                let event_ids_string = event_ids
-                    .iter()
-                    .map(|id| id.to_string())
-                    .collect::<Vec<String>>();
-
-                let filter = Filter::new().ids(event_ids);
+            StoreCommand::DeleteEvents(filter) => {
+                let filter_string = format!("{:?}", filter);
                 if let Err(e) = self.database.delete(filter).await {
                     error!(
                         target: "event_store",
@@ -390,9 +385,9 @@ impl EventStoreConnection {
                 }
                 info!(
                     target: "event_store",
-                    "[{}] Deleted events: {:?}",
+                    "[{}] Deleted events: {}",
                     self.id,
-                    event_ids_string
+                    filter_string
                 );
             }
         }
@@ -537,7 +532,7 @@ impl EventStoreConnection {
 pub enum StoreCommand {
     SaveUnsignedEvent(UnsignedEvent),
     SaveSignedEvent(Event),
-    DeleteEvents(Vec<EventId>),
+    DeleteEvents(Filter),
 }
 
 impl StoreCommand {

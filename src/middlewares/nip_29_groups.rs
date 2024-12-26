@@ -7,10 +7,10 @@ use tracing::debug;
 
 use crate::error::Error;
 use crate::groups::{
-    Groups, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER, KIND_GROUP_CREATE, KIND_GROUP_CREATE_INVITE,
-    KIND_GROUP_DELETE, KIND_GROUP_DELETE_EVENT, KIND_GROUP_EDIT_METADATA, KIND_GROUP_REMOVE_USER,
-    KIND_GROUP_SET_ROLES, KIND_GROUP_USER_JOIN_REQUEST, KIND_GROUP_USER_LEAVE_REQUEST,
-    METADATA_EVENT_KINDS,
+    Groups, ADDRESSABLE_EVENT_KINDS, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER, KIND_GROUP_CREATE,
+    KIND_GROUP_CREATE_INVITE, KIND_GROUP_DELETE, KIND_GROUP_DELETE_EVENT, KIND_GROUP_EDIT_METADATA,
+    KIND_GROUP_REMOVE_USER, KIND_GROUP_SET_ROLES, KIND_GROUP_USER_JOIN_REQUEST,
+    KIND_GROUP_USER_LEAVE_REQUEST,
 };
 use crate::nostr_session_state::NostrConnectionState;
 use crate::StoreCommand;
@@ -152,7 +152,14 @@ impl Nip29Middleware {
 
             k if k == KIND_GROUP_DELETE => {
                 debug!("Admin -> Relay: Deleting group");
-                panic!("Not implemented");
+                let Some(group) = self.groups.find_group_from_event(event) else {
+                    return Err(Error::notice("Group not found"));
+                };
+
+                match group.delete_group_request(event, &self.relay_pubkey, authed_pubkey) {
+                    Ok(commands) => commands,
+                    Err(e) => return Err(e),
+                }
             }
 
             k if k == KIND_GROUP_DELETE_EVENT => {
@@ -162,7 +169,7 @@ impl Nip29Middleware {
                 };
 
                 match group.delete_event_request(event, &self.relay_pubkey, authed_pubkey) {
-                    Ok(command) => vec![command],
+                    Ok(commands) => commands,
                     Err(e) => return Err(e),
                 }
             }
@@ -216,7 +223,7 @@ impl Nip29Middleware {
 
         if let Some(kinds) = &filter.kinds {
             for k in kinds {
-                if METADATA_EVENT_KINDS.contains(k) {
+                if ADDRESSABLE_EVENT_KINDS.contains(k) {
                     is_meta = true;
                 } else if is_meta {
                     return Err(Error::notice(

@@ -285,6 +285,10 @@ export class NostrClient {
       ["e", eventId],
     ]);
   }
+
+  async deleteGroup(groupId: string) {
+    return this.publishEvent(GroupEventKind.DeleteGroup, [["h", groupId]]);
+  }
 }
 
 export function hashGroup(group: Group): string {

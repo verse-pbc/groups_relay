@@ -6,10 +6,10 @@ use tracing::{debug, warn};
 use websocket_builder::{InboundContext, Middleware, SendMessage};
 
 use crate::groups::{
-    GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER, KIND_GROUP_CREATE, KIND_GROUP_CREATE_INVITE,
-    KIND_GROUP_DELETE, KIND_GROUP_DELETE_EVENT, KIND_GROUP_EDIT_METADATA, KIND_GROUP_REMOVE_USER,
-    KIND_GROUP_SET_ROLES, KIND_GROUP_USER_JOIN_REQUEST, KIND_GROUP_USER_LEAVE_REQUEST,
-    METADATA_EVENT_KINDS,
+    ADDRESSABLE_EVENT_KINDS, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER, KIND_GROUP_CREATE,
+    KIND_GROUP_CREATE_INVITE, KIND_GROUP_DELETE, KIND_GROUP_DELETE_EVENT, KIND_GROUP_EDIT_METADATA,
+    KIND_GROUP_REMOVE_USER, KIND_GROUP_SET_ROLES, KIND_GROUP_USER_JOIN_REQUEST,
+    KIND_GROUP_USER_LEAVE_REQUEST,
 };
 
 #[derive(Debug)]
@@ -85,7 +85,7 @@ impl ValidationMiddleware {
                             || *k == KIND_GROUP_CREATE_INVITE
                             || *k == KIND_GROUP_USER_JOIN_REQUEST
                             || *k == KIND_GROUP_USER_LEAVE_REQUEST
-                            || METADATA_EVENT_KINDS.contains(k)
+                            || ADDRESSABLE_EVENT_KINDS.contains(k)
                     )
             })
         } else {

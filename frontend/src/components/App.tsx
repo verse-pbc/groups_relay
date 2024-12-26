@@ -1,9 +1,8 @@
 import { Component } from 'preact'
 import { NostrClient, GroupEventKind } from '../api/nostr_client'
 import type { Group, GroupContent as GroupChatMessage, GroupMember } from '../types'
-import { GroupList } from './GroupList'
 import { CreateGroupForm } from './CreateGroupForm'
-import { FlashMessage } from './FlashMessage'
+import { GroupCard } from './GroupCard'
 import type { NDKKind } from '@nostr-dev-kit/ndk'
 
 const metadataKinds = [39000, 39001, 39002, 39003];
@@ -13,7 +12,7 @@ export interface FlashMessageData {
   type: 'success' | 'error' | 'info'
 }
 
-export interface AppProps {
+interface AppProps {
   client: NostrClient
   onLogout: () => void
 }
@@ -21,37 +20,31 @@ export interface AppProps {
 interface AppState {
   groups: Group[]
   flashMessage: FlashMessageData | null
+  groupsMap: Map<string, Group>
+  selectedGroup: Group | null
+  showToast: boolean
+  toastMessage: string
+  toastType: 'success' | 'error' | 'info'
 }
 
 export class App extends Component<AppProps, AppState> {
-  private groupsMap: Map<string, Group>
   private cleanup: (() => void) | null = null
 
   constructor(props: AppProps) {
     super(props)
     this.state = {
       groups: [],
-      flashMessage: null
+      flashMessage: null,
+      groupsMap: new Map(),
+      selectedGroup: null,
+      showToast: false,
+      toastMessage: '',
+      toastType: 'info'
     }
-    this.groupsMap = new Map()
-  }
-
-  showMessage = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    this.setState({ flashMessage: { message, type } })
-  }
-
-  dismissMessage = () => {
-    this.setState({ flashMessage: null })
-  }
-
-  updateGroupsMap = (updater: (map: Map<string, Group>) => void) => {
-    updater(this.groupsMap)
-    const sortedGroups = Array.from(this.groupsMap.values()).sort((a, b) => b.created_at - a.created_at)
-    this.setState({ groups: sortedGroups })
   }
 
   private getOrCreateGroup = (groupId: string, createdAt: number): Group => {
-    if (!this.groupsMap.has(groupId)) {
+    if (!this.state.groupsMap.has(groupId)) {
       const group: Group = {
         id: groupId,
         name: '',
@@ -66,12 +59,12 @@ export class App extends Component<AppProps, AppState> {
         joinRequests: [],
         content: [],
       }
-      this.groupsMap.set(groupId, group)
+      this.state.groupsMap.set(groupId, group)
     }
-    if (createdAt > this.groupsMap.get(groupId)!.updated_at) {
-      this.groupsMap.get(groupId)!.updated_at = createdAt
+    if (createdAt > this.state.groupsMap.get(groupId)!.updated_at) {
+      this.state.groupsMap.get(groupId)!.updated_at = createdAt
     }
-    return this.groupsMap.get(groupId)!
+    return this.state.groupsMap.get(groupId)!
   }
 
   processEvent = (event: any, groupsMap: Map<string, Group>) => {
@@ -152,10 +145,6 @@ export class App extends Component<AppProps, AppState> {
               }
             })
           break
-
-        case 39003: // Group roles
-          // We don't handle this for now
-          break
       }
 
       groupsMap.set(groupId, group)
@@ -179,39 +168,6 @@ export class App extends Component<AppProps, AppState> {
       group.content = [content, ...(group.content || [])].slice(0, 50)
       groupsMap.set(groupId, { ...group })
     }
-
-    // Handle invite events
-    if (event.kind === GroupEventKind.CreateInvite) {
-      const groupId = event.tags.find((t: string[]) => t[0] === 'h')?.[1]
-      if (!groupId) return
-
-      const group = this.getOrCreateGroup(groupId, event.created_at)
-
-      const code = event.tags.find((t: string[]) => t[0] === 'code')?.[1]
-      const roles = event.tags.find((t: string[]) => t[0] === 'roles')?.[1]?.split(',') || ['member']
-
-      if (code) {
-        group.invites = {
-          ...group.invites,
-          [code]: { roles },
-        }
-        groupsMap.set(groupId, { ...group })
-      }
-    }
-
-    // Handle join request events
-    if (event.kind === GroupEventKind.JoinRequest) {
-      console.log("join request", event)
-      const groupId = event.tags.find((t: string[]) => t[0] === 'h')?.[1]
-      if (!groupId) return
-
-      const group = this.getOrCreateGroup(groupId, event.created_at)
-
-      if (!group.joinRequests.includes(event.pubkey)) {
-        group.joinRequests.push(event.pubkey)
-        groupsMap.set(groupId, { ...group })
-      }
-    }
   }
 
   async componentDidMount() {
@@ -234,8 +190,8 @@ export class App extends Component<AppProps, AppState> {
 
         sub.on('event', async (event: any) => {
           console.log('received event', event.kind)
-          this.processEvent(event, this.groupsMap)
-          const sortedGroups = Array.from(this.groupsMap.values()).sort((a, b) => b.created_at - a.created_at)
+          this.processEvent(event, this.state.groupsMap)
+          const sortedGroups = Array.from(this.state.groupsMap.values()).sort((a, b) => b.created_at - a.created_at)
           this.setState({ groups: sortedGroups })
         })
 
@@ -259,40 +215,97 @@ export class App extends Component<AppProps, AppState> {
     }
   }
 
+  updateGroupsMap = (updater: (map: Map<string, Group>) => void) => {
+    this.setState(prevState => {
+      const newGroupsMap = new Map(prevState.groupsMap)
+      updater(newGroupsMap)
+      const sortedGroups = Array.from(newGroupsMap.values()).sort((a, b) => b.created_at - a.created_at)
+      return {
+        groupsMap: newGroupsMap,
+        groups: sortedGroups
+      }
+    })
+  }
+
+  handleGroupDelete = (groupId: string) => {
+    this.setState(prevState => {
+      const newGroupsMap = new Map(prevState.groupsMap)
+      newGroupsMap.delete(groupId)
+      const sortedGroups = Array.from(newGroupsMap.values()).sort((a, b) => b.created_at - a.created_at)
+      return {
+        groupsMap: newGroupsMap,
+        groups: sortedGroups,
+        selectedGroup: null
+      }
+    })
+  }
+
+  handleGroupSelect = (group: Group) => {
+    this.setState({ selectedGroup: group })
+  }
+
+  showMessage = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    this.setState({
+      showToast: true,
+      toastMessage: message,
+      toastType: type
+    })
+
+    setTimeout(() => {
+      this.setState({ showToast: false })
+    }, 3000)
+  }
+
   render() {
-    const { flashMessage } = this.state
-    const { client, onLogout } = this.props
+    const { groups, showToast, toastMessage, toastType } = this.state
 
     return (
-      <>
-        <FlashMessage
-          message={flashMessage?.message || null}
-          type={flashMessage?.type}
-          onDismiss={this.dismissMessage}
-        />
-        <div class="container mx-auto px-4 py-8">
-          <h1 class="text-2xl font-bold text-[var(--color-text-primary)] mb-8">Nostr Groups</h1>
+      <div class="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
+        <header class="p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+          <div class="max-w-7xl mx-auto">
+            <h1 class="text-2xl font-bold">Nostr Groups</h1>
+          </div>
+        </header>
 
+        <main class="max-w-7xl mx-auto p-4">
           <div class="flex flex-col lg:flex-row gap-4">
             <div class="lg:w-[240px] flex-shrink-0">
-              <CreateGroupForm
-                updateGroupsMap={this.updateGroupsMap}
-                client={client}
-                showMessage={this.showMessage}
-                onLogout={onLogout}
-              />
+              <div class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] p-4">
+                <CreateGroupForm
+                  client={this.props.client}
+                  updateGroupsMap={this.updateGroupsMap}
+                  showMessage={this.showMessage}
+                  onLogout={this.props.onLogout}
+                />
+              </div>
             </div>
 
-            <div class="flex-1">
-              <GroupList
-                groups={this.state.groups}
-                client={client}
-                showMessage={this.showMessage}
-              />
+            <div class="flex-1 space-y-4">
+              {groups.map(group => (
+                <GroupCard
+                  key={group.id}
+                  group={group}
+                  client={this.props.client}
+                  showMessage={this.showMessage}
+                  onDelete={this.handleGroupDelete}
+                />
+              ))}
             </div>
           </div>
-        </div>
-      </>
+        </main>
+
+        {showToast && (
+          <div class="fixed bottom-4 right-4 p-4 rounded-lg shadow-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+            <p class={`text-sm ${
+              toastType === 'error' ? 'text-red-400' :
+              toastType === 'success' ? 'text-green-400' :
+              'text-[var(--color-text-primary)]'
+            }`}>
+              {toastMessage}
+            </p>
+          </div>
+        )}
+      </div>
     )
   }
 }

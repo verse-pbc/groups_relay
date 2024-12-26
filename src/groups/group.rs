@@ -32,7 +32,7 @@ pub const KIND_GROUP_ADMINS: Kind = Kind::Custom(39001); // Relay -> All: List o
 pub const KIND_GROUP_MEMBERS: Kind = Kind::Custom(39002); // Relay -> All: List of group members
 pub const KIND_GROUP_ROLES: Kind = Kind::Custom(39003); // Relay -> All: Supported roles in group
 
-pub const METADATA_EVENT_KINDS: [Kind; 4] = [
+pub const ADDRESSABLE_EVENT_KINDS: [Kind; 4] = [
     KIND_GROUP_METADATA,
     KIND_GROUP_ADMINS,
     KIND_GROUP_MEMBERS,
@@ -41,6 +41,23 @@ pub const METADATA_EVENT_KINDS: [Kind; 4] = [
 
 // Regular content kinds allowed in groups
 pub const GROUP_CONTENT_KINDS: [Kind; 5] = [
+    Kind::Custom(9),
+    Kind::Custom(10),
+    Kind::Custom(11),
+    Kind::Custom(12),
+    Kind::Custom(10010),
+];
+
+pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 14] = [
+    KIND_GROUP_CREATE,
+    KIND_GROUP_ADD_USER,
+    KIND_GROUP_REMOVE_USER,
+    KIND_GROUP_EDIT_METADATA,
+    KIND_GROUP_DELETE_EVENT,
+    KIND_GROUP_SET_ROLES,
+    KIND_GROUP_CREATE_INVITE,
+    KIND_GROUP_USER_JOIN_REQUEST,
+    KIND_GROUP_USER_LEAVE_REQUEST,
     Kind::Custom(9),
     Kind::Custom(10),
     Kind::Custom(11),
@@ -346,27 +363,61 @@ impl Group {
         Ok(group)
     }
 
+    pub fn delete_group_request(
+        &self,
+        delete_group_request_event: &Event,
+        relay_pubkey: &PublicKey,
+        authed_pubkey: &Option<PublicKey>,
+    ) -> Result<Vec<StoreCommand>, Error> {
+        if delete_group_request_event.kind != KIND_GROUP_DELETE {
+            return Err(Error::notice("Invalid event kind for delete group"));
+        }
+
+        if !self.can_delete_group(authed_pubkey, relay_pubkey, delete_group_request_event) {
+            return Err(Error::notice("User is not authorized to delete this group"));
+        }
+
+        // Delete all group kinds possible except this delete request (kind 9008)
+        let non_addressable_filter = Filter::new()
+            .kinds(ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE)
+            .custom_tag(
+                SingleLetterTag::lowercase(Alphabet::H),
+                &[self.id.to_string()],
+            );
+
+        let addressable_filter = Filter::new().kinds(ADDRESSABLE_EVENT_KINDS).custom_tag(
+            SingleLetterTag::lowercase(Alphabet::D),
+            &[self.id.to_string()],
+        );
+
+        Ok(vec![
+            StoreCommand::DeleteEvents(non_addressable_filter),
+            StoreCommand::DeleteEvents(addressable_filter),
+            StoreCommand::SaveSignedEvent(delete_group_request_event.clone()),
+        ])
+    }
+
     pub fn delete_event_request(
         &self,
         delete_request_event: &Event,
         relay_pubkey: &PublicKey,
         authed_pubkey: &Option<PublicKey>,
-    ) -> Result<StoreCommand, Error> {
+    ) -> Result<Vec<StoreCommand>, Error> {
         if delete_request_event.kind != KIND_GROUP_DELETE_EVENT {
             return Err(Error::notice("Invalid event kind for delete event"));
         }
 
-        if !self.can_delete_event(authed_pubkey, relay_pubkey, delete_request_event) {
+        if !self.can_delete_event(authed_pubkey, relay_pubkey, &delete_request_event) {
             return Err(Error::notice("User is not authorized to delete this event"));
         }
 
-        let event_ids = delete_request_event
-            .tags
-            .event_ids()
-            .copied()
-            .collect::<Vec<_>>();
+        let event_ids = delete_request_event.tags.event_ids().copied();
+        let filter = Filter::new().ids(event_ids);
 
-        Ok(StoreCommand::DeleteEvents(event_ids))
+        Ok(vec![
+            StoreCommand::DeleteEvents(filter),
+            StoreCommand::SaveSignedEvent(delete_request_event.clone()),
+        ])
     }
 
     pub fn add_members(
@@ -894,6 +945,15 @@ impl Group {
         false
     }
 
+    pub fn can_delete_group(
+        &self,
+        authed_pubkey: &Option<PublicKey>,
+        relay_pubkey: &PublicKey,
+        delete_group_event: &Event,
+    ) -> bool {
+        self.can_delete_event(authed_pubkey, relay_pubkey, delete_group_event)
+    }
+
     pub fn can_delete_event(
         &self,
         authed_pubkey: &Option<PublicKey>,
@@ -1292,9 +1352,13 @@ mod tests {
             &Some(admin_keys.public_key()),
         );
         assert!(result.is_ok());
-        if let Ok(StoreCommand::DeleteEvents(event_ids)) = result {
-            assert_eq!(event_ids.len(), 1);
-            assert_eq!(event_ids[0], event_to_delete.id);
+        if let Ok(commands) = result {
+            assert_eq!(commands.len(), 2);
+            assert_eq!(commands[0], StoreCommand::DeleteEvents(event_to_delete.id));
+            assert_eq!(
+                commands[1],
+                StoreCommand::SaveSignedEvent(delete_request.clone())
+            );
         } else {
             panic!("Expected DeleteEvents command");
         }
