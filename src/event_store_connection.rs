@@ -529,6 +529,7 @@ impl EventStoreConnection {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum StoreCommand {
     SaveUnsignedEvent(UnsignedEvent),
     SaveSignedEvent(Event),

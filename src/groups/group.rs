@@ -1354,7 +1354,10 @@ mod tests {
         assert!(result.is_ok());
         if let Ok(commands) = result {
             assert_eq!(commands.len(), 2);
-            assert_eq!(commands[0], StoreCommand::DeleteEvents(event_to_delete.id));
+            assert_eq!(
+                commands[0],
+                StoreCommand::DeleteEvents(Filter::new().ids([event_to_delete.id]))
+            );
             assert_eq!(
                 commands[1],
                 StoreCommand::SaveSignedEvent(delete_request.clone())
