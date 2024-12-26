@@ -43,7 +43,7 @@ impl Groups {
             ])
             .since(Timestamp::from(0))];
 
-        let Ok(metadata_events) = database.fetch_events(metadata_filter).await else {
+        let Ok(metadata_events) = database.query(metadata_filter).await else {
             return Err(Error::notice("Error querying metadata events"));
         };
         info!("Found {} metadata events", metadata_events.len());
@@ -89,7 +89,7 @@ impl Groups {
                 .custom_tag(SingleLetterTag::lowercase(Alphabet::H), vec![group_id])
                 .since(Timestamp::from(0))];
 
-            let Ok(historical_events) = database.fetch_events(historical_filter).await else {
+            let Ok(historical_events) = database.query(historical_filter).await else {
                 return Err(Error::notice("Error querying historical events"));
             };
             info!(

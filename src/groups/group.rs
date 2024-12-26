@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::StoreCommand;
 use anyhow::Result;
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,7 @@ use strum::Display;
 use strum::EnumIter;
 use strum::IntoEnumIterator;
 use tracing::{debug, error, info, warn};
+
 // Group Creation and Management
 pub const KIND_GROUP_CREATE: Kind = Kind::Custom(9007); // Admin/Relay -> Relay: Create a new group
 pub const KIND_GROUP_DELETE: Kind = Kind::Custom(9008); // Admin/Relay -> Relay: Delete an existing group
@@ -342,6 +344,29 @@ impl Group {
         );
 
         Ok(group)
+    }
+
+    pub fn delete_event_request(
+        &self,
+        delete_request_event: &Event,
+        relay_pubkey: &PublicKey,
+        authed_pubkey: &Option<PublicKey>,
+    ) -> Result<StoreCommand, Error> {
+        if delete_request_event.kind != KIND_GROUP_DELETE_EVENT {
+            return Err(Error::notice("Invalid event kind for delete event"));
+        }
+
+        if !self.can_delete_event(authed_pubkey, relay_pubkey, delete_request_event) {
+            return Err(Error::notice("User is not authorized to delete this event"));
+        }
+
+        let event_ids = delete_request_event
+            .tags
+            .event_ids()
+            .copied()
+            .collect::<Vec<_>>();
+
+        Ok(StoreCommand::DeleteEvents(event_ids))
     }
 
     pub fn add_members(
@@ -683,62 +708,6 @@ impl Group {
         Ok(())
     }
 
-    // Real-time event handling methods - used for incoming events
-    pub fn handle_join_request(&mut self, event: &Event) -> Result<bool, Error> {
-        if event.kind != KIND_GROUP_USER_JOIN_REQUEST {
-            return Err(Error::notice(format!(
-                "Invalid event kind for join request {}",
-                event.kind
-            )));
-        }
-
-        if !self.metadata.closed {
-            info!("Public group, adding member {}", event.pubkey);
-            self.members
-                .entry(event.pubkey)
-                .or_insert(GroupMember::new_member(event.pubkey));
-            self.join_requests.remove(&event.pubkey);
-            self.update_state();
-            return Ok(true);
-        }
-
-        let code = event
-            .tags
-            .find(TagKind::custom("code"))
-            .and_then(|t| t.content())
-            .and_then(|code| self.invites.get_mut(code));
-
-        let Some(invite) = code else {
-            info!("Invite not found, adding join request for {}", event.pubkey);
-            self.join_requests.insert(event.pubkey);
-            self.update_state();
-            return Ok(false);
-        };
-
-        if invite.pubkey.is_some() {
-            info!(
-                "Invite already used, adding join request for {}",
-                event.pubkey
-            );
-            self.join_requests.insert(event.pubkey);
-            self.update_state();
-            return Ok(false);
-        }
-
-        // Invite code matched and is available
-        info!("Invite code matched, adding member {}", event.pubkey);
-        invite.pubkey = Some(event.pubkey);
-        let roles = invite.roles.clone();
-
-        self.members
-            .entry(event.pubkey)
-            .or_insert(GroupMember::new(event.pubkey, roles));
-
-        self.join_requests.remove(&event.pubkey);
-        self.update_state();
-        Ok(true)
-    }
-
     // Helper methods
     pub fn update_roles(&mut self) {
         let unique_roles = self
@@ -919,6 +888,36 @@ impl Group {
         // Relay pubkey can see all events
         if relay_pubkey == pubkey {
             debug!("Relay pubkey {} can create invites", relay_pubkey);
+            return true;
+        }
+
+        false
+    }
+
+    pub fn can_delete_event(
+        &self,
+        authed_pubkey: &Option<PublicKey>,
+        relay_pubkey: &PublicKey,
+        event: &Event,
+    ) -> bool {
+        let Some(authed_pubkey) = authed_pubkey else {
+            warn!(
+                "User is not authenticated, cannot delete event {}, kind {}",
+                event.id, event.kind
+            );
+            return false;
+        };
+
+        // Relay pubkey can delete all events
+        if relay_pubkey == authed_pubkey {
+            debug!(
+                "Relay pubkey {} can delete event {}, kind {}",
+                relay_pubkey, event.id, event.kind
+            );
+            return true;
+        }
+
+        if self.is_admin(&event.pubkey) {
             return true;
         }
 
@@ -1224,5 +1223,127 @@ mod tests {
         assert!(group
             .set_metadata(&metadata_event, &admin_keys.public_key())
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_delete_event_request() {
+        let (admin_keys, member_keys, non_member_keys) = create_test_keys();
+        let (group, _) = create_test_group(&admin_keys).await;
+        let relay_pubkey = admin_keys.public_key();
+
+        // Create a test event to delete
+        let event_to_delete = create_test_event(
+            &member_keys,
+            GROUP_CONTENT_KINDS[0],
+            vec![Tag::custom(TagKind::h(), [group.id.clone()])],
+        )
+        .await;
+
+        // Test: Non-member cannot delete events
+        let delete_request = create_test_event(
+            &non_member_keys,
+            KIND_GROUP_DELETE_EVENT,
+            vec![
+                Tag::custom(TagKind::h(), [group.id.clone()]),
+                Tag::event(event_to_delete.id),
+            ],
+        )
+        .await;
+
+        let result = group.delete_event_request(
+            &delete_request,
+            &relay_pubkey,
+            &Some(non_member_keys.public_key()),
+        );
+        assert!(result.is_err());
+
+        // Test: Member (non-admin) cannot delete events
+        let delete_request = create_test_event(
+            &member_keys,
+            KIND_GROUP_DELETE_EVENT,
+            vec![
+                Tag::custom(TagKind::h(), [group.id.clone()]),
+                Tag::event(event_to_delete.id),
+            ],
+        )
+        .await;
+
+        let result = group.delete_event_request(
+            &delete_request,
+            &relay_pubkey,
+            &Some(member_keys.public_key()),
+        );
+        assert!(result.is_err());
+
+        // Test: Admin can delete events
+        let delete_request = create_test_event(
+            &admin_keys,
+            KIND_GROUP_DELETE_EVENT,
+            vec![
+                Tag::custom(TagKind::h(), [group.id.clone()]),
+                Tag::event(event_to_delete.id),
+            ],
+        )
+        .await;
+
+        let result = group.delete_event_request(
+            &delete_request,
+            &relay_pubkey,
+            &Some(admin_keys.public_key()),
+        );
+        assert!(result.is_ok());
+        if let Ok(StoreCommand::DeleteEvents(event_ids)) = result {
+            assert_eq!(event_ids.len(), 1);
+            assert_eq!(event_ids[0], event_to_delete.id);
+        } else {
+            panic!("Expected DeleteEvents command");
+        }
+
+        // Test: Relay can delete events
+        let delete_request = create_test_event(
+            &non_member_keys,
+            KIND_GROUP_DELETE_EVENT,
+            vec![
+                Tag::custom(TagKind::h(), [group.id.clone()]),
+                Tag::event(event_to_delete.id),
+            ],
+        )
+        .await;
+
+        let result =
+            group.delete_event_request(&delete_request, &relay_pubkey, &Some(relay_pubkey));
+        assert!(result.is_ok());
+
+        // Test: Wrong event kind is rejected
+        let delete_request = create_test_event(
+            &admin_keys,
+            GROUP_CONTENT_KINDS[0],
+            vec![
+                Tag::custom(TagKind::h(), [group.id.clone()]),
+                Tag::event(event_to_delete.id),
+            ],
+        )
+        .await;
+
+        let result = group.delete_event_request(
+            &delete_request,
+            &relay_pubkey,
+            &Some(admin_keys.public_key()),
+        );
+        assert!(result.is_err());
+
+        // Test: Unauthenticated request is rejected
+        let delete_request = create_test_event(
+            &admin_keys,
+            KIND_GROUP_DELETE_EVENT,
+            vec![
+                Tag::custom(TagKind::h(), [group.id.clone()]),
+                Tag::event(event_to_delete.id),
+            ],
+        )
+        .await;
+
+        let result = group.delete_event_request(&delete_request, &relay_pubkey, &None);
+        assert!(result.is_err());
     }
 }

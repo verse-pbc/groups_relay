@@ -1,6 +1,6 @@
 import { Component } from 'preact'
 import { NostrClient, GroupEventKind } from '../api/nostr_client'
-import type { Group, GroupContent, GroupMember } from '../types'
+import type { Group, GroupContent as GroupChatMessage, GroupMember } from '../types'
 import { GroupList } from './GroupList'
 import { CreateGroupForm } from './CreateGroupForm'
 import { FlashMessage } from './FlashMessage'
@@ -168,7 +168,8 @@ export class App extends Component<AppProps, AppState> {
 
       const group = this.getOrCreateGroup(groupId, event.created_at)
 
-      const content: GroupContent = {
+      const content: GroupChatMessage = {
+        id: event.id,
         pubkey: event.pubkey,
         kind: event.kind,
         content: event.content,

@@ -25,6 +25,7 @@ export interface GroupInvite {
 }
 
 export interface GroupContent {
+  id: string;
   pubkey: string;
   kind: number;
   content: string;

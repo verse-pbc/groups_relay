@@ -212,7 +212,7 @@ impl Middleware for EventStoreMiddleware {
                 let event_id = event.id;
                 let connection = ctx.state.relay_connection.as_ref();
                 if let Some(connection) = connection {
-                    if let Err(e) = connection.handle_event(*event.clone()).await {
+                    if let Err(e) = connection.save_and_broadcast(*event.clone()).await {
                         error!(
                             target: "event_store",
                             "[{}] Failed to save event: {:?}",
@@ -525,7 +525,7 @@ mod tests {
 
         // Create and save a historical event
         let (_, historical_event) = create_signed_event("Historical event").await;
-        database.save_signed_event(&historical_event).unwrap();
+        database.save_signed_event(&historical_event).await.unwrap();
 
         // Start the test server
         let (addr, token) = start_test_server(database).await;
@@ -590,9 +590,9 @@ mod tests {
         let contacts_event = keys1.sign_event(contacts_event).await.unwrap();
 
         // Save all events
-        database.save_signed_event(&text_note).unwrap();
-        database.save_signed_event(&metadata_event).unwrap();
-        database.save_signed_event(&contacts_event).unwrap();
+        database.save_signed_event(&text_note).await.unwrap();
+        database.save_signed_event(&metadata_event).await.unwrap();
+        database.save_signed_event(&contacts_event).await.unwrap();
 
         // Start server and connect client
         let (addr, token) = start_test_server(database).await;

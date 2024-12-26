@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 use websocket_builder::MessageSender;
 
 // Message types for subscription management
@@ -55,7 +55,7 @@ impl ReplaceableEventsBuffer {
         for (_, event) in self.buffer.drain() {
             match database.save_unsigned_event(event).await {
                 Ok(event) => {
-                    debug!(
+                    info!(
                         target: "event_store",
                         "Saved replaceable event: kind={}",
                         event.kind
@@ -345,9 +345,9 @@ impl EventStoreConnection {
         Ok(())
     }
 
-    pub async fn save_event(&self, event_builder: EventToSave) -> Result<(), Error> {
+    pub async fn save_event(&self, event_builder: StoreCommand) -> Result<(), Error> {
         match event_builder {
-            EventToSave::UnsignedEvent(event) => {
+            StoreCommand::SaveUnsignedEvent(event) => {
                 if let Err(e) = self.replaceable_event_queue.send(event) {
                     error!(
                         target: "event_store",
@@ -357,8 +357,8 @@ impl EventStoreConnection {
                     );
                 }
             }
-            EventToSave::Event(event) => {
-                if let Err(e) = self.database.save_signed_event(&event) {
+            StoreCommand::SaveSignedEvent(event) => {
+                if let Err(e) = self.database.save_signed_event(&event).await {
                     error!(
                         target: "event_store",
                         "[{}] Error saving signed event: {:?}",
@@ -366,19 +366,47 @@ impl EventStoreConnection {
                         e
                     );
                 }
+                info!(
+                    target: "event_store",
+                    "[{}] Saved signed event: {}",
+                    self.id,
+                    event.id
+                );
+            }
+            StoreCommand::DeleteEvents(event_ids) => {
+                let event_ids_string = event_ids
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<String>>();
+
+                let filter = Filter::new().ids(event_ids);
+                if let Err(e) = self.database.delete(filter).await {
+                    error!(
+                        target: "event_store",
+                        "[{}] Error deleting events: {:?}",
+                        self.id,
+                        e
+                    );
+                }
+                info!(
+                    target: "event_store",
+                    "[{}] Deleted events: {:?}",
+                    self.id,
+                    event_ids_string
+                );
             }
         }
         Ok(())
     }
 
     pub async fn fetch_events(&self, filters: Vec<Filter>) -> Result<Events, Error> {
-        match self.database.fetch_events(filters).await {
+        match self.database.query(filters).await {
             Ok(events) => Ok(events),
             Err(e) => Err(Error::notice(format!("Failed to fetch events: {:?}", e))),
         }
     }
 
-    pub async fn handle_event(&self, event: Event) -> Result<(), Error> {
+    pub async fn save_and_broadcast(&self, event: Event) -> Result<(), Error> {
         debug!(
             target: "event_store",
             "[{}] Handling event {} from {}",
@@ -388,7 +416,7 @@ impl EventStoreConnection {
         );
 
         // First save the event to the database
-        if let Err(e) = self.database.save_signed_event(&event) {
+        if let Err(e) = self.database.save_signed_event(&event).await {
             error!(
                 target: "event_store",
                 "[{}] Failed to save event {}: {:?}",
@@ -506,16 +534,18 @@ impl EventStoreConnection {
     }
 }
 
-pub enum EventToSave {
-    UnsignedEvent(UnsignedEvent),
-    Event(Event),
+pub enum StoreCommand {
+    SaveUnsignedEvent(UnsignedEvent),
+    SaveSignedEvent(Event),
+    DeleteEvents(Vec<EventId>),
 }
 
-impl EventToSave {
+impl StoreCommand {
     pub fn is_replaceable(&self) -> bool {
         match self {
-            EventToSave::UnsignedEvent(event) => event.kind.is_replaceable(),
-            EventToSave::Event(event) => event.kind.is_replaceable(),
+            StoreCommand::SaveUnsignedEvent(event) => event.kind.is_replaceable(),
+            StoreCommand::SaveSignedEvent(event) => event.kind.is_replaceable(),
+            StoreCommand::DeleteEvents(_) => false,
         }
     }
 }

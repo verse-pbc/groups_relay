@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::{EventStoreConnection, EventToSave};
+use crate::{EventStoreConnection, StoreCommand};
 use nostr_sdk::prelude::*;
 use std::backtrace::Backtrace;
 use tokio_util::sync::CancellationToken;
@@ -19,7 +19,7 @@ impl NostrConnectionState {
         self.authed_pubkey.is_some()
     }
 
-    pub async fn save_events(&self, events_to_save: Vec<EventToSave>) -> Result<(), Error> {
+    pub async fn save_events(&self, events_to_save: Vec<StoreCommand>) -> Result<(), Error> {
         let Some(connection) = self.relay_connection.as_ref() else {
             return Err(Error::Internal {
                 message: "No connection".to_string(),

@@ -12,6 +12,6 @@ pub mod nostr_session_state;
 // Re-export commonly used items
 pub use app_state::HttpServerState;
 pub use error::Error;
-pub use event_store_connection::{EventStoreConnection, EventToSave};
+pub use event_store_connection::{EventStoreConnection, StoreCommand};
 pub use groups::{Group, Groups, KIND_GROUP_USER_JOIN_REQUEST};
 pub use nostr_database::NostrDatabase;

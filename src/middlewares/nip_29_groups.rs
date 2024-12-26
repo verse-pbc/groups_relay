@@ -13,7 +13,7 @@ use crate::groups::{
     METADATA_EVENT_KINDS,
 };
 use crate::nostr_session_state::NostrConnectionState;
-use crate::EventToSave;
+use crate::StoreCommand;
 use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage};
 
 #[derive(Debug)]
@@ -30,7 +30,11 @@ impl Nip29Middleware {
         }
     }
 
-    async fn handle_event<'a>(&'a self, event: &Event) -> Result<Option<Vec<EventToSave>>, Error> {
+    fn handle_event(
+        &self,
+        event: &Event,
+        authed_pubkey: &Option<PublicKey>,
+    ) -> Result<Option<Vec<StoreCommand>>, Error> {
         if event.kind == KIND_GROUP_CREATE {
             debug!("Admin -> Relay: Creating group");
             let group = self.groups.handle_group_create(event)?;
@@ -42,12 +46,12 @@ impl Nip29Middleware {
             let roles_event = group.generate_roles_event();
 
             return Ok(Some(vec![
-                EventToSave::Event(event.clone()),
-                EventToSave::UnsignedEvent(metadata_event.build(self.relay_pubkey)),
-                EventToSave::UnsignedEvent(put_user_event.build(self.relay_pubkey)),
-                EventToSave::UnsignedEvent(admins_event.build(self.relay_pubkey)),
-                EventToSave::UnsignedEvent(members_event.build(self.relay_pubkey)),
-                EventToSave::UnsignedEvent(roles_event.build(self.relay_pubkey)),
+                StoreCommand::SaveSignedEvent(event.clone()),
+                StoreCommand::SaveUnsignedEvent(metadata_event.build(self.relay_pubkey)),
+                StoreCommand::SaveUnsignedEvent(put_user_event.build(self.relay_pubkey)),
+                StoreCommand::SaveUnsignedEvent(admins_event.build(self.relay_pubkey)),
+                StoreCommand::SaveUnsignedEvent(members_event.build(self.relay_pubkey)),
+                StoreCommand::SaveUnsignedEvent(roles_event.build(self.relay_pubkey)),
             ]));
         }
 
@@ -55,11 +59,13 @@ impl Nip29Middleware {
             k if k == KIND_GROUP_EDIT_METADATA => {
                 debug!("Admin -> Relay: Editing group metadata");
                 self.groups.handle_edit_metadata(event)?;
-                let group = self.groups.find_group_from_event(event).unwrap();
+                let Some(group) = self.groups.find_group_from_event(event) else {
+                    return Ok(None);
+                };
                 let metadata_event = group.generate_metadata_event();
                 vec![
-                    EventToSave::Event(event.clone()),
-                    EventToSave::UnsignedEvent(metadata_event.build(self.relay_pubkey)),
+                    StoreCommand::SaveSignedEvent(event.clone()),
+                    StoreCommand::SaveUnsignedEvent(metadata_event.build(self.relay_pubkey)),
                 ]
             }
 
@@ -67,27 +73,31 @@ impl Nip29Middleware {
                 debug!("User -> Relay: Requesting to join group");
                 let auto_joined = self.groups.handle_join_request(event)?;
                 if auto_joined {
-                    let group = self.groups.find_group_from_event(event).unwrap();
+                    let Some(group) = self.groups.find_group_from_event(event) else {
+                        return Err(Error::notice("Group not found"));
+                    };
                     let put_user_event = group.generate_put_user_event(&event.pubkey);
                     let members_event = group.generate_members_event();
                     vec![
-                        EventToSave::Event(event.clone()),
-                        EventToSave::UnsignedEvent(put_user_event.build(self.relay_pubkey)),
-                        EventToSave::UnsignedEvent(members_event.build(self.relay_pubkey)),
+                        StoreCommand::SaveSignedEvent(event.clone()),
+                        StoreCommand::SaveUnsignedEvent(put_user_event.build(self.relay_pubkey)),
+                        StoreCommand::SaveUnsignedEvent(members_event.build(self.relay_pubkey)),
                     ]
                 } else {
-                    vec![EventToSave::Event(event.clone())]
+                    vec![StoreCommand::SaveSignedEvent(event.clone())]
                 }
             }
 
             k if k == KIND_GROUP_USER_LEAVE_REQUEST => {
                 debug!("User -> Relay: Requesting to leave group");
                 if self.groups.handle_leave_request(event)? {
-                    let group = self.groups.find_group_from_event(event).unwrap();
+                    let Some(group) = self.groups.find_group_from_event(event) else {
+                        return Err(Error::notice("Group not found"));
+                    };
                     let members_event = group.generate_members_event();
                     vec![
-                        EventToSave::Event(event.clone()),
-                        EventToSave::UnsignedEvent(members_event.build(self.relay_pubkey)),
+                        StoreCommand::SaveSignedEvent(event.clone()),
+                        StoreCommand::SaveUnsignedEvent(members_event.build(self.relay_pubkey)),
                     ]
                 } else {
                     vec![]
@@ -103,16 +113,18 @@ impl Nip29Middleware {
             k if k == KIND_GROUP_ADD_USER => {
                 debug!("Admin/Relay -> Relay: Adding user to group");
                 let added_admins = self.groups.handle_put_user(event)?;
-                let group = self.groups.find_group_from_event(event).unwrap();
-                let mut events = vec![EventToSave::Event(event.clone())];
+                let Some(group) = self.groups.find_group_from_event(event) else {
+                    return Err(Error::notice("Group not found"));
+                };
+                let mut events = vec![StoreCommand::SaveSignedEvent(event.clone())];
                 if added_admins {
                     let admins_event = group.generate_admins_event();
-                    events.push(EventToSave::UnsignedEvent(
+                    events.push(StoreCommand::SaveUnsignedEvent(
                         admins_event.build(self.relay_pubkey),
                     ));
                 }
                 let members_event = group.generate_members_event();
-                events.push(EventToSave::UnsignedEvent(
+                events.push(StoreCommand::SaveUnsignedEvent(
                     members_event.build(self.relay_pubkey),
                 ));
                 events
@@ -121,16 +133,18 @@ impl Nip29Middleware {
             k if k == KIND_GROUP_REMOVE_USER => {
                 debug!("Admin/Relay -> Relay: Removing user from group");
                 let removed_admins = self.groups.handle_remove_user(event)?;
-                let group = self.groups.find_group_from_event(event).unwrap();
-                let mut events = vec![EventToSave::Event(event.clone())];
+                let Some(group) = self.groups.find_group_from_event(event) else {
+                    return Err(Error::notice("Group not found"));
+                };
+                let mut events = vec![StoreCommand::SaveSignedEvent(event.clone())];
                 if removed_admins {
                     let admins_event = group.generate_admins_event();
-                    events.push(EventToSave::UnsignedEvent(
+                    events.push(StoreCommand::SaveUnsignedEvent(
                         admins_event.build(self.relay_pubkey),
                     ));
                 }
                 let members_event = group.generate_members_event();
-                events.push(EventToSave::UnsignedEvent(
+                events.push(StoreCommand::SaveUnsignedEvent(
                     members_event.build(self.relay_pubkey),
                 ));
                 events
@@ -138,18 +152,25 @@ impl Nip29Middleware {
 
             k if k == KIND_GROUP_DELETE => {
                 debug!("Admin -> Relay: Deleting group");
-                return Err(Error::notice("Group deletion is not supported yet"));
+                panic!("Not implemented");
             }
 
             k if k == KIND_GROUP_DELETE_EVENT => {
                 debug!("Admin -> Relay: Deleting event");
-                return Err(Error::notice("Event deletion is not supported yet"));
+                let Some(group) = self.groups.find_group_from_event(event) else {
+                    return Err(Error::notice("Group not found"));
+                };
+
+                match group.delete_event_request(event, &self.relay_pubkey, authed_pubkey) {
+                    Ok(command) => vec![command],
+                    Err(e) => return Err(e),
+                }
             }
 
             k if k == KIND_GROUP_CREATE_INVITE => {
                 debug!("Admin -> Relay: Creating invite");
                 self.groups.handle_create_invite(event)?;
-                vec![EventToSave::Event(event.clone())]
+                vec![StoreCommand::SaveSignedEvent(event.clone())]
             }
 
             // Group content events
@@ -164,7 +185,7 @@ impl Nip29Middleware {
                     if !group.is_member(&event.pubkey) {
                         return Err(Error::notice("User is not a member of this group"));
                     }
-                    vec![EventToSave::Event(event.clone())]
+                    vec![StoreCommand::SaveSignedEvent(event.clone())]
                 } else {
                     return Err(Error::notice("Event kind not supported by this group"));
                 }
@@ -291,21 +312,23 @@ impl Middleware for Nip29Middleware {
         ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<()> {
         let message = match &ctx.message {
-            ClientMessage::Event(ref event) => match self.handle_event(event).await {
-                Ok(Some(events_to_save)) => {
-                    let event_id = event.id;
-                    if let Err(e) = ctx.state.save_events(events_to_save).await {
+            ClientMessage::Event(ref event) => {
+                match self.handle_event(event, &ctx.state.authed_pubkey) {
+                    Ok(Some(events_to_save)) => {
+                        let event_id = event.id;
+                        if let Err(e) = ctx.state.save_events(events_to_save).await {
+                            e.handle_inbound_error(ctx).await;
+                            return Ok(());
+                        }
+                        Some(RelayMessage::ok(event_id, true, ""))
+                    }
+                    Ok(None) => None,
+                    Err(e) => {
                         e.handle_inbound_error(ctx).await;
                         return Ok(());
                     }
-                    Some(RelayMessage::ok(event_id, true, ""))
                 }
-                Ok(None) => None,
-                Err(e) => {
-                    e.handle_inbound_error(ctx).await;
-                    return Ok(());
-                }
-            },
+            }
             ClientMessage::Req {
                 ref filters,
                 subscription_id,
