@@ -407,7 +407,7 @@ impl Group {
             return Err(Error::notice("Invalid event kind for delete event"));
         }
 
-        if !self.can_delete_event(authed_pubkey, relay_pubkey, &delete_request_event) {
+        if !self.can_delete_event(authed_pubkey, relay_pubkey, delete_request_event) {
             return Err(Error::notice("User is not authorized to delete this event"));
         }
 

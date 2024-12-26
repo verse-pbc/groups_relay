@@ -3,8 +3,6 @@ import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
 import { InviteSection } from './InviteSection'
 import { JoinRequestSection } from './JoinRequestSection'
-import { ContentSection } from './ContentSection'
-import { GroupHeader } from './GroupHeader'
 import { GroupInfo } from './GroupInfo'
 import { GroupTimestamps } from './GroupTimestamps'
 import { MembersSection } from './MembersSection'
@@ -26,11 +24,7 @@ interface GroupCardState {
   activeTab: 'members' | 'invites' | 'requests'
   copiedId: boolean
   showEditName: boolean
-  showEditAbout: boolean
-  showEditPicture: boolean
   editingName: string
-  editingAbout: string
-  editingPicture: string
   showConfirmDelete: boolean
   isDeleting: boolean
 }
@@ -50,11 +44,7 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
       activeTab: 'members',
       copiedId: false,
       showEditName: false,
-      showEditAbout: false,
-      showEditPicture: false,
       editingName: '',
-      editingAbout: '',
-      editingPicture: '',
       showConfirmDelete: false,
       isDeleting: false
     }
@@ -168,7 +158,7 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
 
   render() {
     const { group, client } = this.props
-    const { isEditingName, newName, isEditingAbout, newAbout, activeTab, copiedId, showEditName, showEditAbout, showEditPicture, editingName, editingAbout, editingPicture, showConfirmDelete, isDeleting } = this.state
+    const { activeTab, copiedId, showEditName, editingName, showConfirmDelete, isDeleting } = this.state
 
     return (
       <article class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] overflow-hidden">
@@ -248,25 +238,26 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
             <div class="p-4 flex-grow space-y-4">
               {/* Group ID with copy button */}
               <div class="space-y-1">
-                <label class="text-xs font-medium text-[var(--color-text-secondary)]">Group ID</label>
-                <button
-                  onClick={this.copyGroupId}
-                  class="w-full px-3 py-2 bg-[var(--color-bg-tertiary)] rounded
-                         text-xs font-mono text-[var(--color-text-secondary)]
-                         hover:text-[var(--color-text-primary)] transition-colors
-                         flex items-center justify-between gap-2 border border-[var(--color-border)]"
-                >
-                  <span class="truncate">{group.id}</span>
-                  <span class="flex-shrink-0 text-xs">
-                    {copiedId ? '✓ Copied!' : '📋 Copy'}
-                  </span>
-                </button>
+                <label class="block text-sm font-medium text-[var(--color-text-secondary)]">
+                  Group ID
+                </label>
+                <div class="flex items-center gap-2">
+                  <code class="flex-1 px-2 py-1 text-sm bg-[var(--color-bg-primary)] rounded font-mono">
+                    {group.id}
+                  </code>
+                  <button
+                    onClick={this.copyGroupId}
+                    class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                  >
+                    {copiedId ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
               </div>
 
               <GroupInfo
                 group={group}
-                isEditingAbout={isEditingAbout}
-                newAbout={newAbout}
+                isEditingAbout={this.state.isEditingAbout}
+                newAbout={this.state.newAbout}
                 onAboutEdit={this.handleAboutEdit}
                 onAboutSave={this.handleAboutSave}
                 onAboutChange={(about) => this.setState({ newAbout: about })}
@@ -277,29 +268,42 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
             </div>
           </div>
 
-          {/* Middle Column - Members & Actions */}
-          <div class="lg:w-1/3">
-            {/* Tabs */}
-            <div class="border-b border-[var(--color-border)] px-2">
-              <div class="flex -mb-px">
-                {(['members', 'invites', 'requests'] as const).map(tab => (
-                  <button
-                    key={tab}
-                    onClick={() => this.setState({ activeTab: tab })}
-                    class={`px-4 py-2 text-sm font-medium border-b-2 transition-colors
-                            ${activeTab === tab
-                              ? 'border-accent text-accent'
-                              : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-                            }`}
-                  >
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                  </button>
-                ))}
-              </div>
+          {/* Right Column - Content */}
+          <div class="lg:w-2/3 flex flex-col">
+            <div class="flex items-center gap-4 p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+              <button
+                onClick={() => this.setState({ activeTab: 'members' })}
+                class={`text-sm font-medium ${
+                  activeTab === 'members'
+                    ? 'text-[var(--color-accent)]'
+                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'
+                } transition-colors`}
+              >
+                Members
+              </button>
+              <button
+                onClick={() => this.setState({ activeTab: 'invites' })}
+                class={`text-sm font-medium ${
+                  activeTab === 'invites'
+                    ? 'text-[var(--color-accent)]'
+                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'
+                } transition-colors`}
+              >
+                Invites
+              </button>
+              <button
+                onClick={() => this.setState({ activeTab: 'requests' })}
+                class={`text-sm font-medium ${
+                  activeTab === 'requests'
+                    ? 'text-[var(--color-accent)]'
+                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'
+                } transition-colors`}
+              >
+                Requests
+              </button>
             </div>
 
-            {/* Tab Content */}
-            <div class="p-4">
+            <div class="flex-grow">
               {activeTab === 'members' && (
                 <MembersSection
                   group={group}
@@ -319,14 +323,6 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
                 />
               )}
             </div>
-          </div>
-
-          {/* Right Column - Content */}
-          <div class="lg:w-1/3">
-            <ContentSection
-              group={group}
-              client={client}
-            />
           </div>
         </div>
       </article>
