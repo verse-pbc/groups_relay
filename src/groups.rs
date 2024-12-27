@@ -146,7 +146,9 @@ impl Groups {
         let mut group_ref = self.get_group_mut(group_id);
 
         if let Some(ref mut group_ref) = group_ref {
-            group_ref.verify_member_access(&event.pubkey, event.kind)?;
+            if event.pubkey != self.relay_pubkey {
+                group_ref.verify_member_access(&event.pubkey, event.kind)?;
+            }
         }
 
         Ok(group_ref)
