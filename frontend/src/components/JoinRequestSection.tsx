@@ -17,7 +17,7 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
   constructor(props: JoinRequestSectionProps) {
     super(props)
     this.state = {
-      showJoinForm: true
+      showJoinForm: true,
     }
   }
 
@@ -32,10 +32,6 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
   render() {
     const { group, client } = this.props
 
-    const pendingRequests = group.joinRequests?.filter(
-      pubkey => !group.members.some(member => member.pubkey === pubkey)
-    ) || []
-
     return (
       <div class="space-y-4">
         <div class="p-4 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]">
@@ -46,9 +42,9 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
           />
         </div>
 
-        {pendingRequests.length > 0 ? (
+        {group.joinRequests.length > 0 ? (
           <div class="space-y-2">
-            {pendingRequests.map(pubkey => (
+            {group.joinRequests.map(pubkey => (
               <div
                 key={pubkey}
                 class="flex items-center justify-between gap-2 p-4 bg-[var(--color-bg-primary)]

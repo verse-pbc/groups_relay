@@ -1,10 +1,3 @@
-use std::sync::Arc;
-
-use anyhow::Result;
-use async_trait::async_trait;
-use nostr_sdk::prelude::*;
-use tracing::debug;
-
 use crate::error::Error;
 use crate::groups::{
     Groups, ADDRESSABLE_EVENT_KINDS, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER, KIND_GROUP_CREATE,
@@ -14,6 +7,11 @@ use crate::groups::{
 };
 use crate::nostr_session_state::NostrConnectionState;
 use crate::StoreCommand;
+use anyhow::Result;
+use async_trait::async_trait;
+use nostr_sdk::prelude::*;
+use std::sync::Arc;
+use tracing::debug;
 use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage};
 
 #[derive(Debug)]

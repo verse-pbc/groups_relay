@@ -130,6 +130,12 @@ export class App extends Component<AppProps, AppState> {
               } else {
                 group.members.push({ pubkey, roles } as GroupMember);
               }
+
+              if (group.joinRequests.includes(pubkey)) {
+                group.joinRequests = group.joinRequests.filter(
+                  (p) => p !== pubkey
+                );
+              }
             });
           break;
 
@@ -148,6 +154,12 @@ export class App extends Component<AppProps, AppState> {
                   pubkey,
                   roles: ["member"],
                 } as GroupMember);
+
+                if (group.joinRequests.includes(pubkey)) {
+                  group.joinRequests = group.joinRequests.filter(
+                    (p) => p !== pubkey
+                  );
+                }
               }
             });
           break;
@@ -183,7 +195,10 @@ export class App extends Component<AppProps, AppState> {
 
       const group = this.getOrCreateGroup(groupId, event.created_at);
 
-      if (!group.joinRequests.includes(event.pubkey)) {
+      if (
+        !group.joinRequests.includes(event.pubkey) &&
+        !group.members.some((member) => member.pubkey === event.pubkey)
+      ) {
         group.joinRequests.push(event.pubkey);
         groupsMap.set(groupId, { ...group });
       }
