@@ -104,7 +104,27 @@ impl FromRef<AppState>
     }
 }
 
-// TODO: This needs refactor. Try similar tool as webscoket_builder integration test setup
+fn get_real_ip(headers: &axum::http::HeaderMap, socket_addr: SocketAddr) -> String {
+    // Try to get the real client IP from X-Forwarded-For header
+    let ip = if let Some(forwarded_for) = headers.get("x-forwarded-for") {
+        if let Ok(forwarded_str) = forwarded_for.to_str() {
+            // Get the first IP in the list (original client IP)
+            if let Some(real_ip) = forwarded_str.split(',').next() {
+                real_ip.trim().to_string()
+            } else {
+                socket_addr.ip().to_string()
+            }
+        } else {
+            socket_addr.ip().to_string()
+        }
+    } else {
+        socket_addr.ip().to_string()
+    };
+
+    // Always append the port from the socket address to ensure uniqueness
+    format!("{}:{}", ip, socket_addr.port())
+}
+
 async fn http_websocket_handler(
     ws: Option<WebSocketUpgrade>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -113,15 +133,16 @@ async fn http_websocket_handler(
     uri: axum::http::Uri,
 ) -> impl IntoResponse {
     if let Some(ws) = ws {
-        debug!("WebSocket upgrade requested from {}", addr);
+        let real_ip = get_real_ip(&headers, addr);
+        info!("WebSocket upgrade requested from {}", real_ip);
         ws.on_upgrade(move |socket| async move {
             match state
                 .ws_handler
-                .start(socket, addr.to_string(), state.cancellation_token.clone())
+                .start(socket, real_ip.clone(), state.cancellation_token.clone())
                 .await
             {
-                Ok(_) => debug!("WebSocket connection closed for {}", addr),
-                Err(e) => error!("WebSocket error for {}: {:?}", addr, e),
+                Ok(_) => debug!("WebSocket connection closed for {}", real_ip),
+                Err(e) => error!("WebSocket error for {}: {:?}", real_ip, e),
             }
         })
     } else if uri.path() == "/api/groups" {

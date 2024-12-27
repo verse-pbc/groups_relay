@@ -50,6 +50,8 @@ impl ValidationMiddleware {
         Ok(())
     }
 
+    // This was too much, may remove it
+    #[allow(unused)]
     fn validate_filter(
         &self,
         filter: &Filter,
@@ -129,34 +131,6 @@ impl Middleware for ValidationMiddleware {
 
                     ctx.state.connection_token.cancel();
                     return Ok(());
-                }
-
-                ctx.next().await
-            }
-            ClientMessage::Req {
-                subscription_id,
-                filters,
-            } => {
-                debug!(
-                    "[{}] Validating filters for subscription {}",
-                    ctx.connection_id, subscription_id
-                );
-
-                for filter in filters {
-                    if let Err(reason) =
-                        self.validate_filter(filter, ctx.state.authed_pubkey.as_ref())
-                    {
-                        warn!(
-                            "[{}] Filter validation failed for subscription {}: {}",
-                            ctx.connection_id, subscription_id, reason
-                        );
-
-                        ctx.send_message(RelayMessage::notice(reason.to_string()))
-                            .await?;
-
-                        ctx.state.connection_token.cancel();
-                        return Ok(());
-                    }
                 }
 
                 ctx.next().await
