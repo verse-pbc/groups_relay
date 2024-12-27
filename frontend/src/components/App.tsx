@@ -1,50 +1,54 @@
-import { Component } from 'preact'
-import { NostrClient, GroupEventKind } from '../api/nostr_client'
-import type { Group, GroupContent as GroupChatMessage, GroupMember } from '../types'
-import { CreateGroupForm } from './CreateGroupForm'
-import { GroupCard } from './GroupCard'
-import { FlashMessage } from './FlashMessage'
-import type { NDKKind } from '@nostr-dev-kit/ndk'
+import { Component } from "preact";
+import { NostrClient, GroupEventKind } from "../api/nostr_client";
+import type {
+  Group,
+  GroupContent as GroupChatMessage,
+  GroupMember,
+} from "../types";
+import { CreateGroupForm } from "./CreateGroupForm";
+import { GroupCard } from "./GroupCard";
+import { FlashMessage } from "./FlashMessage";
+import type { NDKKind } from "@nostr-dev-kit/ndk";
 
 const metadataKinds = [39000, 39001, 39002, 39003];
 
 export interface FlashMessageData {
-  message: string
-  type: 'success' | 'error' | 'info'
+  message: string;
+  type: "success" | "error" | "info";
 }
 
 interface AppProps {
-  client: NostrClient
-  onLogout: () => void
+  client: NostrClient;
+  onLogout: () => void;
 }
 
 interface AppState {
-  groups: Group[]
-  flashMessage: FlashMessageData | null
-  groupsMap: Map<string, Group>
-  selectedGroup: Group | null
+  groups: Group[];
+  flashMessage: FlashMessageData | null;
+  groupsMap: Map<string, Group>;
+  selectedGroup: Group | null;
 }
 
 export class App extends Component<AppProps, AppState> {
-  private cleanup: (() => void) | null = null
+  private cleanup: (() => void) | null = null;
 
   constructor(props: AppProps) {
-    super(props)
+    super(props);
     this.state = {
       groups: [],
       flashMessage: null,
       groupsMap: new Map(),
-      selectedGroup: null
-    }
+      selectedGroup: null,
+    };
   }
 
   private getOrCreateGroup = (groupId: string, createdAt: number): Group => {
     if (!this.state.groupsMap.has(groupId)) {
       const group: Group = {
         id: groupId,
-        name: '',
-        about: '',
-        picture: '',
+        name: "",
+        about: "",
+        picture: "",
         private: false,
         closed: false,
         created_at: createdAt,
@@ -53,104 +57,143 @@ export class App extends Component<AppProps, AppState> {
         invites: {},
         joinRequests: [],
         content: [],
-      }
-      this.state.groupsMap.set(groupId, group)
+      };
+      this.state.groupsMap.set(groupId, group);
     }
     if (createdAt > this.state.groupsMap.get(groupId)!.updated_at) {
-      this.state.groupsMap.get(groupId)!.updated_at = createdAt
+      this.state.groupsMap.get(groupId)!.updated_at = createdAt;
     }
-    return this.state.groupsMap.get(groupId)!
-  }
+    return this.state.groupsMap.get(groupId)!;
+  };
 
   processEvent = (event: any, groupsMap: Map<string, Group>) => {
-    console.log('processing event', event.kind, event)
+    console.log("processing event", event.kind, event);
 
     // Handle group creation events
     if (event.kind === GroupEventKind.CreateGroup) {
-      const groupId = event.tags.find((t: string[]) => t[0] === 'h')?.[1]
-      if (!groupId) return
+      const groupId = event.tags.find((t: string[]) => t[0] === "h")?.[1];
+      if (!groupId) return;
 
-      let group = this.getOrCreateGroup(groupId, event.created_at)
-      group.created_at = event.created_at
+      let group = this.getOrCreateGroup(groupId, event.created_at);
+      group.created_at = event.created_at;
     }
 
     // Handle relay-generated metadata events
     if (event.kind >= 39000 && event.kind <= 39003) {
-      const groupId = event.tags.find((t: string[]) => t[0] === 'd')?.[1]
-      if (!groupId) return
+      const groupId = event.tags.find((t: string[]) => t[0] === "d")?.[1];
+      if (!groupId) return;
 
-      const group = this.getOrCreateGroup(groupId, event.created_at)
+      const group = this.getOrCreateGroup(groupId, event.created_at);
 
       switch (event.kind) {
         case 39000: // Group metadata
           for (const [tag, value] of event.tags) {
             switch (tag) {
-              case 'name':
-                group.name = value
-                break
-              case 'about':
-                group.about = value
-                break
-              case 'picture':
-                group.picture = value
-                break
-              case 'private':
-                group.private = true
-                break
-              case 'public':
-                group.private = false
-                break
-              case 'closed':
-                group.closed = true
-                break
-              case 'open':
-                group.closed = false
-                break
+              case "name":
+                group.name = value;
+                break;
+              case "about":
+                group.about = value;
+                break;
+              case "picture":
+                group.picture = value;
+                break;
+              case "private":
+                group.private = true;
+                break;
+              case "public":
+                group.private = false;
+                break;
+              case "closed":
+                group.closed = true;
+                break;
+              case "open":
+                group.closed = false;
+                break;
             }
           }
-          break
+          break;
 
         case 39001: // Group admins
-          group.members = group.members.filter(m => !m.roles.includes('admin'))
+          group.members = group.members.filter(
+            (m) => !m.roles.includes("admin")
+          );
           event.tags
-            .filter((t: string[]) => t[0] === 'p')
+            .filter((t: string[]) => t[0] === "p")
             .forEach((t: string[]) => {
-              const [_, pubkey, ...roles] = t
-              const memberIndex = group.members.findIndex(m => m.pubkey === pubkey)
+              const [_, pubkey, ...roles] = t;
+              const memberIndex = group.members.findIndex(
+                (m) => m.pubkey === pubkey
+              );
               if (memberIndex >= 0) {
-                group.members[memberIndex].roles = roles
+                group.members[memberIndex].roles = roles;
               } else {
-                group.members.push({ pubkey, roles } as GroupMember)
+                group.members.push({ pubkey, roles } as GroupMember);
               }
-            })
-          break
+            });
+          break;
 
         case 39002: // Group members
-          const existingPrivilegedMembers = group.members.filter(m =>
-            m.roles.some(role => role !== 'member')
-          )
-          group.members = existingPrivilegedMembers
+          const existingPrivilegedMembers = group.members.filter((m) =>
+            m.roles.some((role) => role !== "member")
+          );
+          group.members = existingPrivilegedMembers;
           event.tags
-            .filter((t: string[]) => t[0] === 'p')
+            .filter((t: string[]) => t[0] === "p")
             .forEach((t: string[]) => {
-              const pubkey = t[1]
+              const pubkey = t[1];
               // Only add as member if they don't already have a privileged role
-              if (!group.members.some(m => m.pubkey === pubkey)) {
-                group.members.push({ pubkey, roles: ['member'] } as GroupMember)
+              if (!group.members.some((m) => m.pubkey === pubkey)) {
+                group.members.push({
+                  pubkey,
+                  roles: ["member"],
+                } as GroupMember);
               }
-            })
-          break
+            });
+          break;
       }
 
-      groupsMap.set(groupId, group)
+      groupsMap.set(groupId, group);
     }
 
-    // Handle content events
-    if (event.kind === 9 || event.kind === 11) {
-      const groupId = event.tags.find((t: string[]) => t[0] === 'h')?.[1]
-      if (!groupId) return
+    if (event.kind === GroupEventKind.CreateInvite) {
+      const groupId = event.tags.find((t: string[]) => t[0] === "h")?.[1];
+      if (!groupId) return;
 
-      const group = this.getOrCreateGroup(groupId, event.created_at)
+      const group = this.getOrCreateGroup(groupId, event.created_at);
+
+      const code = event.tags.find((t: string[]) => t[0] === "code")?.[1];
+      const roles = event.tags
+        .find((t: string[]) => t[0] === "roles")?.[1]
+        ?.split(",") || ["member"];
+
+      if (code) {
+        group.invites = {
+          ...group.invites,
+          [code]: { roles },
+        };
+        groupsMap.set(groupId, { ...group });
+      }
+    }
+
+    if (event.kind === GroupEventKind.JoinRequest) {
+      console.log("join request", event);
+      const groupId = event.tags.find((t: string[]) => t[0] === "h")?.[1];
+      if (!groupId) return;
+
+      const group = this.getOrCreateGroup(groupId, event.created_at);
+
+      if (!group.joinRequests.includes(event.pubkey)) {
+        group.joinRequests.push(event.pubkey);
+        groupsMap.set(groupId, { ...group });
+      }
+    }
+
+    if (event.kind === 9 || event.kind === 11) {
+      const groupId = event.tags.find((t: string[]) => t[0] === "h")?.[1];
+      if (!groupId) return;
+
+      const group = this.getOrCreateGroup(groupId, event.created_at);
 
       const content: GroupChatMessage = {
         id: event.id,
@@ -158,12 +201,12 @@ export class App extends Component<AppProps, AppState> {
         kind: event.kind,
         content: event.content,
         created_at: event.created_at,
-      }
+      };
 
-      group.content = [content, ...(group.content || [])].slice(0, 50)
-      groupsMap.set(groupId, { ...group })
+      group.content = [content, ...(group.content || [])].slice(0, 50);
+      groupsMap.set(groupId, { ...group });
     }
-  }
+  };
 
   async componentDidMount() {
     const fetchGroups = async () => {
@@ -172,85 +215,95 @@ export class App extends Component<AppProps, AppState> {
           {
             kinds: [
               ...metadataKinds,
-              9, 11,
+              9,
+              11,
               GroupEventKind.CreateGroup,
               GroupEventKind.CreateInvite,
               GroupEventKind.PutUser,
               GroupEventKind.RemoveUser,
               GroupEventKind.JoinRequest,
-            ].map(k => k as NDKKind),
+            ].map((k) => k as NDKKind),
           },
           { closeOnEose: false }
-        )
+        );
 
-        sub.on('event', async (event: any) => {
-          console.log('received event', event.kind)
-          this.processEvent(event, this.state.groupsMap)
-          const sortedGroups = Array.from(this.state.groupsMap.values()).sort((a, b) => b.created_at - a.created_at)
-          this.setState({ groups: sortedGroups })
-        })
+        sub.on("event", async (event: any) => {
+          console.log("received event", event.kind);
+          this.processEvent(event, this.state.groupsMap);
+          const sortedGroups = Array.from(this.state.groupsMap.values()).sort(
+            (a, b) => b.created_at - a.created_at
+          );
+          this.setState({ groups: sortedGroups });
+        });
 
         // Store the cleanup function
         this.cleanup = () => {
-          console.log('Stopping subscription')
-          sub.stop()
-        }
+          console.log("Stopping subscription");
+          sub.stop();
+        };
       } catch (error) {
-        console.error('Error fetching groups:', error)
+        console.error("Error fetching groups:", error);
       }
-    }
+    };
 
-    fetchGroups()
+    fetchGroups();
   }
 
   componentWillUnmount() {
     if (this.cleanup) {
-      console.log('Cleaning up subscription')
-      this.cleanup()
+      console.log("Cleaning up subscription");
+      this.cleanup();
     }
   }
 
   updateGroupsMap = (updater: (map: Map<string, Group>) => void) => {
-    this.setState(prevState => {
-      const newGroupsMap = new Map(prevState.groupsMap)
-      updater(newGroupsMap)
-      const sortedGroups = Array.from(newGroupsMap.values()).sort((a, b) => b.created_at - a.created_at)
-      return {
-        groupsMap: newGroupsMap,
-        groups: sortedGroups
-      }
-    })
-  }
-
-  handleGroupDelete = (groupId: string) => {
-    this.setState(prevState => {
-      const newGroupsMap = new Map(prevState.groupsMap)
-      newGroupsMap.delete(groupId)
-      const sortedGroups = Array.from(newGroupsMap.values()).sort((a, b) => b.created_at - a.created_at)
+    this.setState((prevState) => {
+      const newGroupsMap = new Map(prevState.groupsMap);
+      updater(newGroupsMap);
+      const sortedGroups = Array.from(newGroupsMap.values()).sort(
+        (a, b) => b.created_at - a.created_at
+      );
       return {
         groupsMap: newGroupsMap,
         groups: sortedGroups,
-        selectedGroup: null
-      }
-    })
-  }
+      };
+    });
+  };
+
+  handleGroupDelete = (groupId: string) => {
+    this.setState((prevState) => {
+      const newGroupsMap = new Map(prevState.groupsMap);
+      newGroupsMap.delete(groupId);
+      const sortedGroups = Array.from(newGroupsMap.values()).sort(
+        (a, b) => b.created_at - a.created_at
+      );
+      return {
+        groupsMap: newGroupsMap,
+        groups: sortedGroups,
+        selectedGroup: null,
+      };
+    });
+  };
 
   handleGroupSelect = (group: Group) => {
-    this.setState({ selectedGroup: group })
-  }
+    this.setState({ selectedGroup: group });
+  };
 
-  showMessage = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+  showMessage = (
+    message: string,
+    type: "success" | "error" | "info" = "info"
+  ) => {
     this.setState({
-      flashMessage: { message, type }
-    })
-  }
+      flashMessage: { message, type },
+    });
+  };
 
   dismissMessage = () => {
-    this.setState({ flashMessage: null })
-  }
+    this.setState({ flashMessage: null });
+  };
 
   render() {
-    const { groups, flashMessage } = this.state
+    const { groups, flashMessage } = this.state;
 
     return (
       <div class="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
@@ -272,7 +325,7 @@ export class App extends Component<AppProps, AppState> {
             </div>
 
             <div class="flex-1 space-y-4">
-              {groups.map(group => (
+              {groups.map((group) => (
                 <GroupCard
                   key={group.id}
                   group={group}
@@ -291,6 +344,6 @@ export class App extends Component<AppProps, AppState> {
           onDismiss={this.dismissMessage}
         />
       </div>
-    )
+    );
   }
 }
