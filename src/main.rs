@@ -197,20 +197,7 @@ async fn http_websocket_handler(
 
 #[cfg(feature = "console")]
 fn setup_tracing() {
-    use tracing_subscriber::prelude::*;
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_target(true)
-        .with_thread_ids(false)
-        .with_thread_names(false)
-        .with_file(false)
-        .with_line_number(false)
-        .compact();
-
-    tracing_subscriber::registry()
-        .with(console_subscriber::spawn())
-        .with(fmt_layer)
-        .with(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+    console_subscriber::init();
 }
 
 #[cfg(not(feature = "console"))]
