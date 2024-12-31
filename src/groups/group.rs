@@ -373,7 +373,7 @@ impl Group {
             return Err(Error::notice("Invalid event kind for delete group"));
         }
 
-        if !self.can_delete_group(authed_pubkey, relay_pubkey, delete_group_request_event) {
+        if !self.can_delete_group(authed_pubkey, relay_pubkey, delete_group_request_event)? {
             return Err(Error::notice("User is not authorized to delete this group"));
         }
 
@@ -407,7 +407,7 @@ impl Group {
             return Err(Error::notice("Invalid event kind for delete event"));
         }
 
-        if !self.can_delete_event(authed_pubkey, relay_pubkey, delete_request_event) {
+        if !self.can_delete_event(authed_pubkey, relay_pubkey, delete_request_event)? {
             return Err(Error::notice("User is not authorized to delete this event"));
         }
 
@@ -950,7 +950,7 @@ impl Group {
         authed_pubkey: &Option<PublicKey>,
         relay_pubkey: &PublicKey,
         delete_group_event: &Event,
-    ) -> bool {
+    ) -> Result<bool, Error> {
         self.can_delete_event(authed_pubkey, relay_pubkey, delete_group_event)
     }
 
@@ -959,13 +959,13 @@ impl Group {
         authed_pubkey: &Option<PublicKey>,
         relay_pubkey: &PublicKey,
         event: &Event,
-    ) -> bool {
+    ) -> Result<bool, Error> {
         let Some(authed_pubkey) = authed_pubkey else {
             warn!(
                 "User is not authenticated, cannot delete event {}, kind {}",
                 event.id, event.kind
             );
-            return false;
+            return Err(Error::auth_required("User is not authenticated"));
         };
 
         // Relay pubkey can delete all events
@@ -974,14 +974,14 @@ impl Group {
                 "Relay pubkey {} can delete event {}, kind {}",
                 relay_pubkey, event.id, event.kind
             );
-            return true;
+            return Ok(true);
         }
 
         if self.is_admin(&event.pubkey) {
-            return true;
+            return Ok(true);
         }
 
-        false
+        Ok(false)
     }
 
     pub fn can_see_event(
@@ -989,14 +989,14 @@ impl Group {
         authed_pubkey: &Option<PublicKey>,
         relay_pubkey: &PublicKey,
         event: &Event,
-    ) -> bool {
+    ) -> Result<bool, Error> {
         // Public groups are always visible
         if !self.metadata.private {
             debug!(
                 "Public group, can see event {}, kind {}",
                 event.id, event.kind
             );
-            return true;
+            return Ok(true);
         }
 
         // Private groups need authentication
@@ -1005,7 +1005,7 @@ impl Group {
                 "User is not authenticated, cannot see event {}, kind {}",
                 event.id, event.kind
             );
-            return false;
+            return Err(Error::auth_required("User is not authenticated"));
         };
 
         // Relay pubkey can see all events
@@ -1014,7 +1014,7 @@ impl Group {
                 "Relay pubkey {} can see event {}, kind {}",
                 relay_pubkey, event.id, event.kind
             );
-            return true;
+            return Ok(true);
         }
 
         // You can see your own events
@@ -1023,7 +1023,7 @@ impl Group {
                 "User {} can see their own event {}, kind {}",
                 authed_pubkey, event.id, event.kind
             );
-            return true;
+            return Ok(true);
         }
 
         // Admins can see everything
@@ -1032,7 +1032,7 @@ impl Group {
                 "User {} is an admin, can see event {}, kind {}",
                 authed_pubkey, event.id, event.kind
             );
-            return true;
+            return Ok(true);
         }
 
         // Members can see everything except invites
@@ -1041,14 +1041,14 @@ impl Group {
                 "User {} is a member, can see event {}, kind {}",
                 authed_pubkey, event.id, event.kind
             );
-            return true;
+            return Ok(true);
         }
 
         warn!(
             "User {} is not a member, cannot see event {}, kind {}",
             authed_pubkey, event.id, event.kind
         );
-        false
+        Ok(false)
     }
 }
 
@@ -1225,22 +1225,32 @@ mod tests {
         let test_event = create_test_event(&member_keys, Kind::Custom(9), vec![]).await;
 
         // Test visibility rules
-        assert!(group.can_see_event(
-            &Some(admin_keys.public_key()),
-            &admin_keys.public_key(),
-            &test_event
-        ));
-        assert!(group.can_see_event(
-            &Some(member_keys.public_key()),
-            &admin_keys.public_key(),
-            &test_event
-        ));
-        assert!(!group.can_see_event(
-            &Some(non_member_keys.public_key()),
-            &admin_keys.public_key(),
-            &test_event
-        ));
-        assert!(!group.can_see_event(&None, &admin_keys.public_key(), &test_event));
+        assert!(group
+            .can_see_event(
+                &Some(admin_keys.public_key()),
+                &admin_keys.public_key(),
+                &test_event
+            )
+            .unwrap());
+        assert!(group
+            .can_see_event(
+                &Some(member_keys.public_key()),
+                &admin_keys.public_key(),
+                &test_event
+            )
+            .unwrap());
+        assert!(!group
+            .can_see_event(
+                &Some(non_member_keys.public_key()),
+                &admin_keys.public_key(),
+                &test_event
+            )
+            .unwrap());
+
+        // Unauthenticated user cannot see events
+        assert!(group
+            .can_see_event(&None, &admin_keys.public_key(), &test_event)
+            .is_err());
 
         // Make group public and test again
         let public_tags = vec![Tag::custom(TagKind::custom("public"), &[] as &[String])];
@@ -1250,12 +1260,16 @@ mod tests {
             .set_metadata(&public_event, &admin_keys.public_key())
             .unwrap();
 
-        assert!(group.can_see_event(&None, &admin_keys.public_key(), &test_event));
-        assert!(group.can_see_event(
-            &Some(non_member_keys.public_key()),
-            &admin_keys.public_key(),
-            &test_event
-        ));
+        assert!(group
+            .can_see_event(&None, &admin_keys.public_key(), &test_event)
+            .unwrap());
+        assert!(group
+            .can_see_event(
+                &Some(non_member_keys.public_key()),
+                &admin_keys.public_key(),
+                &test_event
+            )
+            .unwrap());
     }
 
     #[tokio::test]

@@ -368,8 +368,10 @@ impl Middleware for Nip29Middleware {
     ) -> Result<()> {
         if let Some(RelayMessage::Event { event, .. }) = &ctx.message {
             if let Some(group) = self.groups.find_group_from_event(event) {
-                if !group.can_see_event(&ctx.state.authed_pubkey, &self.relay_pubkey, event) {
-                    ctx.message = None;
+                match group.can_see_event(&ctx.state.authed_pubkey, &self.relay_pubkey, event) {
+                    Ok(false) => ctx.message = None,
+                    Err(_e) => ctx.message = None,
+                    _ => (),
                 }
             }
         }

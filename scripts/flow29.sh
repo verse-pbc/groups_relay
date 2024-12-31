@@ -14,7 +14,7 @@ USER_PRIVATE_KEY="262f9c9cdd4d490f54c7333c0ae7033b03cfb8f83c123f2da4e3cf10b7d33b
 NEW_USER_PRIVATE_KEY="efa1aa99103d56f1c0d77b6986d06d4a8327c88886ed5ec0a2ed2b1bca504895"
 USER_PUBLIC_KEY="e44bb8c424c2e9b6a74620ca038ad93cce3a11d6a1b4f4ae17211bb78013d972"
 NEW_USER_PUBLIC_KEY="1b45eccc033451d763a71cb8ddd39dcf31b7d2d72d281c70736c8f38b2c55762"
-GROUP_ID="foobar"
+GROUP_ID="$(date +%s)"
 
 # Add a third user's keys
 THIRD_USER_PRIVATE_KEY="7f7ff03d123792d6ac594bfa67bf6d0c0ab55b6b1fdb6249303fe861f1ccba9b"
@@ -106,6 +106,14 @@ main() {
         "nak event -k 9001 -t h='${GROUP_ID}' -t p='${THIRD_USER_PUBLIC_KEY}' --auth --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
     echo "Relay automatically updates 39002"
 
+    echo -e "\n=== Delete Message ==="
+    MESSAGE_ID=`nak req -k 9 -l 1 -t h=${GROUP_ID} -fpa --auth --sec=${RELAY_PRIVATE_KEY} ${RELAY_URL} |jq -r '.id'`
+    run_step 14 "Admin deletes message (9005)" \
+        "nak event -k 9005 -t h='${GROUP_ID}' -t e='${MESSAGE_ID}' --auth --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
+
+    echo -e "\n=== Delete Group ==="
+    run_step 15 "Admin deletes group (9006)" \
+        "nak event -k 9008 -t h='${GROUP_ID}' --auth --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
 }
 
 main
