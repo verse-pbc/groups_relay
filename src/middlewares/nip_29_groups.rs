@@ -182,7 +182,7 @@ impl Nip29Middleware {
             k => {
                 debug!("User -> Relay: Group content event");
                 let group = match self.groups.find_group_from_event(event) {
-                    None => return Ok(None),
+                    None => return Err(Error::notice("Group not found")),
                     Some(group) => group,
                 };
 
@@ -270,6 +270,11 @@ impl Nip29Middleware {
 
                 match authed_pubkey {
                     Some(authed_pubkey) => {
+                        // relay pubkey can always read private groups
+                        if authed_pubkey == self.relay_pubkey {
+                            return Ok(());
+                        }
+
                         if !group.is_member(&authed_pubkey) {
                             return Err(Error::restricted(
                                 "authed user is not a member of this group",
@@ -316,7 +321,7 @@ impl Middleware for Nip29Middleware {
         &'a self,
         ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<()> {
-        let message = match &ctx.message {
+        let response_message = match &ctx.message {
             ClientMessage::Event(ref event) => {
                 match self.handle_event(event, &ctx.state.authed_pubkey).await {
                     Ok(Some(events_to_save)) => {
@@ -327,7 +332,7 @@ impl Middleware for Nip29Middleware {
                         }
                         Some(RelayMessage::ok(event_id, true, ""))
                     }
-                    Ok(None) => None,
+                    Ok(None) => return Ok(()),
                     Err(e) => {
                         e.handle_inbound_error(ctx).await;
                         return Ok(());
@@ -351,13 +356,14 @@ impl Middleware for Nip29Middleware {
                     "[{}] Subscribing to subscription {}",
                     ctx.connection_id, subscription_id
                 );
+
                 None
             }
             _ => None,
         };
 
-        match message {
-            Some(msg) => ctx.send_message(msg).await,
+        match response_message {
+            Some(relay_message) => ctx.send_message(relay_message).await,
             None => ctx.next().await,
         }
     }
