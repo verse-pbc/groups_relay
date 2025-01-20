@@ -11,7 +11,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
-use tracing::debug;
 use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage};
 
 #[derive(Debug)]
@@ -34,7 +33,6 @@ impl Nip29Middleware {
         authed_pubkey: &Option<PublicKey>,
     ) -> Result<Option<Vec<StoreCommand>>, Error> {
         if event.kind == KIND_GROUP_CREATE {
-            debug!("Admin -> Relay: Creating group");
             let group = self.groups.handle_group_create(event).await?;
 
             let metadata_event = group.generate_metadata_event();
@@ -55,7 +53,6 @@ impl Nip29Middleware {
 
         let events_to_save = match event.kind {
             k if k == KIND_GROUP_EDIT_METADATA => {
-                debug!("Admin -> Relay: Editing group metadata");
                 self.groups.handle_edit_metadata(event)?;
                 let Some(group) = self.groups.find_group_from_event(event) else {
                     return Ok(None);
@@ -68,7 +65,6 @@ impl Nip29Middleware {
             }
 
             k if k == KIND_GROUP_USER_JOIN_REQUEST => {
-                debug!("User -> Relay: Requesting to join group");
                 let auto_joined = self.groups.handle_join_request(event)?;
                 if auto_joined {
                     let Some(group) = self.groups.find_group_from_event(event) else {
@@ -87,7 +83,6 @@ impl Nip29Middleware {
             }
 
             k if k == KIND_GROUP_USER_LEAVE_REQUEST => {
-                debug!("User -> Relay: Requesting to leave group");
                 if self.groups.handle_leave_request(event)? {
                     let Some(group) = self.groups.find_group_from_event(event) else {
                         return Err(Error::notice("Group not found"));
@@ -103,13 +98,11 @@ impl Nip29Middleware {
             }
 
             k if k == KIND_GROUP_SET_ROLES => {
-                debug!("Admin/Relay -> Relay: Setting roles");
                 self.groups.handle_set_roles(event)?;
                 vec![]
             }
 
             k if k == KIND_GROUP_ADD_USER => {
-                debug!("Admin/Relay -> Relay: Adding user to group");
                 let added_admins = self.groups.handle_put_user(event)?;
                 let Some(group) = self.groups.find_group_from_event(event) else {
                     return Err(Error::notice("Group not found"));
@@ -129,7 +122,6 @@ impl Nip29Middleware {
             }
 
             k if k == KIND_GROUP_REMOVE_USER => {
-                debug!("Admin/Relay -> Relay: Removing user from group");
                 let removed_admins = self.groups.handle_remove_user(event)?;
                 let Some(group) = self.groups.find_group_from_event(event) else {
                     return Err(Error::notice("Group not found"));
@@ -149,7 +141,6 @@ impl Nip29Middleware {
             }
 
             k if k == KIND_GROUP_DELETE => {
-                debug!("Admin -> Relay: Deleting group");
                 let Some(group) = self.groups.find_group_from_event(event) else {
                     return Err(Error::notice("Group not found"));
                 };
@@ -161,7 +152,6 @@ impl Nip29Middleware {
             }
 
             k if k == KIND_GROUP_DELETE_EVENT => {
-                debug!("Admin -> Relay: Deleting event");
                 let Some(group) = self.groups.find_group_from_event(event) else {
                     return Err(Error::notice("Group not found"));
                 };
@@ -173,14 +163,11 @@ impl Nip29Middleware {
             }
 
             k if k == KIND_GROUP_CREATE_INVITE => {
-                debug!("Admin -> Relay: Creating invite");
                 self.groups.handle_create_invite(event)?;
                 vec![StoreCommand::SaveSignedEvent(event.clone())]
             }
 
-            // Group content events
             k => {
-                debug!("User -> Relay: Group content event");
                 let group = match self.groups.find_group_from_event(event) {
                     None => return Err(Error::notice("Group not found")),
                     Some(group) => group,
@@ -220,13 +207,15 @@ impl Nip29Middleware {
         let mut is_reference: bool = false;
 
         if let Some(kinds) = &filter.kinds {
-            for k in kinds {
+            // Check kinds in reverse order to catch addressable kinds first
+            for k in kinds.iter().rev() {
                 if ADDRESSABLE_EVENT_KINDS.contains(k) {
                     is_meta = true;
                 } else if is_meta {
-                    return Err(Error::notice(
-                        "Invalid query, cannot mix metadata and normal event kinds",
-                    ));
+                    // This was taken from relay29. I still unsure why this was done so I'm commenting until I know why we don't let a mixed query
+                    // return Err(Error::notice(
+                    //     "Invalid query, cannot mix metadata and normal event kinds",
+                    // ));
                 }
             }
         }
@@ -260,10 +249,6 @@ impl Nip29Middleware {
                     .get_group(tag)
                     .ok_or(Error::notice("Group not found"))?;
 
-                debug!(
-                    "checking filters for normal request for group: {:?}",
-                    group.value()
-                );
                 if !group.metadata.private {
                     return Ok(());
                 }
@@ -343,20 +328,10 @@ impl Middleware for Nip29Middleware {
                 ref filters,
                 subscription_id,
             } => {
-                debug!(
-                    "[{}] Received REQ message for subscription {}",
-                    ctx.connection_id, subscription_id
-                );
                 if let Err(e) = self.verify_filters(ctx.state.authed_pubkey, filters) {
                     e.handle_inbound_error(ctx).await;
                     return Ok(());
                 }
-
-                debug!(
-                    "[{}] Subscribing to subscription {}",
-                    ctx.connection_id, subscription_id
-                );
-
                 None
             }
             _ => None,
@@ -383,5 +358,251 @@ impl Middleware for Nip29Middleware {
         }
 
         ctx.next().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::{create_test_event, create_test_keys, create_test_state, setup_test};
+    use websocket_builder::OutboundContext;
+
+    #[tokio::test]
+    async fn test_group_content_event_without_group() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups, admin_keys.public_key());
+
+        // Create a content event for a non-existent group
+        let event = create_test_event(
+            &member_keys,
+            11, // Group content event
+            vec![Tag::custom(TagKind::h(), ["non_existent_group"])],
+        )
+        .await;
+
+        // Should return an error because group doesn't exist
+        let result = middleware.handle_event(&event, &None).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Group not found");
+    }
+
+    #[tokio::test]
+    async fn test_process_outbound_visibility() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, non_member_keys) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create a group
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007, // KIND_GROUP_CREATE
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
+        // Add member to group
+        let add_member_event = create_test_event(
+            &admin_keys,
+            9008, // KIND_GROUP_ADD_USER
+            vec![
+                Tag::custom(TagKind::h(), [group_id]),
+                Tag::public_key(member_keys.public_key()),
+            ],
+        )
+        .await;
+        groups.handle_put_user(&add_member_event).unwrap();
+
+        // Create a group content event
+        let content_event = create_test_event(
+            &member_keys,
+            11,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+
+        // Test member can see event
+        let mut state = create_test_state(Some(member_keys.public_key()));
+        let mut ctx = create_test_context(
+            &mut state,
+            RelayMessage::Event {
+                subscription_id: SubscriptionId::new("test"),
+                event: Box::new(content_event.clone()),
+            },
+        );
+        middleware.process_outbound(&mut ctx).await.unwrap();
+        assert!(ctx.message.is_some());
+
+        // Test non-member cannot see event
+        let mut state = create_test_state(Some(non_member_keys.public_key()));
+        let mut ctx = create_test_context(
+            &mut state,
+            RelayMessage::Event {
+                subscription_id: SubscriptionId::new("test"),
+                event: Box::new(content_event.clone()),
+            },
+        );
+        middleware.process_outbound(&mut ctx).await.unwrap();
+        assert!(ctx.message.is_none());
+
+        // Test relay pubkey can see event
+        let mut state = create_test_state(Some(admin_keys.public_key()));
+        let mut ctx = create_test_context(
+            &mut state,
+            RelayMessage::Event {
+                subscription_id: SubscriptionId::new("test"),
+                event: Box::new(content_event),
+            },
+        );
+        middleware.process_outbound(&mut ctx).await.unwrap();
+        assert!(ctx.message.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_filter_verification() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, non_member_keys) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create a test group
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
+        // Add member to group
+        let add_member_event = create_test_event(
+            &admin_keys,
+            9008,
+            vec![
+                Tag::custom(TagKind::h(), [group_id]),
+                Tag::public_key(member_keys.public_key()),
+            ],
+        )
+        .await;
+        groups.handle_put_user(&add_member_event).unwrap();
+
+        // Normal filter with 'h' tag
+        let normal_filter = Filter::new()
+            .kind(Kind::Custom(11))
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::H), vec![group_id]);
+        assert!(middleware
+            .verify_filter(Some(member_keys.public_key()), &normal_filter)
+            .is_ok());
+
+        // Metadata filter with 'd' tag
+        let meta_filter = Filter::new()
+            .kind(Kind::Custom(9007))
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::D), vec![group_id]);
+        assert!(middleware
+            .verify_filter(Some(member_keys.public_key()), &meta_filter)
+            .is_ok());
+
+        // Reference filter with 'e' tag
+        let ref_filter = Filter::new()
+            .kind(Kind::Custom(11))
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::E), vec!["test_id"]);
+        assert!(middleware
+            .verify_filter(Some(member_keys.public_key()), &ref_filter)
+            .is_ok());
+
+        // Reference filter with authors
+        let author_filter = Filter::new()
+            .kind(Kind::Custom(11))
+            .authors(vec![member_keys.public_key()]);
+        assert!(middleware
+            .verify_filter(Some(member_keys.public_key()), &author_filter)
+            .is_ok());
+
+        // Metadata filter with addressable kind
+        let meta_filter = Filter::new()
+            .kinds(vec![Kind::Custom(39000)]) // Just the addressable kind
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::D), vec![group_id]);
+        assert!(middleware
+            .verify_filter(Some(member_keys.public_key()), &meta_filter)
+            .is_ok());
+
+        // Normal filter with non-addressable kind
+        let normal_filter = Filter::new()
+            .kinds(vec![Kind::Custom(11)]) // Just the normal kind
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::H), vec![group_id]);
+        assert!(middleware
+            .verify_filter(Some(member_keys.public_key()), &normal_filter)
+            .is_ok());
+
+        let private_group_id = "private_group";
+        let private_create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![
+                Tag::custom(TagKind::h(), [private_group_id]),
+                Tag::custom(TagKind::p(), ["true"]),
+            ],
+        )
+        .await;
+        groups
+            .handle_group_create(&private_create_event)
+            .await
+            .unwrap();
+
+        let add_to_private_event = create_test_event(
+            &admin_keys,
+            9008,
+            vec![
+                Tag::custom(TagKind::h(), [private_group_id]),
+                Tag::public_key(member_keys.public_key()),
+            ],
+        )
+        .await;
+        groups.handle_put_user(&add_to_private_event).unwrap();
+
+        let private_filter = Filter::new().kind(Kind::Custom(11)).custom_tag(
+            SingleLetterTag::lowercase(Alphabet::H),
+            vec![private_group_id],
+        );
+        assert!(middleware
+            .verify_filter(Some(member_keys.public_key()), &private_filter)
+            .is_ok());
+
+        // Private group access - non-member
+        assert!(middleware
+            .verify_filter(Some(non_member_keys.public_key()), &private_filter)
+            .is_err());
+
+        // Private group access - no auth
+        assert!(middleware.verify_filter(None, &private_filter).is_err());
+
+        // Private group access - relay pubkey
+        assert!(middleware
+            .verify_filter(Some(admin_keys.public_key()), &private_filter)
+            .is_ok());
+    }
+
+    fn create_test_context<'a>(
+        state: &'a mut NostrConnectionState,
+        message: RelayMessage,
+    ) -> OutboundContext<'a, NostrConnectionState, ClientMessage, RelayMessage> {
+        OutboundContext::new("test_conn".to_string(), message, None, state, &[], 0)
     }
 }

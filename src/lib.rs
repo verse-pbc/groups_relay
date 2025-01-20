@@ -9,6 +9,9 @@ pub mod middlewares;
 pub mod nostr_database;
 pub mod nostr_session_state;
 
+#[cfg(test)]
+pub mod test_utils;
+
 // Re-export commonly used items
 pub use app_state::HttpServerState;
 pub use error::Error;
