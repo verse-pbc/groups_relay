@@ -29,10 +29,13 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
 
+      - name: Install Rust target
+        run: rustup target add x86_64-unknown-linux-gnu
+
       - name: Build
         env:
           RUSTFLAGS: '-C target-feature=+crt-static'
-        run: cargo build --release --workspace --verbose
+        run: cargo build --release --target x86_64-unknown-linux-gnu --workspace --verbose
 
       - name: Run tests
         run: cargo test --workspace --verbose -- --nocapture
