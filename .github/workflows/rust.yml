@@ -30,6 +30,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build
+        env:
+          RUSTFLAGS: '-C target-feature=+crt-static'
         run: cargo build --release --workspace --verbose
 
       - name: Run tests
