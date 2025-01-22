@@ -44,7 +44,7 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           mkdir -p build-context/config
-          cp target/release/groups_relay build-context/
+          cp target/x86_64-unknown-linux-gnu/release/groups_relay build-context/
           cp config/settings.yml build-context/config/
           cp -r frontend build-context/
 
