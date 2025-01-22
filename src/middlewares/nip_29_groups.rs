@@ -326,7 +326,7 @@ impl Middleware for Nip29Middleware {
             }
             ClientMessage::Req {
                 ref filters,
-                subscription_id,
+                subscription_id: _,
             } => {
                 if let Err(e) = self.verify_filters(ctx.state.authed_pubkey, filters) {
                     e.handle_inbound_error(ctx).await;
