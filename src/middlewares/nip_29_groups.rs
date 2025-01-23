@@ -250,10 +250,9 @@ impl Nip29Middleware {
                 .filter(|(k, _)| k == &&SingleLetterTag::lowercase(Alphabet::H))
                 .flat_map(|(_, tag_set)| tag_set.iter())
             {
-                let group = self
-                    .groups
-                    .get_group(tag)
-                    .ok_or(Error::notice("Group not found"))?;
+                let Some(group) = self.groups.get_group(tag) else {
+                    return Ok(());
+                };
 
                 if !group.metadata.private {
                     return Ok(());
@@ -542,6 +541,14 @@ mod tests {
             .custom_tag(SingleLetterTag::lowercase(Alphabet::H), vec![group_id]);
         assert!(middleware
             .verify_filter(Some(member_keys.public_key()), &normal_filter)
+            .is_ok());
+
+        let non_existing_group_filter = Filter::new().kind(Kind::Custom(11)).custom_tag(
+            SingleLetterTag::lowercase(Alphabet::H),
+            vec!["non_existing_group"],
+        );
+        assert!(middleware
+            .verify_filter(Some(member_keys.public_key()), &non_existing_group_filter)
             .is_ok());
 
         // Metadata filter with 'd' tag
