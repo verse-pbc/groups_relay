@@ -216,7 +216,7 @@ impl Groups {
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("Group not found"))?;
 
-        group.add_members(event, &self.relay_pubkey)
+        group.add_members_from_event(event, &self.relay_pubkey)
     }
 
     pub fn handle_remove_user(&self, event: &Event) -> Result<bool, Error> {

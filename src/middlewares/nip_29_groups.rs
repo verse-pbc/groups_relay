@@ -104,17 +104,17 @@ impl Nip29Middleware {
             }
 
             k if k == KIND_GROUP_ADD_USER_9000 => {
-                let added_admins = self.groups.handle_put_user(event)?;
+                self.groups.handle_put_user(event)?;
                 let Some(group) = self.groups.find_group_from_event(event) else {
                     return Err(Error::notice("Group not found"));
                 };
                 let mut events = vec![StoreCommand::SaveSignedEvent(event.clone())];
-                if added_admins {
-                    let admins_event = group.generate_admins_event();
-                    events.push(StoreCommand::SaveUnsignedEvent(
-                        admins_event.build(self.relay_pubkey),
-                    ));
-                }
+
+                let admins_event = group.generate_admins_event();
+                events.push(StoreCommand::SaveUnsignedEvent(
+                    admins_event.build(self.relay_pubkey),
+                ));
+
                 let members_event = group.generate_members_event();
                 events.push(StoreCommand::SaveUnsignedEvent(
                     members_event.build(self.relay_pubkey),
@@ -169,16 +169,42 @@ impl Nip29Middleware {
             }
 
             k if !NON_GROUP_ALLOWED_KINDS.contains(&k) => {
-                let group = match self.groups.find_group_from_event(event) {
-                    None => return Err(Error::notice("Group not found for this group content")),
-                    Some(group) => group,
-                };
+                let mut group = self
+                    .groups
+                    .find_group_from_event_mut(event)?
+                    .ok_or(Error::notice("Group not found for this group content"))?;
 
                 if GROUP_CONTENT_KINDS.contains(&k) {
-                    if !group.is_member(&event.pubkey) {
+                    let is_member = group.is_member(&event.pubkey);
+                    let mut events_to_save = vec![StoreCommand::SaveSignedEvent(event.clone())];
+
+                    // For private and closed groups, only members can post
+                    if group.metadata.private && group.metadata.closed && !is_member {
                         return Err(Error::notice("User is not a member of this group"));
                     }
-                    vec![StoreCommand::SaveSignedEvent(event.clone())]
+
+                    // Open groups auto-join the author when posting
+                    if !group.metadata.closed {
+                        // For open groups, non-members are automatically added
+                        if !is_member {
+                            group.add_pubkey(event.pubkey);
+
+                            let put_user_event = group.generate_put_user_event(&event.pubkey);
+                            let members_event = group.generate_members_event();
+
+                            events_to_save.push(StoreCommand::SaveUnsignedEvent(
+                                put_user_event.build(self.relay_pubkey),
+                            ));
+                            events_to_save.push(StoreCommand::SaveUnsignedEvent(
+                                members_event.build(self.relay_pubkey),
+                            ));
+                        }
+                    } else if !is_member {
+                        // For closed groups, non-members can't post
+                        return Err(Error::notice("User is not a member of this group"));
+                    }
+
+                    events_to_save
                 } else {
                     return Err(Error::notice("Event kind not supported by this group"));
                 }
@@ -637,6 +663,146 @@ mod tests {
         assert!(middleware
             .verify_filter(Some(admin_keys.public_key()), &private_filter)
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_auto_add_member_on_post() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create a group
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
+        // Set group as not closed and public
+        let metadata_event = create_test_event(
+            &admin_keys,
+            9002,
+            vec![
+                Tag::custom(TagKind::h(), [group_id]),
+                Tag::custom(TagKind::custom("open"), [""]),
+                Tag::custom(TagKind::custom("public"), [""]),
+            ],
+        )
+        .await;
+        groups.handle_edit_metadata(&metadata_event).unwrap();
+
+        // Verify group settings
+        let group = groups.get_group(group_id).unwrap();
+        assert!(!group.metadata.closed, "Group should not be closed");
+        assert!(!group.metadata.private, "Group should not be private");
+        assert!(!group.is_member(&member_keys.public_key()));
+        drop(group); // Release the lock
+
+        // Post content to the group as non-member
+        let content_event = create_test_event(
+            &member_keys,
+            7, // Use KIND_GROUP_REACTION_7 from GROUP_CONTENT_KINDS
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+
+        // Handle the event
+        let result = middleware.handle_event(&content_event, &None).await;
+        assert!(result.is_ok());
+
+        // Verify the events to save contain both the content event and member update
+        let events_to_save = result.unwrap().unwrap();
+        assert_eq!(events_to_save.len(), 3);
+        match &events_to_save[0] {
+            StoreCommand::SaveSignedEvent(event) => assert_eq!(event.id, content_event.id),
+            _ => panic!("Expected SaveSignedEvent"),
+        }
+        match &events_to_save[1] {
+            StoreCommand::SaveUnsignedEvent(_) => (), // This is the put user event
+            _ => panic!("Expected SaveUnsignedEvent for put user event"),
+        }
+        match &events_to_save[2] {
+            StoreCommand::SaveUnsignedEvent(_) => (), // This is the members event
+            _ => panic!("Expected SaveUnsignedEvent for members update"),
+        }
+
+        // Verify member was added to the group
+        let group = groups.get_group(group_id).unwrap();
+        assert!(group.is_member(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_no_auto_add_member_on_post_to_closed_group() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create a group (closed by default)
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
+        // Set group as public but keep it closed
+        let metadata_event = create_test_event(
+            &admin_keys,
+            9002,
+            vec![
+                Tag::custom(TagKind::h(), [group_id]),
+                Tag::custom(TagKind::custom("closed"), [""]),
+                Tag::custom(TagKind::custom("public"), [""]),
+            ],
+        )
+        .await;
+        groups.handle_edit_metadata(&metadata_event).unwrap();
+
+        // Verify group settings
+        let group = groups.get_group(group_id).unwrap();
+        assert!(group.metadata.closed, "Group should be closed");
+        assert!(!group.metadata.private, "Group should not be private");
+        assert!(!group.is_member(&member_keys.public_key()));
+        drop(group);
+
+        // Try to post content to the group as non-member
+        let content_event = create_test_event(
+            &member_keys,
+            7, // Use KIND_GROUP_REACTION_7 from GROUP_CONTENT_KINDS
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+
+        // Handle the event - should fail because user is not a member
+        let result = middleware.handle_event(&content_event, &None).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Restricted: User {} is not a member of this group",
+                member_keys.public_key
+            )
+        );
+
+        // Verify member was not added to the group
+        let group = groups.get_group(group_id).unwrap();
+        assert!(!group.is_member(&member_keys.public_key()));
     }
 
     fn create_test_context<'a>(

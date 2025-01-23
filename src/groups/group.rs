@@ -433,7 +433,7 @@ impl Group {
         ])
     }
 
-    pub fn add_members(
+    pub fn add_members_from_event(
         &mut self,
         members_event: &Event,
         relay_pubkey: &PublicKey,
@@ -443,20 +443,35 @@ impl Group {
                 "User {} is not authorized to add users to this group",
                 members_event.pubkey
             );
+
             return Err(Error::notice(
                 "User is not authorized to add users to this group",
             ));
         }
 
-        for tag in members_event.tags.filter(TagKind::p()) {
-            let member = GroupMember::try_from(tag)?;
+        let group_members = members_event
+            .tags
+            .filter(TagKind::p())
+            .map(|tag| GroupMember::try_from(tag))
+            .filter_map(Result::ok);
+
+        self.add_members(group_members);
+        Ok(true)
+    }
+
+    pub fn add_members(&mut self, group_members: impl Iterator<Item = GroupMember>) {
+        for member in group_members {
             self.join_requests.remove(&member.pubkey);
             self.members.insert(member.pubkey, member);
         }
 
         self.update_roles();
         self.update_state();
-        Ok(true)
+    }
+
+    pub fn add_pubkey(&mut self, pubkey: PublicKey) {
+        let member = GroupMember::new_member(pubkey);
+        self.add_members(vec![member].into_iter());
     }
 
     pub fn admin_pubkeys(&self) -> Vec<PublicKey> {
@@ -797,7 +812,10 @@ impl Group {
     }
 
     pub fn verify_member_access(&self, pubkey: &PublicKey, event_kind: Kind) -> Result<(), Error> {
-        if event_kind != KIND_GROUP_USER_JOIN_REQUEST_9021 && !self.is_member(pubkey) {
+        if event_kind != KIND_GROUP_USER_JOIN_REQUEST_9021
+            && self.metadata.closed
+            && !self.is_member(pubkey)
+        {
             return Err(Error::restricted(format!(
                 "User {} is not a member of this group",
                 pubkey
@@ -1118,7 +1136,7 @@ mod tests {
         let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, tags).await;
 
         assert!(group
-            .add_members(&add_event, &admin_keys.public_key())
+            .add_members_from_event(&add_event, &admin_keys.public_key())
             .is_ok());
         assert!(group.is_member(&member_keys.public_key()));
         assert!(!group.is_admin(&member_keys.public_key()));
@@ -1133,7 +1151,7 @@ mod tests {
         let add_tags = vec![Tag::public_key(member_keys.public_key())];
         let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
         group
-            .add_members(&add_event, &admin_keys.public_key())
+            .add_members_from_event(&add_event, &admin_keys.public_key())
             .unwrap();
 
         // Then remove them
@@ -1212,7 +1230,7 @@ mod tests {
         let add_tags = vec![Tag::public_key(member_keys.public_key())];
         let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
         group
-            .add_members(&add_event, &admin_keys.public_key())
+            .add_members_from_event(&add_event, &admin_keys.public_key())
             .unwrap();
 
         // Test leave request
@@ -1232,7 +1250,7 @@ mod tests {
         let add_tags = vec![Tag::public_key(member_keys.public_key())];
         let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
         group
-            .add_members(&add_event, &admin_keys.public_key())
+            .add_members_from_event(&add_event, &admin_keys.public_key())
             .unwrap();
 
         // Create a test event
@@ -1300,7 +1318,7 @@ mod tests {
             create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
 
         group
-            .add_members(&add_admin_event, &admin_keys.public_key())
+            .add_members_from_event(&add_admin_event, &admin_keys.public_key())
             .unwrap();
         assert!(group.is_admin(&member_keys.public_key()));
 
