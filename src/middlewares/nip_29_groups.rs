@@ -170,7 +170,7 @@ impl Nip29Middleware {
 
             k if !NON_GROUP_ALLOWED_KINDS.contains(&k) => {
                 let group = match self.groups.find_group_from_event(event) {
-                    None => return Err(Error::notice("Group not found")),
+                    None => return Err(Error::notice("Group not found for this group content")),
                     Some(group) => group,
                 };
 
@@ -395,7 +395,34 @@ mod tests {
         // Should return an error because group doesn't exist
         let result = middleware.handle_event(&event, &None).await;
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "Group not found");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Group not found for this group content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_allowed_non_group_content_event_without_group() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups, admin_keys.public_key());
+
+        // Create a content event for a non-existent group
+        let event = create_test_event(
+            &member_keys,
+            10009, // This event doesn't need an 'h' tag
+            vec![],
+        )
+        .await;
+
+        // Should not return an error because group is not needed here
+        let result = middleware.handle_event(&event, &None).await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
