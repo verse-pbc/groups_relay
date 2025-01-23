@@ -41,7 +41,7 @@ impl Nip42Auth {
         }
 
         let now = Timestamp::now();
-        if (now.as_u64() - event.created_at.as_u64()) > MAX_AUTH_EVENT_AGE {
+        if now.as_u64().saturating_sub(event.created_at.as_u64()) > MAX_AUTH_EVENT_AGE {
             warn!(
                 "Event is too old. Now is: {}, event created at: {}",
                 now.to_human_datetime(),
@@ -192,7 +192,8 @@ mod tests {
             )))
             .tag(Tag::from_standardized(TagStandard::Relay(local_url)))
             .custom_created_at(Timestamp::from(0))
-            .build_with_ctx(&Instant::now(), keys.public_key());
+            .build(keys.public_key());
+
         let event = keys.sign_event(unsigned_event).await.unwrap();
 
         // Verify event signature
