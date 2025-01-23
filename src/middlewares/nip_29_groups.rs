@@ -1,6 +1,6 @@
 use crate::error::Error;
 use crate::groups::group::{
-    ADDRESSABLE_EVENT_KINDS, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER_9000, KIND_GROUP_CREATE_9007,
+    ADDRESSABLE_EVENT_KINDS, KIND_GROUP_ADD_USER_9000, KIND_GROUP_CREATE_9007,
     KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_DELETE_9008, KIND_GROUP_DELETE_EVENT_9005,
     KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006,
     KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022, NON_GROUP_ALLOWED_KINDS,
@@ -174,40 +174,36 @@ impl Nip29Middleware {
                     .find_group_from_event_mut(event)?
                     .ok_or(Error::notice("Group not found for this group content"))?;
 
-                if GROUP_CONTENT_KINDS.contains(&k) {
-                    let is_member = group.is_member(&event.pubkey);
-                    let mut events_to_save = vec![StoreCommand::SaveSignedEvent(event.clone())];
+                let is_member = group.is_member(&event.pubkey);
+                let mut events_to_save = vec![StoreCommand::SaveSignedEvent(event.clone())];
 
-                    // For private and closed groups, only members can post
-                    if group.metadata.private && group.metadata.closed && !is_member {
-                        return Err(Error::notice("User is not a member of this group"));
-                    }
-
-                    // Open groups auto-join the author when posting
-                    if !group.metadata.closed {
-                        // For open groups, non-members are automatically added
-                        if !is_member {
-                            group.add_pubkey(event.pubkey);
-
-                            let put_user_event = group.generate_put_user_event(&event.pubkey);
-                            let members_event = group.generate_members_event();
-
-                            events_to_save.push(StoreCommand::SaveUnsignedEvent(
-                                put_user_event.build(self.relay_pubkey),
-                            ));
-                            events_to_save.push(StoreCommand::SaveUnsignedEvent(
-                                members_event.build(self.relay_pubkey),
-                            ));
-                        }
-                    } else if !is_member {
-                        // For closed groups, non-members can't post
-                        return Err(Error::notice("User is not a member of this group"));
-                    }
-
-                    events_to_save
-                } else {
-                    return Err(Error::notice("Event kind not supported by this group"));
+                // For private and closed groups, only members can post
+                if group.metadata.private && group.metadata.closed && !is_member {
+                    return Err(Error::notice("User is not a member of this group"));
                 }
+
+                // Open groups auto-join the author when posting
+                if !group.metadata.closed {
+                    // For open groups, non-members are automatically added
+                    if !is_member {
+                        group.add_pubkey(event.pubkey);
+
+                        let put_user_event = group.generate_put_user_event(&event.pubkey);
+                        let members_event = group.generate_members_event();
+
+                        events_to_save.push(StoreCommand::SaveUnsignedEvent(
+                            put_user_event.build(self.relay_pubkey),
+                        ));
+                        events_to_save.push(StoreCommand::SaveUnsignedEvent(
+                            members_event.build(self.relay_pubkey),
+                        ));
+                    }
+                } else if !is_member {
+                    // For closed groups, non-members can't post
+                    return Err(Error::notice("User is not a member of this group"));
+                }
+
+                events_to_save
             }
 
             _ => {
@@ -707,12 +703,8 @@ mod tests {
         drop(group); // Release the lock
 
         // Post content to the group as non-member
-        let content_event = create_test_event(
-            &member_keys,
-            7, // Use KIND_GROUP_REACTION_7 from GROUP_CONTENT_KINDS
-            vec![Tag::custom(TagKind::h(), [group_id])],
-        )
-        .await;
+        let content_event =
+            create_test_event(&member_keys, 7, vec![Tag::custom(TagKind::h(), [group_id])]).await;
 
         // Handle the event
         let result = middleware.handle_event(&content_event, &None).await;
@@ -781,12 +773,8 @@ mod tests {
         drop(group);
 
         // Try to post content to the group as non-member
-        let content_event = create_test_event(
-            &member_keys,
-            7, // Use KIND_GROUP_REACTION_7 from GROUP_CONTENT_KINDS
-            vec![Tag::custom(TagKind::h(), [group_id])],
-        )
-        .await;
+        let content_event =
+            create_test_event(&member_keys, 7, vec![Tag::custom(TagKind::h(), [group_id])]).await;
 
         // Handle the event - should fail because user is not a member
         let result = middleware.handle_event(&content_event, &None).await;

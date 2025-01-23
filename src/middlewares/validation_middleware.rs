@@ -6,11 +6,10 @@ use tracing::{debug, warn};
 use websocket_builder::{InboundContext, Middleware, SendMessage};
 
 use crate::groups::{
-    ADDRESSABLE_EVENT_KINDS, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER_9000, KIND_GROUP_CREATE_9007,
+    ADDRESSABLE_EVENT_KINDS, KIND_GROUP_ADD_USER_9000, KIND_GROUP_CREATE_9007,
     KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_DELETE_9008, KIND_GROUP_DELETE_EVENT_9005,
     KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006,
-    KIND_GROUP_SIMPLE_LIST_10009, KIND_GROUP_USER_JOIN_REQUEST_9021,
-    KIND_GROUP_USER_LEAVE_REQUEST_9022, NON_GROUP_ALLOWED_KINDS,
+    KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022, NON_GROUP_ALLOWED_KINDS,
 };
 
 #[derive(Debug)]
@@ -24,27 +23,6 @@ impl ValidationMiddleware {
     }
 
     fn validate_event(&self, event: &Event) -> Result<(), &'static str> {
-        // Check if event kind is supported
-        let supported = GROUP_CONTENT_KINDS.contains(&event.kind)
-            || matches!(
-                event.kind,
-                k if k == KIND_GROUP_CREATE_9007
-                    || k == KIND_GROUP_DELETE_9008
-                    || k == KIND_GROUP_ADD_USER_9000
-                    || k == KIND_GROUP_REMOVE_USER_9001
-                    || k == KIND_GROUP_EDIT_METADATA_9002
-                    || k == KIND_GROUP_DELETE_EVENT_9005
-                    || k == KIND_GROUP_SET_ROLES_9006
-                    || k == KIND_GROUP_CREATE_INVITE_9009
-                    || k == KIND_GROUP_USER_JOIN_REQUEST_9021
-                    || k == KIND_GROUP_USER_LEAVE_REQUEST_9022
-                    || k == KIND_GROUP_SIMPLE_LIST_10009
-            );
-
-        if !supported {
-            return Err("invalid: event kind not supported by this relay");
-        }
-
         if event.tags.find(TagKind::h()).is_none() && !NON_GROUP_ALLOWED_KINDS.contains(&event.kind)
         {
             return Err("invalid: group events must contain an 'h' tag");
@@ -78,7 +56,7 @@ impl ValidationMiddleware {
         // Check if kinds are supported (if specified)
         let has_valid_kinds = if let Some(kinds) = &filter.kinds {
             kinds.iter().all(|kind| {
-                GROUP_CONTENT_KINDS.contains(kind)
+                NON_GROUP_ALLOWED_KINDS.contains(kind)
                     || matches!(
                         kind,
                         k if *k == KIND_GROUP_CREATE_9007
@@ -171,24 +149,24 @@ mod tests {
         // Test valid event with supported kind and h tag
         let event = create_test_event(
             &keys,
-            GROUP_CONTENT_KINDS[0],
+            Kind::Custom(9),
             vec![Tag::custom(TagKind::h(), ["test_group"])],
         )
         .await;
         assert!(middleware.validate_event(&event).is_ok());
 
-        // Test event with supported kind but no h tag
-        let event = create_test_event(&keys, GROUP_CONTENT_KINDS[0], vec![]).await;
+        // Test event with no h tag
+        let event = create_test_event(&keys, Kind::Custom(9), vec![]).await;
         assert!(middleware.validate_event(&event).is_err());
 
-        // Test event with unsupported kind but h tag
+        // Test event with h tag
         let event = create_test_event(
             &keys,
             Kind::Custom(65000),
             vec![Tag::custom(TagKind::h(), ["test_group"])],
         )
         .await;
-        assert!(middleware.validate_event(&event).is_err());
+        assert!(middleware.validate_event(&event).is_ok());
     }
 
     #[test]
@@ -214,13 +192,13 @@ mod tests {
             .insert(SingleLetterTag::lowercase(Alphabet::D), tag_set);
         assert!(middleware.validate_filter(&filter, None).is_ok());
 
-        // Test filter with supported kinds
-        let filter = Filter::new().kinds(vec![GROUP_CONTENT_KINDS[0]]);
-        assert!(middleware.validate_filter(&filter, None).is_ok());
-
         // Test filter with unsupported kinds
         let filter = Filter::new().kinds(vec![Kind::Custom(65000)]);
         assert!(middleware.validate_filter(&filter, None).is_err());
+
+        // Test filter with non group supported tag
+        let filter = Filter::new().kinds(vec![Kind::Custom(10009)]);
+        assert!(middleware.validate_filter(&filter, None).is_ok());
 
         // Test filter with no tags and no kinds
         let filter = Filter::new();

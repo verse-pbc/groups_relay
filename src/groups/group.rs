@@ -48,18 +48,9 @@ pub const ADDRESSABLE_EVENT_KINDS: [Kind; 4] = [
     KIND_GROUP_ROLES_39003,
 ];
 
-pub const GROUP_CONTENT_KINDS: [Kind; 6] = [
-    KIND_GROUP_REACTION_7,
-    KIND_GROUP_CHAT_9,
-    KIND_GROUP_NOTE_10,
-    KIND_GROUP_NOTE_ALT_11,
-    KIND_GROUP_REPLY_12,
-    KIND_GROUP_GENERIC_REPLY_1111,
-];
-
 pub const NON_GROUP_ALLOWED_KINDS: [Kind; 1] = [KIND_GROUP_SIMPLE_LIST_10009];
 
-pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 16] = [
+pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 10] = [
     KIND_GROUP_CREATE_9007,
     KIND_GROUP_ADD_USER_9000,
     KIND_GROUP_REMOVE_USER_9001,
@@ -69,12 +60,6 @@ pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 16] = [
     KIND_GROUP_CREATE_INVITE_9009,
     KIND_GROUP_USER_JOIN_REQUEST_9021,
     KIND_GROUP_USER_LEAVE_REQUEST_9022,
-    KIND_GROUP_REACTION_7,
-    KIND_GROUP_CHAT_9,
-    KIND_GROUP_NOTE_10,
-    KIND_GROUP_NOTE_ALT_11,
-    KIND_GROUP_REPLY_12,
-    KIND_GROUP_GENERIC_REPLY_1111,
     KIND_GROUP_SIMPLE_LIST_10009,
 ];
 
@@ -1341,7 +1326,7 @@ mod tests {
         // Create a test event to delete
         let event_to_delete = create_test_event(
             &member_keys,
-            GROUP_CONTENT_KINDS[0],
+            Kind::Custom(9),
             vec![Tag::custom(TagKind::h(), [group.id.clone()])],
         )
         .await;
@@ -1431,7 +1416,7 @@ mod tests {
         // Test: Wrong event kind is rejected
         let delete_request = create_test_event(
             &admin_keys,
-            GROUP_CONTENT_KINDS[0],
+            Kind::Custom(9),
             vec![
                 Tag::custom(TagKind::h(), [group.id.clone()]),
                 Tag::event(event_to_delete.id),
