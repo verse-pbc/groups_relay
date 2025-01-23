@@ -1,4 +1,3 @@
-use crate::error::Error;
 use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -10,7 +9,7 @@ use crate::groups::{
     ADDRESSABLE_EVENT_KINDS, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER_9000, KIND_GROUP_CREATE_9007,
     KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_DELETE_9008, KIND_GROUP_DELETE_EVENT_9005,
     KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006,
-    KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022,
+    KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022, NON_GROUP_ALLOWED_KINDS,
 };
 
 #[derive(Debug)]
@@ -44,7 +43,8 @@ impl ValidationMiddleware {
             return Err("invalid: event kind not supported by this relay");
         }
 
-        if event.tags.find(TagKind::h()).is_none() {
+        if event.tags.find(TagKind::h()).is_none() && !NON_GROUP_ALLOWED_KINDS.contains(&event.kind)
+        {
             return Err("invalid: group events must contain an 'h' tag");
         }
 
@@ -68,6 +68,7 @@ impl ValidationMiddleware {
         let has_h_tag = filter
             .generic_tags
             .contains_key(&SingleLetterTag::lowercase(Alphabet::H));
+
         let has_d_tag = filter
             .generic_tags
             .contains_key(&SingleLetterTag::lowercase(Alphabet::D));
