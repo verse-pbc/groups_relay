@@ -3,7 +3,7 @@ use crate::groups::group::{
     ADDRESSABLE_EVENT_KINDS, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER_9000, KIND_GROUP_CREATE_9007,
     KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_DELETE_9008, KIND_GROUP_DELETE_EVENT_9005,
     KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006,
-    KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022,
+    KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022, NON_GROUP_ALLOWED_KINDS,
 };
 use crate::nostr_session_state::NostrConnectionState;
 use crate::Groups;
@@ -168,7 +168,7 @@ impl Nip29Middleware {
                 vec![StoreCommand::SaveSignedEvent(event.clone())]
             }
 
-            k => {
+            k if !NON_GROUP_ALLOWED_KINDS.contains(&k) => {
                 let group = match self.groups.find_group_from_event(event) {
                     None => return Err(Error::notice("Group not found")),
                     Some(group) => group,
@@ -182,6 +182,11 @@ impl Nip29Middleware {
                 } else {
                     return Err(Error::notice("Event kind not supported by this group"));
                 }
+            }
+
+            _ => {
+                // We always save allowed non-group events
+                vec![StoreCommand::SaveSignedEvent(event.clone())]
             }
         };
 
