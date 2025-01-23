@@ -39,7 +39,8 @@ pub const KIND_GROUP_NOTE_10: Kind = Kind::Custom(10); // Group Note (NIP-29): R
 pub const KIND_GROUP_NOTE_ALT_11: Kind = Kind::Custom(11); // Group Note Alternative (NIP-29): Alternative note format
 pub const KIND_GROUP_REPLY_12: Kind = Kind::Custom(12); // Group Reply (NIP-29): Replies to group messages
 pub const KIND_GROUP_GENERIC_REPLY_1111: Kind = Kind::Custom(1111); // Generic Reply: General-purpose reply messages
-pub const KIND_GROUP_SIMPLE_LIST_10009: Kind = Kind::Custom(10009); // Simple Groups (NIP-51): List of groups a user wants to remember being in
+pub const KIND_SIMPLE_LIST_10009: Kind = Kind::Custom(10009); // Simple Groups (NIP-51): List of groups a user wants to remember being in
+pub const KIND_CLAIM_28934: Kind = Kind::Custom(28934); // Claim (NIP-43): Claim auth
 
 pub const ADDRESSABLE_EVENT_KINDS: [Kind; 4] = [
     KIND_GROUP_METADATA_39000,
@@ -48,7 +49,7 @@ pub const ADDRESSABLE_EVENT_KINDS: [Kind; 4] = [
     KIND_GROUP_ROLES_39003,
 ];
 
-pub const NON_GROUP_ALLOWED_KINDS: [Kind; 1] = [KIND_GROUP_SIMPLE_LIST_10009];
+pub const NON_GROUP_ALLOWED_KINDS: [Kind; 2] = [KIND_SIMPLE_LIST_10009, KIND_CLAIM_28934];
 
 pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 10] = [
     KIND_GROUP_CREATE_9007,
@@ -60,7 +61,7 @@ pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 10] = [
     KIND_GROUP_CREATE_INVITE_9009,
     KIND_GROUP_USER_JOIN_REQUEST_9021,
     KIND_GROUP_USER_LEAVE_REQUEST_9022,
-    KIND_GROUP_SIMPLE_LIST_10009,
+    KIND_SIMPLE_LIST_10009,
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
