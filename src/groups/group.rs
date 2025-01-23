@@ -40,16 +40,17 @@ pub const ADDRESSABLE_EVENT_KINDS: [Kind; 4] = [
 ];
 
 // Regular content kinds allowed in groups
-pub const GROUP_CONTENT_KINDS: [Kind; 6] = [
+pub const GROUP_CONTENT_KINDS: [Kind; 7] = [
     Kind::Custom(7),
     Kind::Custom(9),
     Kind::Custom(10),
     Kind::Custom(11),
     Kind::Custom(12),
+    Kind::Custom(1111),
     Kind::Custom(10010),
 ];
 
-pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 15] = [
+pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 16] = [
     KIND_GROUP_CREATE,
     KIND_GROUP_ADD_USER,
     KIND_GROUP_REMOVE_USER,
@@ -64,6 +65,7 @@ pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 15] = [
     Kind::Custom(10),
     Kind::Custom(11),
     Kind::Custom(12),
+    Kind::Custom(1111),
     Kind::Custom(10010),
 ];
 
