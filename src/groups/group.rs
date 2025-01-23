@@ -11,62 +11,70 @@ use strum::IntoEnumIterator;
 use tracing::{debug, error, info, warn};
 
 // Group Creation and Management
-pub const KIND_GROUP_CREATE: Kind = Kind::Custom(9007); // Admin/Relay -> Relay: Create a new group
-pub const KIND_GROUP_DELETE: Kind = Kind::Custom(9008); // Admin/Relay -> Relay: Delete an existing group
+pub const KIND_GROUP_CREATE_9007: Kind = Kind::Custom(9007); // Admin/Relay -> Relay: Create a new group
+pub const KIND_GROUP_DELETE_9008: Kind = Kind::Custom(9008); // Admin/Relay -> Relay: Delete an existing group
 
 // Admin/Moderation Actions (9000-9005)
-pub const KIND_GROUP_ADD_USER: Kind = Kind::Custom(9000); // Admin/Relay -> Relay: Add user to group
-pub const KIND_GROUP_REMOVE_USER: Kind = Kind::Custom(9001); // Admin/Relay -> Relay: Remove user from group
-pub const KIND_GROUP_EDIT_METADATA: Kind = Kind::Custom(9002); // Admin/Relay -> Relay: Edit group metadata
-pub const KIND_GROUP_DELETE_EVENT: Kind = Kind::Custom(9005); // Admin/Relay -> Relay: Delete specific event
-pub const KIND_GROUP_SET_ROLES: Kind = Kind::Custom(9006); // Admin/Relay -> Relay: Set roles for group. This was removed but at least 0xchat uses it
-pub const KIND_GROUP_CREATE_INVITE: Kind = Kind::Custom(9009); // Admin/Relay -> Relay: Create invite for closed group
+pub const KIND_GROUP_ADD_USER_9000: Kind = Kind::Custom(9000); // Admin/Relay -> Relay: Add user to group
+pub const KIND_GROUP_REMOVE_USER_9001: Kind = Kind::Custom(9001); // Admin/Relay -> Relay: Remove user from group
+pub const KIND_GROUP_EDIT_METADATA_9002: Kind = Kind::Custom(9002); // Admin/Relay -> Relay: Edit group metadata
+pub const KIND_GROUP_DELETE_EVENT_9005: Kind = Kind::Custom(9005); // Admin/Relay -> Relay: Delete specific event
+pub const KIND_GROUP_SET_ROLES_9006: Kind = Kind::Custom(9006); // Admin/Relay -> Relay: Set roles for group. This was removed but at least 0xchat uses it
+pub const KIND_GROUP_CREATE_INVITE_9009: Kind = Kind::Custom(9009); // Admin/Relay -> Relay: Create invite for closed group
 
 // User Actions (9021-9022)
-pub const KIND_GROUP_USER_JOIN_REQUEST: Kind = Kind::Custom(9021); // User -> Relay: Request to join group
-pub const KIND_GROUP_USER_LEAVE_REQUEST: Kind = Kind::Custom(9022); // User -> Relay: Request to leave group
+pub const KIND_GROUP_USER_JOIN_REQUEST_9021: Kind = Kind::Custom(9021); // User -> Relay: Request to join group
+pub const KIND_GROUP_USER_LEAVE_REQUEST_9022: Kind = Kind::Custom(9022); // User -> Relay: Request to leave group
 
 // Relay-Generated Events (39000-39003)
-pub const KIND_GROUP_METADATA: Kind = Kind::Custom(39000); // Relay -> All: Group metadata
-pub const KIND_GROUP_ADMINS: Kind = Kind::Custom(39001); // Relay -> All: List of group admins
-pub const KIND_GROUP_MEMBERS: Kind = Kind::Custom(39002); // Relay -> All: List of group members
-pub const KIND_GROUP_ROLES: Kind = Kind::Custom(39003); // Relay -> All: Supported roles in group
+pub const KIND_GROUP_METADATA_39000: Kind = Kind::Custom(39000); // Relay -> All: Group metadata
+pub const KIND_GROUP_ADMINS_39001: Kind = Kind::Custom(39001); // Relay -> All: List of group admins
+pub const KIND_GROUP_MEMBERS_39002: Kind = Kind::Custom(39002); // Relay -> All: List of group members
+pub const KIND_GROUP_ROLES_39003: Kind = Kind::Custom(39003); // Relay -> All: Supported roles in group
+
+// Group Content Kinds
+pub const KIND_GROUP_REACTION_7: Kind = Kind::Custom(7); // Reaction (NIP-25): Used for reactions to messages in groups
+pub const KIND_GROUP_CHAT_9: Kind = Kind::Custom(9); // Group Chat (NIP-29): General group chat messages
+pub const KIND_GROUP_NOTE_10: Kind = Kind::Custom(10); // Group Note (NIP-29): Regular notes in group context
+pub const KIND_GROUP_NOTE_ALT_11: Kind = Kind::Custom(11); // Group Note Alternative (NIP-29): Alternative note format
+pub const KIND_GROUP_REPLY_12: Kind = Kind::Custom(12); // Group Reply (NIP-29): Replies to group messages
+pub const KIND_GROUP_GENERIC_REPLY_1111: Kind = Kind::Custom(1111); // Generic Reply: General-purpose reply messages
+pub const KIND_GROUP_SIMPLE_LIST_10009: Kind = Kind::Custom(10009); // Simple Groups (NIP-51): List of groups a user wants to remember being in
 
 pub const ADDRESSABLE_EVENT_KINDS: [Kind; 4] = [
-    KIND_GROUP_METADATA,
-    KIND_GROUP_ADMINS,
-    KIND_GROUP_MEMBERS,
-    KIND_GROUP_ROLES,
+    KIND_GROUP_METADATA_39000,
+    KIND_GROUP_ADMINS_39001,
+    KIND_GROUP_MEMBERS_39002,
+    KIND_GROUP_ROLES_39003,
 ];
 
-// Regular content kinds allowed in groups
 pub const GROUP_CONTENT_KINDS: [Kind; 7] = [
-    Kind::Custom(7),
-    Kind::Custom(9),
-    Kind::Custom(10),
-    Kind::Custom(11),
-    Kind::Custom(12),
-    Kind::Custom(1111),
-    Kind::Custom(10010),
+    KIND_GROUP_REACTION_7,
+    KIND_GROUP_CHAT_9,
+    KIND_GROUP_NOTE_10,
+    KIND_GROUP_NOTE_ALT_11,
+    KIND_GROUP_REPLY_12,
+    KIND_GROUP_GENERIC_REPLY_1111,
+    KIND_GROUP_SIMPLE_LIST_10009,
 ];
 
 pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 16] = [
-    KIND_GROUP_CREATE,
-    KIND_GROUP_ADD_USER,
-    KIND_GROUP_REMOVE_USER,
-    KIND_GROUP_EDIT_METADATA,
-    KIND_GROUP_DELETE_EVENT,
-    KIND_GROUP_SET_ROLES,
-    KIND_GROUP_CREATE_INVITE,
-    KIND_GROUP_USER_JOIN_REQUEST,
-    KIND_GROUP_USER_LEAVE_REQUEST,
-    Kind::Custom(7),
-    Kind::Custom(9),
-    Kind::Custom(10),
-    Kind::Custom(11),
-    Kind::Custom(12),
-    Kind::Custom(1111),
-    Kind::Custom(10010),
+    KIND_GROUP_CREATE_9007,
+    KIND_GROUP_ADD_USER_9000,
+    KIND_GROUP_REMOVE_USER_9001,
+    KIND_GROUP_EDIT_METADATA_9002,
+    KIND_GROUP_DELETE_EVENT_9005,
+    KIND_GROUP_SET_ROLES_9006,
+    KIND_GROUP_CREATE_INVITE_9009,
+    KIND_GROUP_USER_JOIN_REQUEST_9021,
+    KIND_GROUP_USER_LEAVE_REQUEST_9022,
+    KIND_GROUP_REACTION_7,
+    KIND_GROUP_CHAT_9,
+    KIND_GROUP_NOTE_10,
+    KIND_GROUP_NOTE_ALT_11,
+    KIND_GROUP_REPLY_12,
+    KIND_GROUP_GENERIC_REPLY_1111,
+    KIND_GROUP_SIMPLE_LIST_10009,
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -373,7 +381,7 @@ impl Group {
         relay_pubkey: &PublicKey,
         authed_pubkey: &Option<PublicKey>,
     ) -> Result<Vec<StoreCommand>, Error> {
-        if delete_group_request_event.kind != KIND_GROUP_DELETE {
+        if delete_group_request_event.kind != KIND_GROUP_DELETE_9008 {
             return Err(Error::notice("Invalid event kind for delete group"));
         }
 
@@ -407,7 +415,7 @@ impl Group {
         relay_pubkey: &PublicKey,
         authed_pubkey: &Option<PublicKey>,
     ) -> Result<Vec<StoreCommand>, Error> {
-        if delete_request_event.kind != KIND_GROUP_DELETE_EVENT {
+        if delete_request_event.kind != KIND_GROUP_DELETE_EVENT_9005 {
             return Err(Error::notice("Invalid event kind for delete event"));
         }
 
@@ -493,9 +501,9 @@ impl Group {
     }
 
     pub fn set_metadata(&mut self, event: &Event, relay_pubkey: &PublicKey) -> Result<(), Error> {
-        if event.kind != KIND_GROUP_METADATA
-            && event.kind != KIND_GROUP_CREATE
-            && event.kind != KIND_GROUP_EDIT_METADATA
+        if event.kind != KIND_GROUP_METADATA_39000
+            && event.kind != KIND_GROUP_CREATE_9007
+            && event.kind != KIND_GROUP_EDIT_METADATA_9002
         {
             return Err(Error::notice(format!(
                 "Invalid event kind for group metadata {}",
@@ -561,7 +569,7 @@ impl Group {
     }
 
     pub fn join_request(&mut self, event: &Event) -> Result<bool, Error> {
-        if event.kind != KIND_GROUP_USER_JOIN_REQUEST {
+        if event.kind != KIND_GROUP_USER_JOIN_REQUEST_9021 {
             return Err(Error::notice(format!(
                 "Invalid event kind for join request {}",
                 event.kind
@@ -619,7 +627,7 @@ impl Group {
         event: &Event,
         relay_pubkey: &PublicKey,
     ) -> Result<bool, Error> {
-        if event.kind != KIND_GROUP_CREATE_INVITE {
+        if event.kind != KIND_GROUP_CREATE_INVITE_9009 {
             return Err(Error::notice(format!(
                 "Invalid event kind for create invite {}",
                 event.kind
@@ -644,7 +652,7 @@ impl Group {
     }
 
     pub fn leave_request(&mut self, event: &Event) -> Result<bool, Error> {
-        if event.kind != KIND_GROUP_USER_LEAVE_REQUEST {
+        if event.kind != KIND_GROUP_USER_LEAVE_REQUEST_9022 {
             return Err(Error::notice(format!(
                 "Invalid event kind for leave request {}",
                 event.kind
@@ -788,7 +796,7 @@ impl Group {
     }
 
     pub fn verify_member_access(&self, pubkey: &PublicKey, event_kind: Kind) -> Result<(), Error> {
-        if event_kind != KIND_GROUP_USER_JOIN_REQUEST && !self.is_member(pubkey) {
+        if event_kind != KIND_GROUP_USER_JOIN_REQUEST_9021 && !self.is_member(pubkey) {
             return Err(Error::restricted(format!(
                 "User {} is not a member of this group",
                 pubkey
@@ -801,7 +809,7 @@ impl Group {
 // Event generation based on current state
 impl Group {
     pub fn generate_put_user_event(&self, pubkey: &PublicKey) -> EventBuilder {
-        EventBuilder::new(KIND_GROUP_ADD_USER, "")
+        EventBuilder::new(KIND_GROUP_ADD_USER_9000, "")
             .tag(Tag::custom(
                 TagKind::p(),
                 [
@@ -827,7 +835,7 @@ impl Group {
             "open"
         };
 
-        let mut metadata_event = EventBuilder::new(KIND_GROUP_METADATA, "")
+        let mut metadata_event = EventBuilder::new(KIND_GROUP_METADATA_39000, "")
             .tag(Tag::identifier(self.id.clone()))
             .tag(Tag::custom(TagKind::Name, [self.metadata.name.clone()]))
             .tag(Tag::custom(TagKind::custom(access), &[] as &[String]))
@@ -865,7 +873,7 @@ impl Group {
             tags.push(tag);
         }
 
-        EventBuilder::new(KIND_GROUP_ADMINS, "").tags(tags)
+        EventBuilder::new(KIND_GROUP_ADMINS_39001, "").tags(tags)
     }
 
     pub fn generate_members_event(&self) -> EventBuilder {
@@ -878,7 +886,7 @@ impl Group {
             tags.push(Tag::public_key(*pubkey));
         }
 
-        EventBuilder::new(KIND_GROUP_MEMBERS, "").tags(tags)
+        EventBuilder::new(KIND_GROUP_MEMBERS_39002, "").tags(tags)
     }
 
     pub fn generate_roles_event(&self) -> EventBuilder {
@@ -901,7 +909,7 @@ impl Group {
 
         let content = "List of roles supported by this group".to_string();
 
-        EventBuilder::new(KIND_GROUP_ROLES, &content).tags(tags)
+        EventBuilder::new(KIND_GROUP_ROLES_39003, &content).tags(tags)
     }
 }
 
@@ -1040,7 +1048,7 @@ impl Group {
         }
 
         // Members can see everything except invites
-        if self.is_member(authed_pubkey) && event.kind != KIND_GROUP_CREATE_INVITE {
+        if self.is_member(authed_pubkey) && event.kind != KIND_GROUP_CREATE_INVITE_9009 {
             debug!(
                 "User {} is a member, can see event {}, kind {}",
                 authed_pubkey, event.id, event.kind
@@ -1083,7 +1091,7 @@ mod tests {
     async fn create_test_group(admin_keys: &Keys) -> (Group, String) {
         let group_id = "test_group_123".to_string();
         let tags = vec![Tag::custom(TagKind::h(), [group_id.clone()])];
-        let event = create_test_event(admin_keys, KIND_GROUP_CREATE, tags).await;
+        let event = create_test_event(admin_keys, KIND_GROUP_CREATE_9007, tags).await;
 
         let group = Group::new(&event).unwrap();
         (group, group_id)
@@ -1106,7 +1114,7 @@ mod tests {
         let (mut group, _) = create_test_group(&admin_keys).await;
 
         let tags = vec![Tag::public_key(member_keys.public_key())];
-        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, tags).await;
+        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, tags).await;
 
         assert!(group
             .add_members(&add_event, &admin_keys.public_key())
@@ -1122,7 +1130,7 @@ mod tests {
 
         // First add a member
         let add_tags = vec![Tag::public_key(member_keys.public_key())];
-        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, add_tags).await;
+        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
         group
             .add_members(&add_event, &admin_keys.public_key())
             .unwrap();
@@ -1130,7 +1138,7 @@ mod tests {
         // Then remove them
         let remove_tags = vec![Tag::public_key(member_keys.public_key())];
         let remove_event =
-            create_test_event(&admin_keys, KIND_GROUP_REMOVE_USER, remove_tags).await;
+            create_test_event(&admin_keys, KIND_GROUP_REMOVE_USER_9001, remove_tags).await;
 
         assert!(group
             .remove_members(&remove_event, &admin_keys.public_key())
@@ -1149,7 +1157,8 @@ mod tests {
             Tag::custom(TagKind::custom("picture"), ["picture_url"]),
             Tag::custom(TagKind::custom("public"), &[] as &[String]),
         ];
-        let metadata_event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA, tags).await;
+        let metadata_event =
+            create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
 
         assert!(group
             .set_metadata(&metadata_event, &admin_keys.public_key())
@@ -1169,7 +1178,7 @@ mod tests {
         let invite_code = "test_invite_123";
         let create_tags = vec![Tag::custom(TagKind::custom("code"), [invite_code])];
         let create_invite_event =
-            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE, create_tags).await;
+            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, create_tags).await;
 
         assert!(group
             .create_invite(&create_invite_event, &admin_keys.public_key())
@@ -1179,7 +1188,7 @@ mod tests {
         // Use invite
         let join_tags = vec![Tag::custom(TagKind::custom("code"), [invite_code])];
         let join_event =
-            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST, join_tags).await;
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
 
         assert!(group.join_request(&join_event).unwrap());
         assert!(group.is_member(&member_keys.public_key()));
@@ -1193,21 +1202,21 @@ mod tests {
 
         // Test join request
         let join_event =
-            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST, vec![]).await;
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, vec![]).await;
 
         assert!(!group.join_request(&join_event).unwrap());
         assert!(group.join_requests.contains(&member_keys.public_key()));
 
         // Add member manually
         let add_tags = vec![Tag::public_key(member_keys.public_key())];
-        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, add_tags).await;
+        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
         group
             .add_members(&add_event, &admin_keys.public_key())
             .unwrap();
 
         // Test leave request
         let leave_event =
-            create_test_event(&member_keys, KIND_GROUP_USER_LEAVE_REQUEST, vec![]).await;
+            create_test_event(&member_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, vec![]).await;
 
         assert!(group.leave_request(&leave_event).unwrap());
         assert!(!group.is_member(&member_keys.public_key()));
@@ -1220,7 +1229,7 @@ mod tests {
 
         // Add a member
         let add_tags = vec![Tag::public_key(member_keys.public_key())];
-        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, add_tags).await;
+        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
         group
             .add_members(&add_event, &admin_keys.public_key())
             .unwrap();
@@ -1259,7 +1268,7 @@ mod tests {
         // Make group public and test again
         let public_tags = vec![Tag::custom(TagKind::custom("public"), &[] as &[String])];
         let public_event =
-            create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA, public_tags).await;
+            create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, public_tags).await;
         group
             .set_metadata(&public_event, &admin_keys.public_key())
             .unwrap();
@@ -1286,7 +1295,8 @@ mod tests {
             TagKind::p(),
             [member_keys.public_key().to_string(), "Admin".to_string()],
         )];
-        let add_admin_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, add_tags).await;
+        let add_admin_event =
+            create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
 
         group
             .add_members(&add_admin_event, &admin_keys.public_key())
@@ -1296,7 +1306,7 @@ mod tests {
         // Test admin permissions
         let metadata_tags = vec![Tag::custom(TagKind::Name, ["New Name"])];
         let metadata_event =
-            create_test_event(&member_keys, KIND_GROUP_EDIT_METADATA, metadata_tags).await;
+            create_test_event(&member_keys, KIND_GROUP_EDIT_METADATA_9002, metadata_tags).await;
 
         assert!(group
             .set_metadata(&metadata_event, &admin_keys.public_key())
@@ -1320,7 +1330,7 @@ mod tests {
         // Test: Non-member cannot delete events
         let delete_request = create_test_event(
             &non_member_keys,
-            KIND_GROUP_DELETE_EVENT,
+            KIND_GROUP_DELETE_EVENT_9005,
             vec![
                 Tag::custom(TagKind::h(), [group.id.clone()]),
                 Tag::event(event_to_delete.id),
@@ -1338,7 +1348,7 @@ mod tests {
         // Test: Member (non-admin) cannot delete events
         let delete_request = create_test_event(
             &member_keys,
-            KIND_GROUP_DELETE_EVENT,
+            KIND_GROUP_DELETE_EVENT_9005,
             vec![
                 Tag::custom(TagKind::h(), [group.id.clone()]),
                 Tag::event(event_to_delete.id),
@@ -1356,7 +1366,7 @@ mod tests {
         // Test: Admin can delete events
         let delete_request = create_test_event(
             &admin_keys,
-            KIND_GROUP_DELETE_EVENT,
+            KIND_GROUP_DELETE_EVENT_9005,
             vec![
                 Tag::custom(TagKind::h(), [group.id.clone()]),
                 Tag::event(event_to_delete.id),
@@ -1387,7 +1397,7 @@ mod tests {
         // Test: Relay can delete events
         let delete_request = create_test_event(
             &non_member_keys,
-            KIND_GROUP_DELETE_EVENT,
+            KIND_GROUP_DELETE_EVENT_9005,
             vec![
                 Tag::custom(TagKind::h(), [group.id.clone()]),
                 Tag::event(event_to_delete.id),
@@ -1420,7 +1430,7 @@ mod tests {
         // Test: Unauthenticated request is rejected
         let delete_request = create_test_event(
             &admin_keys,
-            KIND_GROUP_DELETE_EVENT,
+            KIND_GROUP_DELETE_EVENT_9005,
             vec![
                 Tag::custom(TagKind::h(), [group.id.clone()]),
                 Tag::event(event_to_delete.id),

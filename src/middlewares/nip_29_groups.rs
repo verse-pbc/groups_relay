@@ -1,11 +1,12 @@
 use crate::error::Error;
-use crate::groups::{
-    Groups, ADDRESSABLE_EVENT_KINDS, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER, KIND_GROUP_CREATE,
-    KIND_GROUP_CREATE_INVITE, KIND_GROUP_DELETE, KIND_GROUP_DELETE_EVENT, KIND_GROUP_EDIT_METADATA,
-    KIND_GROUP_REMOVE_USER, KIND_GROUP_SET_ROLES, KIND_GROUP_USER_JOIN_REQUEST,
-    KIND_GROUP_USER_LEAVE_REQUEST,
+use crate::groups::group::{
+    ADDRESSABLE_EVENT_KINDS, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER_9000, KIND_GROUP_CREATE_9007,
+    KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_DELETE_9008, KIND_GROUP_DELETE_EVENT_9005,
+    KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006,
+    KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022,
 };
 use crate::nostr_session_state::NostrConnectionState;
+use crate::Groups;
 use crate::StoreCommand;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -32,7 +33,7 @@ impl Nip29Middleware {
         event: &Event,
         authed_pubkey: &Option<PublicKey>,
     ) -> Result<Option<Vec<StoreCommand>>, Error> {
-        if event.kind == KIND_GROUP_CREATE {
+        if event.kind == KIND_GROUP_CREATE_9007 {
             let group = self.groups.handle_group_create(event).await?;
 
             let metadata_event = group.generate_metadata_event();
@@ -52,7 +53,7 @@ impl Nip29Middleware {
         }
 
         let events_to_save = match event.kind {
-            k if k == KIND_GROUP_EDIT_METADATA => {
+            k if k == KIND_GROUP_EDIT_METADATA_9002 => {
                 self.groups.handle_edit_metadata(event)?;
                 let Some(group) = self.groups.find_group_from_event(event) else {
                     return Ok(None);
@@ -64,7 +65,7 @@ impl Nip29Middleware {
                 ]
             }
 
-            k if k == KIND_GROUP_USER_JOIN_REQUEST => {
+            k if k == KIND_GROUP_USER_JOIN_REQUEST_9021 => {
                 let auto_joined = self.groups.handle_join_request(event)?;
                 if auto_joined {
                     let Some(group) = self.groups.find_group_from_event(event) else {
@@ -82,7 +83,7 @@ impl Nip29Middleware {
                 }
             }
 
-            k if k == KIND_GROUP_USER_LEAVE_REQUEST => {
+            k if k == KIND_GROUP_USER_LEAVE_REQUEST_9022 => {
                 if self.groups.handle_leave_request(event)? {
                     let Some(group) = self.groups.find_group_from_event(event) else {
                         return Err(Error::notice("Group not found"));
@@ -97,12 +98,12 @@ impl Nip29Middleware {
                 }
             }
 
-            k if k == KIND_GROUP_SET_ROLES => {
+            k if k == KIND_GROUP_SET_ROLES_9006 => {
                 self.groups.handle_set_roles(event)?;
                 vec![]
             }
 
-            k if k == KIND_GROUP_ADD_USER => {
+            k if k == KIND_GROUP_ADD_USER_9000 => {
                 let added_admins = self.groups.handle_put_user(event)?;
                 let Some(group) = self.groups.find_group_from_event(event) else {
                     return Err(Error::notice("Group not found"));
@@ -121,7 +122,7 @@ impl Nip29Middleware {
                 events
             }
 
-            k if k == KIND_GROUP_REMOVE_USER => {
+            k if k == KIND_GROUP_REMOVE_USER_9001 => {
                 let removed_admins = self.groups.handle_remove_user(event)?;
                 let Some(group) = self.groups.find_group_from_event(event) else {
                     return Err(Error::notice("Group not found"));
@@ -140,7 +141,7 @@ impl Nip29Middleware {
                 events
             }
 
-            k if k == KIND_GROUP_DELETE => {
+            k if k == KIND_GROUP_DELETE_9008 => {
                 let Some(group) = self.groups.find_group_from_event(event) else {
                     return Err(Error::notice("Group not found"));
                 };
@@ -151,7 +152,7 @@ impl Nip29Middleware {
                 }
             }
 
-            k if k == KIND_GROUP_DELETE_EVENT => {
+            k if k == KIND_GROUP_DELETE_EVENT_9005 => {
                 let Some(group) = self.groups.find_group_from_event(event) else {
                     return Err(Error::notice("Group not found"));
                 };
@@ -162,7 +163,7 @@ impl Nip29Middleware {
                 }
             }
 
-            k if k == KIND_GROUP_CREATE_INVITE => {
+            k if k == KIND_GROUP_CREATE_INVITE_9009 => {
                 self.groups.handle_create_invite(event)?;
                 vec![StoreCommand::SaveSignedEvent(event.clone())]
             }

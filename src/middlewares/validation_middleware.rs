@@ -1,3 +1,4 @@
+use crate::error::Error;
 use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -6,10 +7,10 @@ use tracing::{debug, warn};
 use websocket_builder::{InboundContext, Middleware, SendMessage};
 
 use crate::groups::{
-    ADDRESSABLE_EVENT_KINDS, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER, KIND_GROUP_CREATE,
-    KIND_GROUP_CREATE_INVITE, KIND_GROUP_DELETE, KIND_GROUP_DELETE_EVENT, KIND_GROUP_EDIT_METADATA,
-    KIND_GROUP_REMOVE_USER, KIND_GROUP_SET_ROLES, KIND_GROUP_USER_JOIN_REQUEST,
-    KIND_GROUP_USER_LEAVE_REQUEST,
+    ADDRESSABLE_EVENT_KINDS, GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER_9000, KIND_GROUP_CREATE_9007,
+    KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_DELETE_9008, KIND_GROUP_DELETE_EVENT_9005,
+    KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006,
+    KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022,
 };
 
 #[derive(Debug)]
@@ -27,16 +28,16 @@ impl ValidationMiddleware {
         let supported = GROUP_CONTENT_KINDS.contains(&event.kind)
             || matches!(
                 event.kind,
-                k if k == KIND_GROUP_CREATE
-                    || k == KIND_GROUP_DELETE
-                    || k == KIND_GROUP_ADD_USER
-                    || k == KIND_GROUP_REMOVE_USER
-                    || k == KIND_GROUP_EDIT_METADATA
-                    || k == KIND_GROUP_DELETE_EVENT
-                    || k == KIND_GROUP_SET_ROLES
-                    || k == KIND_GROUP_CREATE_INVITE
-                    || k == KIND_GROUP_USER_JOIN_REQUEST
-                    || k == KIND_GROUP_USER_LEAVE_REQUEST
+                k if k == KIND_GROUP_CREATE_9007
+                    || k == KIND_GROUP_DELETE_9008
+                    || k == KIND_GROUP_ADD_USER_9000
+                    || k == KIND_GROUP_REMOVE_USER_9001
+                    || k == KIND_GROUP_EDIT_METADATA_9002
+                    || k == KIND_GROUP_DELETE_EVENT_9005
+                    || k == KIND_GROUP_SET_ROLES_9006
+                    || k == KIND_GROUP_CREATE_INVITE_9009
+                    || k == KIND_GROUP_USER_JOIN_REQUEST_9021
+                    || k == KIND_GROUP_USER_LEAVE_REQUEST_9022
             );
 
         if !supported {
@@ -77,16 +78,16 @@ impl ValidationMiddleware {
                 GROUP_CONTENT_KINDS.contains(kind)
                     || matches!(
                         kind,
-                        k if *k == KIND_GROUP_CREATE
-                            || *k == KIND_GROUP_DELETE
-                            || *k == KIND_GROUP_ADD_USER
-                            || *k == KIND_GROUP_REMOVE_USER
-                            || *k == KIND_GROUP_EDIT_METADATA
-                            || *k == KIND_GROUP_DELETE_EVENT
-                            || *k == KIND_GROUP_SET_ROLES
-                            || *k == KIND_GROUP_CREATE_INVITE
-                            || *k == KIND_GROUP_USER_JOIN_REQUEST
-                            || *k == KIND_GROUP_USER_LEAVE_REQUEST
+                        k if *k == KIND_GROUP_CREATE_9007
+                            || *k == KIND_GROUP_DELETE_9008
+                            || *k == KIND_GROUP_ADD_USER_9000
+                            || *k == KIND_GROUP_REMOVE_USER_9001
+                            || *k == KIND_GROUP_EDIT_METADATA_9002
+                            || *k == KIND_GROUP_DELETE_EVENT_9005
+                            || *k == KIND_GROUP_SET_ROLES_9006
+                            || *k == KIND_GROUP_CREATE_INVITE_9009
+                            || *k == KIND_GROUP_USER_JOIN_REQUEST_9021
+                            || *k == KIND_GROUP_USER_LEAVE_REQUEST_9022
                             || ADDRESSABLE_EVENT_KINDS.contains(k)
                     )
             })

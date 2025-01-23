@@ -9,10 +9,11 @@ use dashmap::{
 };
 pub use group::{
     Group, GroupMember, GroupMetadata, GroupRole, Invite, ADDRESSABLE_EVENT_KINDS,
-    GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER, KIND_GROUP_ADMINS, KIND_GROUP_CREATE,
-    KIND_GROUP_CREATE_INVITE, KIND_GROUP_DELETE, KIND_GROUP_DELETE_EVENT, KIND_GROUP_EDIT_METADATA,
-    KIND_GROUP_MEMBERS, KIND_GROUP_METADATA, KIND_GROUP_REMOVE_USER, KIND_GROUP_SET_ROLES,
-    KIND_GROUP_USER_JOIN_REQUEST, KIND_GROUP_USER_LEAVE_REQUEST,
+    GROUP_CONTENT_KINDS, KIND_GROUP_ADD_USER_9000, KIND_GROUP_ADMINS_39001, KIND_GROUP_CREATE_9007,
+    KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_DELETE_9008, KIND_GROUP_DELETE_EVENT_9005,
+    KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_MEMBERS_39002, KIND_GROUP_METADATA_39000,
+    KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006, KIND_GROUP_USER_JOIN_REQUEST_9021,
+    KIND_GROUP_USER_LEAVE_REQUEST_9022,
 };
 use nostr_sdk::prelude::*;
 use std::collections::HashMap;
@@ -38,9 +39,9 @@ impl Groups {
         // Step 1: Load current state from replaceable events
         let metadata_filter = vec![Filter::new()
             .kinds(vec![
-                KIND_GROUP_METADATA, // 39000
-                KIND_GROUP_ADMINS,   // 39001
-                KIND_GROUP_MEMBERS,  // 39002
+                KIND_GROUP_METADATA_39000, // 39000
+                KIND_GROUP_ADMINS_39001,   // 39001
+                KIND_GROUP_MEMBERS_39002,  // 39002
             ])
             .since(Timestamp::from(0))];
 
@@ -61,13 +62,15 @@ impl Groups {
                 }
             };
 
-            if event.kind == KIND_GROUP_METADATA {
+            if event.kind == KIND_GROUP_METADATA_39000 {
                 info!("[{}] Processing metadata", group_id);
                 groups
                     .entry(group_id.to_string())
                     .or_insert_with(|| Group::from(&event))
                     .load_metadata_from_event(&event)?;
-            } else if event.kind == KIND_GROUP_ADMINS || event.kind == KIND_GROUP_MEMBERS {
+            } else if event.kind == KIND_GROUP_ADMINS_39001
+                || event.kind == KIND_GROUP_MEMBERS_39002
+            {
                 info!("[{}] Processing members", group_id);
                 groups
                     .entry(group_id.to_string())
@@ -83,9 +86,9 @@ impl Groups {
 
             let historical_filter = vec![Filter::new()
                 .kinds(vec![
-                    KIND_GROUP_CREATE,            // 9007
-                    KIND_GROUP_USER_JOIN_REQUEST, // 9021
-                    KIND_GROUP_CREATE_INVITE,     // 9009
+                    KIND_GROUP_CREATE_9007,            // 9007
+                    KIND_GROUP_USER_JOIN_REQUEST_9021, // 9021
+                    KIND_GROUP_CREATE_INVITE_9009,     // 9009
                 ])
                 .custom_tag(SingleLetterTag::lowercase(Alphabet::H), vec![group_id])
                 .since(Timestamp::from(0))];
@@ -100,13 +103,13 @@ impl Groups {
             );
 
             for event in historical_events {
-                if event.kind == KIND_GROUP_CREATE {
+                if event.kind == KIND_GROUP_CREATE_9007 {
                     info!("[{}] Found creation event", group_id);
                     group.created_at = event.created_at;
-                } else if event.kind == KIND_GROUP_USER_JOIN_REQUEST {
+                } else if event.kind == KIND_GROUP_USER_JOIN_REQUEST_9021 {
                     info!("[{}] Processing join request", group_id);
                     group.load_join_request_from_event(&event)?;
-                } else if event.kind == KIND_GROUP_CREATE_INVITE {
+                } else if event.kind == KIND_GROUP_CREATE_INVITE_9009 {
                     info!("[{}] Processing invite", group_id);
                     group.load_invite_from_event(&event)?;
                 }
@@ -180,7 +183,7 @@ impl Groups {
         let deleted_events = match self
             .db
             .query(vec![Filter::new()
-                .kinds(vec![KIND_GROUP_DELETE])
+                .kinds(vec![KIND_GROUP_DELETE_9008])
                 .custom_tag(
                     SingleLetterTag::lowercase(Alphabet::H),
                     vec![group_id],
@@ -319,7 +322,7 @@ mod tests {
     async fn setup_test_groups() -> (Groups, Keys, Keys, Keys, String) {
         let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
         let tags = vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])];
-        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE, tags).await;
+        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE_9007, tags).await;
 
         let groups = create_test_groups_with_db(&admin_keys).await;
         groups.handle_group_create(&event).await.unwrap();
@@ -339,7 +342,7 @@ mod tests {
 
         // Test creating a duplicate group
         let tags = vec![Tag::custom(TagKind::h(), [&group_id])];
-        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE, tags).await;
+        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE_9007, tags).await;
         assert!(groups.handle_group_create(&event).await.is_err());
 
         // Verify group exists and admin is set
@@ -354,7 +357,7 @@ mod tests {
         // Create a group first
         let create_event = create_test_event(
             &admin_keys,
-            KIND_GROUP_CREATE,
+            KIND_GROUP_CREATE_9007,
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
@@ -368,7 +371,7 @@ mod tests {
         // Add a member first
         let add_event = create_test_event(
             &admin_keys,
-            KIND_GROUP_ADD_USER,
+            KIND_GROUP_ADD_USER_9000,
             vec![
                 Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
                 Tag::public_key(member_keys.public_key()),
@@ -381,7 +384,7 @@ mod tests {
         // Set roles
         let set_roles_event = create_test_event(
             &admin_keys,
-            KIND_GROUP_SET_ROLES,
+            KIND_GROUP_SET_ROLES_9006,
             vec![
                 Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
                 Tag::custom(
@@ -409,7 +412,7 @@ mod tests {
         // Create a group first
         let create_event = create_test_event(
             &admin_keys,
-            KIND_GROUP_CREATE,
+            KIND_GROUP_CREATE_9007,
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
@@ -423,7 +426,7 @@ mod tests {
         // Add a member
         let add_event = create_test_event(
             &admin_keys,
-            KIND_GROUP_ADD_USER,
+            KIND_GROUP_ADD_USER_9000,
             vec![
                 Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
                 Tag::public_key(member_keys.public_key()),
@@ -445,7 +448,7 @@ mod tests {
         // Create a group first
         let create_event = create_test_event(
             &admin_keys,
-            KIND_GROUP_CREATE,
+            KIND_GROUP_CREATE_9007,
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
@@ -459,7 +462,7 @@ mod tests {
         // Add a member first
         let add_event = create_test_event(
             &admin_keys,
-            KIND_GROUP_ADD_USER,
+            KIND_GROUP_ADD_USER_9000,
             vec![
                 Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
                 Tag::public_key(member_keys.public_key()),
@@ -472,7 +475,7 @@ mod tests {
         // Remove the member
         let remove_event = create_test_event(
             &admin_keys,
-            KIND_GROUP_REMOVE_USER,
+            KIND_GROUP_REMOVE_USER_9001,
             vec![
                 Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
                 Tag::public_key(member_keys.public_key()),
@@ -499,7 +502,7 @@ mod tests {
             Tag::custom(TagKind::custom("picture"), ["picture_url"]),
             Tag::custom(TagKind::custom("public"), &[] as &[String]),
         ];
-        let event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA, tags).await;
+        let event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
         assert!(groups.handle_edit_metadata(&event).is_ok());
 
         // Verify metadata was updated
@@ -520,7 +523,7 @@ mod tests {
             Tag::custom(TagKind::h(), [&group_id]),
             Tag::custom(TagKind::custom("code"), [invite_code]),
         ];
-        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE, tags).await;
+        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags).await;
         assert!(groups.handle_create_invite(&event).is_ok());
 
         // Verify invite was created
@@ -536,7 +539,7 @@ mod tests {
             Tag::custom(TagKind::custom("code"), [invite_code]),
         ];
         let join_event =
-            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST, join_tags).await;
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
         assert!(groups.handle_join_request(&join_event).unwrap());
 
         // Verify member was added
@@ -551,7 +554,7 @@ mod tests {
         // Test join request
         let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let join_event =
-            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST, join_tags).await;
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
         assert!(!groups.handle_join_request(&join_event).unwrap());
 
         // Manually add member
@@ -559,13 +562,13 @@ mod tests {
             Tag::custom(TagKind::h(), [&group_id]),
             Tag::public_key(member_keys.public_key()),
         ];
-        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER, add_tags).await;
+        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
         groups.handle_put_user(&add_event).unwrap();
 
         // Test leave request
         let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event =
-            create_test_event(&member_keys, KIND_GROUP_USER_LEAVE_REQUEST, leave_tags).await;
+            create_test_event(&member_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
         assert!(groups.handle_leave_request(&leave_event).unwrap());
 
         // Verify member was removed

@@ -16,5 +16,5 @@ pub mod test_utils;
 pub use app_state::HttpServerState;
 pub use error::Error;
 pub use event_store_connection::{EventStoreConnection, StoreCommand};
-pub use groups::{Group, Groups, KIND_GROUP_USER_JOIN_REQUEST};
+pub use groups::{Group, Groups, KIND_GROUP_USER_JOIN_REQUEST_9021};
 pub use nostr_database::NostrDatabase;
