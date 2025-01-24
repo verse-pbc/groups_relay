@@ -10,17 +10,16 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 use utils::{assert_proxy_response, create_websocket_client};
-use websocket_builder::message_handler::MessageConverter;
-use websocket_builder::middleware::Middleware;
-use websocket_builder::middleware_context::{InboundContext, OutboundContext, SendMessage};
-use websocket_builder::{StateFactory, WebSocketBuilder, WebSocketHandler};
+use websocket_builder::{
+    InboundContext, MessageConverter, Middleware, OutboundContext, SendMessage, StateFactory,
+    WebSocketBuilder, WebSocketHandler,
+};
 
 #[derive(Default, Debug)]
 pub struct ClientState {
@@ -278,8 +277,8 @@ impl TestServer {
 }
 
 #[tokio::test]
-async fn test_stateful_message_processing() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Starting websocket test");
+async fn test_basic_message_processing() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Testing basic message processing");
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 8082));
 
@@ -291,9 +290,33 @@ async fn test_stateful_message_processing() -> Result<(), Box<dyn std::error::Er
 
     let server = TestServer::start(addr, ws_handler).await?;
 
-    // Run test cases
+    let mut client = create_websocket_client(addr.to_string().as_str()).await?;
+    assert_proxy_response(
+        &mut client,
+        "hello",
+        "Uno(Dos(Tres(Three(Two(One(hello))))))",
+    )
+    .await?;
+
+    server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_multiple_client_connections() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Testing multiple client connections");
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8083));
+
+    let ws_handler = WebSocketBuilder::new(TestStateFactory, Converter)
+        .with_middleware(OneMiddleware)
+        .with_middleware(TwoMiddleware)
+        .with_middleware(ThreeMiddleware)
+        .build();
+
+    let server = TestServer::start(addr, ws_handler).await?;
+
     let mut client1 = create_websocket_client(addr.to_string().as_str()).await?;
-    println!("Testing client 1");
     assert_proxy_response(
         &mut client1,
         "hello",
@@ -302,7 +325,6 @@ async fn test_stateful_message_processing() -> Result<(), Box<dyn std::error::Er
     .await?;
 
     let mut client2 = create_websocket_client(addr.to_string().as_str()).await?;
-    println!("Testing client 2");
     assert_proxy_response(
         &mut client2,
         "world",
@@ -310,8 +332,27 @@ async fn test_stateful_message_processing() -> Result<(), Box<dyn std::error::Er
     )
     .await?;
 
-    // Test concurrent clients
-    println!("Testing concurrent clients");
+    server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_concurrent_message_processing() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Testing concurrent message processing");
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8084));
+
+    let ws_handler = WebSocketBuilder::new(TestStateFactory, Converter)
+        .with_middleware(OneMiddleware)
+        .with_middleware(TwoMiddleware)
+        .with_middleware(ThreeMiddleware)
+        .build();
+
+    let server = TestServer::start(addr, ws_handler).await?;
+
+    let mut client1 = create_websocket_client(addr.to_string().as_str()).await?;
+    let mut client2 = create_websocket_client(addr.to_string().as_str()).await?;
+
     let (response1, response2) = tokio::join!(
         assert_proxy_response(
             &mut client1,
@@ -332,9 +373,9 @@ async fn test_stateful_message_processing() -> Result<(), Box<dyn std::error::Er
 }
 
 #[tokio::test]
-async fn test_flood_middleware() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Starting flood middleware test");
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8083));
+async fn test_channel_size_limit() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Testing channel size limit");
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8085));
 
     let ws_handler = WebSocketBuilder::new(TestStateFactory, Converter)
         .with_channel_size(10)
@@ -352,9 +393,8 @@ async fn test_flood_middleware() -> Result<(), Box<dyn std::error::Error>> {
     while let Ok(Some(msg)) = tokio::time::timeout(Duration::from_millis(100), client.next()).await
     {
         match msg {
-            Ok(Message::Text(msg)) => {
+            Ok(Message::Text(_)) => {
                 received_count += 1;
-                println!("Received message: {}", msg);
             }
             _ => {
                 panic!("Received unexpected message: {:?}", msg);
@@ -366,6 +406,55 @@ async fn test_flood_middleware() -> Result<(), Box<dyn std::error::Error>> {
         received_count, 10,
         "Expected to receive exactly 10 messages (channel capacity) got {}",
         received_count
+    );
+
+    server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_message_timeout() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Testing message timeout");
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8086));
+
+    let ws_handler = WebSocketBuilder::new(TestStateFactory, Converter)
+        .with_channel_size(10)
+        .with_middleware(FloodMiddleware)
+        .build();
+
+    let server = TestServer::start(addr, ws_handler).await?;
+    let mut client = create_websocket_client(addr.to_string().as_str()).await?;
+
+    client
+        .send(Message::Text("trigger flood".to_string()))
+        .await?;
+
+    // Receive messages until we get a timeout
+    let mut received_count = 0;
+    loop {
+        let timeout_result = tokio::time::timeout(Duration::from_millis(500), client.next()).await;
+        match timeout_result {
+            Ok(Some(_)) => {
+                received_count += 1;
+            }
+            Ok(None) => break, // Connection closed
+            Err(_) => break,   // Timeout
+        }
+    }
+
+    // Verify we received at least the channel capacity worth of messages
+    assert!(
+        received_count >= 10,
+        "Expected to receive at least 10 messages, got {}",
+        received_count
+    );
+
+    // Verify that we timeout when no more messages are available
+    let timeout_result = tokio::time::timeout(Duration::from_millis(500), client.next()).await;
+    assert!(
+        timeout_result.is_err(),
+        "Expected timeout error but got {:?}",
+        timeout_result
     );
 
     server.shutdown().await?;

@@ -147,7 +147,7 @@ mod tests {
     use std::time::Instant;
 
     #[tokio::test]
-    async fn test_authed_pubkey() {
+    async fn test_authed_pubkey_valid_auth() {
         let keys = Keys::generate();
         let local_url = RelayUrl::parse("wss://test.relay").unwrap();
         let auth = Nip42Auth::new(local_url.as_str().to_string());
@@ -168,12 +168,46 @@ mod tests {
         // Test valid auth
         let result = auth.authed_pubkey(&event, Some(challenge));
         assert_eq!(result, Some(keys.public_key()));
+    }
 
-        // Test invalid challenge
+    #[tokio::test]
+    async fn test_authed_pubkey_wrong_challenge() {
+        let keys = Keys::generate();
+        let local_url = RelayUrl::parse("wss://test.relay").unwrap();
+        let auth = Nip42Auth::new(local_url.as_str().to_string());
+        let challenge = "test_challenge";
+
+        // Create valid auth event
+        let unsigned_event = EventBuilder::new(Kind::Authentication, "")
+            .tag(Tag::from_standardized(TagStandard::Challenge(
+                challenge.to_string(),
+            )))
+            .tag(Tag::from_standardized(TagStandard::Relay(local_url)))
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let event = keys.sign_event(unsigned_event).await.unwrap();
+
+        // Test with wrong challenge
         let result = auth.authed_pubkey(&event, Some("wrong_challenge"));
         assert_eq!(result, None);
+    }
 
-        // Test missing challenge
+    #[tokio::test]
+    async fn test_authed_pubkey_missing_challenge() {
+        let keys = Keys::generate();
+        let local_url = RelayUrl::parse("wss://test.relay").unwrap();
+        let auth = Nip42Auth::new(local_url.as_str().to_string());
+        let challenge = "test_challenge";
+
+        // Create valid auth event
+        let unsigned_event = EventBuilder::new(Kind::Authentication, "")
+            .tag(Tag::from_standardized(TagStandard::Challenge(
+                challenge.to_string(),
+            )))
+            .tag(Tag::from_standardized(TagStandard::Relay(local_url)))
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let event = keys.sign_event(unsigned_event).await.unwrap();
+
+        // Test with missing challenge
         let result = auth.authed_pubkey(&event, None);
         assert_eq!(result, None);
     }

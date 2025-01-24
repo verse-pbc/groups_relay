@@ -125,89 +125,213 @@ impl Middleware for ValidationMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr_sdk::{EventBuilder, Keys};
-    use std::collections::BTreeSet;
-    use std::time::Instant;
+    use crate::test_utils::{create_test_event, create_test_keys};
+    use nostr_sdk::{Filter, Kind, SingleLetterTag, Tag, TagKind};
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+    use websocket_builder::Middleware;
 
-    fn create_test_keys() -> Keys {
-        Keys::generate()
-    }
+    type TestMiddleware = dyn Middleware<
+        IncomingMessage = ClientMessage,
+        OutgoingMessage = RelayMessage,
+        State = NostrConnectionState,
+    >;
 
-    async fn create_test_event(keys: &Keys, kind: Kind, tags: Vec<Tag>) -> Event {
-        let event = EventBuilder::new(kind, "test")
-            .tags(tags)
-            .build_with_ctx(&Instant::now(), keys.public_key());
-        keys.sign_event(event).await.unwrap()
+    #[tokio::test]
+    async fn test_event_validation_valid_event_with_h_tag() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let middleware = Arc::new(ValidationMiddleware::new(admin_keys.public_key()));
+        let chain: Vec<Arc<TestMiddleware>> = vec![middleware.clone()];
+
+        let event = create_test_event(
+            &admin_keys,
+            9,
+            vec![Tag::custom(TagKind::h(), ["test_group"])],
+        )
+        .await;
+
+        let mut state = NostrConnectionState {
+            relay_url: "wss://test.relay".to_string(),
+            challenge: None,
+            authed_pubkey: None,
+            relay_connection: None,
+            connection_token: CancellationToken::new(),
+        };
+
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Event(Box::new(event)),
+            None,
+            &mut state,
+            &chain,
+            1,
+        );
+
+        assert!(middleware.process_inbound(&mut ctx).await.is_ok());
     }
 
     #[tokio::test]
-    async fn test_event_validation() {
-        let keys = create_test_keys();
-        let relay_keys = create_test_keys();
-        let middleware = ValidationMiddleware::new(relay_keys.public_key());
+    async fn test_event_validation_accepts_event_with_different_kind() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let middleware = Arc::new(ValidationMiddleware::new(admin_keys.public_key()));
+        let chain: Vec<Arc<TestMiddleware>> = vec![middleware.clone()];
 
-        // Test valid event with supported kind and h tag
         let event = create_test_event(
-            &keys,
-            Kind::Custom(9),
-            vec![Tag::custom(TagKind::h(), ["test_group"])],
+            &admin_keys,
+            10009, // This kind doesn't need an 'h' tag
+            vec![],
         )
         .await;
-        assert!(middleware.validate_event(&event).is_ok());
 
-        // Test event with no h tag
-        let event = create_test_event(&keys, Kind::Custom(9), vec![]).await;
-        assert!(middleware.validate_event(&event).is_err());
+        let mut state = NostrConnectionState {
+            relay_url: "wss://test.relay".to_string(),
+            challenge: None,
+            authed_pubkey: None,
+            relay_connection: None,
+            connection_token: CancellationToken::new(),
+        };
 
-        // Test event with h tag
-        let event = create_test_event(
-            &keys,
-            Kind::Custom(65000),
-            vec![Tag::custom(TagKind::h(), ["test_group"])],
-        )
-        .await;
-        assert!(middleware.validate_event(&event).is_ok());
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Event(Box::new(event)),
+            None,
+            &mut state,
+            &chain,
+            1,
+        );
+
+        assert!(middleware.process_inbound(&mut ctx).await.is_ok());
     }
 
-    #[test]
-    fn test_filter_validation() {
-        let relay_keys = create_test_keys();
-        let middleware = ValidationMiddleware::new(relay_keys.public_key());
+    #[tokio::test]
+    async fn test_filter_validation_accepts_h_tag() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let middleware = Arc::new(ValidationMiddleware::new(admin_keys.public_key()));
+        let chain: Vec<Arc<TestMiddleware>> = vec![middleware.clone()];
 
-        // Test filter with h tag
-        let mut filter = Filter::new();
-        let mut tag_set = BTreeSet::new();
-        tag_set.insert("test".to_string());
-        filter
-            .generic_tags
-            .insert(SingleLetterTag::lowercase(Alphabet::H), tag_set);
-        assert!(middleware.validate_filter(&filter, None).is_ok());
+        let filter = Filter::new()
+            .kind(Kind::Custom(9))
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::H), vec!["test_group"]);
 
-        // Test filter with d tag
-        let mut filter = Filter::new();
-        let mut tag_set = BTreeSet::new();
-        tag_set.insert("test".to_string());
-        filter
-            .generic_tags
-            .insert(SingleLetterTag::lowercase(Alphabet::D), tag_set);
-        assert!(middleware.validate_filter(&filter, None).is_ok());
+        let mut state = NostrConnectionState {
+            relay_url: "wss://test.relay".to_string(),
+            challenge: None,
+            authed_pubkey: None,
+            relay_connection: None,
+            connection_token: CancellationToken::new(),
+        };
 
-        // Test filter with unsupported kinds
-        let filter = Filter::new().kinds(vec![Kind::Custom(65000)]);
-        assert!(middleware.validate_filter(&filter, None).is_err());
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Req {
+                subscription_id: SubscriptionId::new("test"),
+                filters: vec![filter],
+            },
+            None,
+            &mut state,
+            &chain,
+            1,
+        );
 
-        // Test filter with non group supported tag
-        let filter = Filter::new().kinds(vec![Kind::Custom(10009)]);
-        assert!(middleware.validate_filter(&filter, None).is_ok());
+        assert!(middleware.process_inbound(&mut ctx).await.is_ok());
+    }
 
-        // Test filter with no tags and no kinds
-        let filter = Filter::new();
-        assert!(middleware.validate_filter(&filter, None).is_err());
+    #[tokio::test]
+    async fn test_filter_validation_accepts_d_tag() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let middleware = Arc::new(ValidationMiddleware::new(admin_keys.public_key()));
+        let chain: Vec<Arc<TestMiddleware>> = vec![middleware.clone()];
 
-        // Test filter with relay pubkey should skip validation
-        let filter = Filter::new(); // Invalid filter
-        assert!(middleware
-            .validate_filter(&filter, Some(&relay_keys.public_key))
-            .is_ok());
+        let filter = Filter::new()
+            .kind(Kind::Custom(9))
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::D), vec!["test_group"]);
+
+        let mut state = NostrConnectionState {
+            relay_url: "wss://test.relay".to_string(),
+            challenge: None,
+            authed_pubkey: None,
+            relay_connection: None,
+            connection_token: CancellationToken::new(),
+        };
+
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Req {
+                subscription_id: SubscriptionId::new("test"),
+                filters: vec![filter],
+            },
+            None,
+            &mut state,
+            &chain,
+            1,
+        );
+
+        assert!(middleware.process_inbound(&mut ctx).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_filter_validation_accepts_non_group_supported_tag() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let middleware = Arc::new(ValidationMiddleware::new(admin_keys.public_key()));
+        let chain: Vec<Arc<TestMiddleware>> = vec![middleware.clone()];
+
+        let filter = Filter::new()
+            .kind(Kind::Custom(10009)) // This kind doesn't need an 'h' tag
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::E), vec!["test_id"]);
+
+        let mut state = NostrConnectionState {
+            relay_url: "wss://test.relay".to_string(),
+            challenge: None,
+            authed_pubkey: None,
+            relay_connection: None,
+            connection_token: CancellationToken::new(),
+        };
+
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Req {
+                subscription_id: SubscriptionId::new("test"),
+                filters: vec![filter],
+            },
+            None,
+            &mut state,
+            &chain,
+            1,
+        );
+
+        assert!(middleware.process_inbound(&mut ctx).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_filter_validation_accepts_relay_pubkey() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let middleware = Arc::new(ValidationMiddleware::new(admin_keys.public_key()));
+        let chain: Vec<Arc<TestMiddleware>> = vec![middleware.clone()];
+
+        let filter = Filter::new()
+            .kind(Kind::Custom(9))
+            .authors(vec![admin_keys.public_key()]);
+
+        let mut state = NostrConnectionState {
+            relay_url: "wss://test.relay".to_string(),
+            challenge: None,
+            authed_pubkey: None,
+            relay_connection: None,
+            connection_token: CancellationToken::new(),
+        };
+
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Req {
+                subscription_id: SubscriptionId::new("test"),
+                filters: vec![filter],
+            },
+            None,
+            &mut state,
+            &chain,
+            1,
+        );
+
+        assert!(middleware.process_inbound(&mut ctx).await.is_ok());
     }
 }

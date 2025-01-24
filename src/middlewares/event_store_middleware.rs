@@ -318,7 +318,8 @@ mod tests {
     };
     use futures_util::{SinkExt, StreamExt};
     use nostr_sdk::{EventBuilder, Keys};
-    use std::{net::SocketAddr, time::Instant};
+    use std::time::Instant;
+    use std::{net::SocketAddr, time::Duration};
     use tempfile::TempDir;
     use tokio::net::TcpListener;
     use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -520,7 +521,90 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_subscription_and_broadcast() {
+    async fn test_subscription_receives_historical_events() {
+        let (_tmp_dir, database) = setup_test().await;
+
+        // Create and save a historical event
+        let (_, historical_event) = create_signed_event("Historical event").await;
+        database.save_signed_event(&historical_event).await.unwrap();
+
+        // Start the test server
+        let (addr, token) = start_test_server(database).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Connect client
+        let url = format!("ws://{}", addr);
+        let mut subscriber = TestClient::connect(&url).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Set up subscription
+        let subscription_id = SubscriptionId::new("test_sub");
+        let filters = vec![Filter::new().kinds(vec![Kind::TextNote]).limit(5)];
+        subscriber
+            .send_message(&ClientMessage::Req {
+                subscription_id: subscription_id.clone(),
+                filters,
+            })
+            .await;
+
+        // Verify historical event and EOSE
+        subscriber
+            .expect_event(&subscription_id, &historical_event)
+            .await;
+        subscriber.expect_eose(&subscription_id).await;
+
+        // Clean up
+        subscriber.close().await;
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_subscription_receives_new_events() {
+        let (_tmp_dir, database) = setup_test().await;
+
+        // Start the test server
+        let (addr, token) = start_test_server(database).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Connect clients
+        let url = format!("ws://{}", addr);
+        let mut subscriber = TestClient::connect(&url).await;
+        let mut publisher = TestClient::connect(&url).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Set up subscription
+        let subscription_id = SubscriptionId::new("test_sub");
+        let filters = vec![Filter::new().kinds(vec![Kind::TextNote]).limit(5)];
+        subscriber
+            .send_message(&ClientMessage::Req {
+                subscription_id: subscription_id.clone(),
+                filters,
+            })
+            .await;
+
+        // Wait for EOSE since there are no historical events
+        subscriber.expect_eose(&subscription_id).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Publish new event
+        let (_, event) = create_signed_event("Hello, world!").await;
+        publisher
+            .send_message(&ClientMessage::Event(Box::new(event.clone())))
+            .await;
+
+        // Verify subscriber receives the new event
+        publisher.expect_ok(&event.id).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        subscriber.expect_event(&subscription_id, &event).await;
+
+        // Clean up
+        subscriber.close().await;
+        publisher.close().await;
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_subscription_receives_both_historical_and_new_events() {
         let (_tmp_dir, database) = setup_test().await;
 
         // Create and save a historical event
@@ -560,7 +644,7 @@ mod tests {
             .send_message(&ClientMessage::Event(Box::new(event.clone())))
             .await;
 
-        // Verify OK and broadcast
+        // Verify subscriber receives the new event
         publisher.expect_ok(&event.id).await;
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         subscriber.expect_event(&subscription_id, &event).await;
@@ -572,24 +656,145 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_empty_filter_returns_all_events() {
+    async fn test_empty_filter_returns_text_note_events() {
         let (_tmp_dir, database) = setup_test().await;
 
-        // Create events with different kinds and authors
-        let (keys1, text_note) = create_signed_event("Text note event").await;
-        let (keys2, _) = create_signed_event("unused").await; // Just to get different keys
+        // Create and save a text note event
+        let (_, text_note) = create_signed_event("Text note event").await;
+        database.save_signed_event(&text_note).await.unwrap();
 
-        // Create a metadata event
+        // Start server and connect client
+        let (addr, token) = start_test_server(database).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let url = format!("ws://{}", addr);
+        let mut client = TestClient::connect(&url).await;
+
+        // Subscribe with empty filter
+        let subscription_id = SubscriptionId::new("text_note_events");
+        let empty_filter = vec![Filter::new()];
+        client
+            .send_message(&ClientMessage::Req {
+                subscription_id: subscription_id.clone(),
+                filters: empty_filter,
+            })
+            .await;
+
+        // We should receive the text note event
+        match client.expect_message().await {
+            RelayMessage::Event { event, .. } => {
+                assert_eq!(event.kind, Kind::TextNote, "Event was not a text note");
+            }
+            msg => panic!("Expected Event message, got: {:?}", msg),
+        }
+
+        client.expect_eose(&subscription_id).await;
+
+        // Clean up
+        client.close().await;
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_empty_filter_returns_metadata_events() {
+        let (_tmp_dir, database) = setup_test().await;
+
+        // Create and save a metadata event
+        let keys = Keys::generate();
         let metadata_event = EventBuilder::new(Kind::Metadata, "{}")
-            .build_with_ctx(&Instant::now(), keys2.public_key());
-        let metadata_event = keys2.sign_event(metadata_event).await.unwrap();
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let metadata_event = keys.sign_event(metadata_event).await.unwrap();
+        database.save_signed_event(&metadata_event).await.unwrap();
 
-        // Create a contacts event
+        // Start server and connect client
+        let (addr, token) = start_test_server(database).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let url = format!("ws://{}", addr);
+        let mut client = TestClient::connect(&url).await;
+
+        // Subscribe with empty filter
+        let subscription_id = SubscriptionId::new("metadata_events");
+        let empty_filter = vec![Filter::new()];
+        client
+            .send_message(&ClientMessage::Req {
+                subscription_id: subscription_id.clone(),
+                filters: empty_filter,
+            })
+            .await;
+
+        // We should receive the metadata event
+        match client.expect_message().await {
+            RelayMessage::Event { event, .. } => {
+                assert_eq!(event.kind, Kind::Metadata, "Event was not a metadata event");
+            }
+            msg => panic!("Expected Event message, got: {:?}", msg),
+        }
+
+        client.expect_eose(&subscription_id).await;
+
+        // Clean up
+        client.close().await;
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_empty_filter_returns_contact_list_events() {
+        let (_tmp_dir, database) = setup_test().await;
+
+        // Create and save a contacts event
+        let keys = Keys::generate();
         let contacts_event = EventBuilder::new(Kind::ContactList, "[]")
-            .build_with_ctx(&Instant::now(), keys1.public_key());
-        let contacts_event = keys1.sign_event(contacts_event).await.unwrap();
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let contacts_event = keys.sign_event(contacts_event).await.unwrap();
+        database.save_signed_event(&contacts_event).await.unwrap();
 
-        // Save all events
+        // Start server and connect client
+        let (addr, token) = start_test_server(database).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let url = format!("ws://{}", addr);
+        let mut client = TestClient::connect(&url).await;
+
+        // Subscribe with empty filter
+        let subscription_id = SubscriptionId::new("contact_list_events");
+        let empty_filter = vec![Filter::new()];
+        client
+            .send_message(&ClientMessage::Req {
+                subscription_id: subscription_id.clone(),
+                filters: empty_filter,
+            })
+            .await;
+
+        // We should receive the contacts event
+        match client.expect_message().await {
+            RelayMessage::Event { event, .. } => {
+                assert_eq!(
+                    event.kind,
+                    Kind::ContactList,
+                    "Event was not a contact list event"
+                );
+            }
+            msg => panic!("Expected Event message, got: {:?}", msg),
+        }
+
+        client.expect_eose(&subscription_id).await;
+
+        // Clean up
+        client.close().await;
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_empty_filter_returns_all_event_kinds() {
+        let (_tmp_dir, database) = setup_test().await;
+
+        // Create and save events of different kinds
+        let (keys, text_note) = create_signed_event("Text note event").await;
+        let metadata_event = EventBuilder::new(Kind::Metadata, "{}")
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let metadata_event = keys.sign_event(metadata_event).await.unwrap();
+        let contacts_event = EventBuilder::new(Kind::ContactList, "[]")
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let contacts_event = keys.sign_event(contacts_event).await.unwrap();
+
         database.save_signed_event(&text_note).await.unwrap();
         database.save_signed_event(&metadata_event).await.unwrap();
         database.save_signed_event(&contacts_event).await.unwrap();
@@ -610,7 +815,71 @@ mod tests {
             })
             .await;
 
-        // We should receive all events in any order
+        // We should receive all events
+        let mut received_kinds = Vec::new();
+        for _ in 0..3 {
+            match client.expect_message().await {
+                RelayMessage::Event { event, .. } => received_kinds.push(event.kind),
+                msg => panic!("Expected Event message, got: {:?}", msg),
+            }
+        }
+
+        client.expect_eose(&subscription_id).await;
+
+        // Verify we got all kinds
+        assert!(
+            received_kinds.contains(&Kind::TextNote),
+            "No text note events"
+        );
+        assert!(
+            received_kinds.contains(&Kind::Metadata),
+            "No metadata events"
+        );
+        assert!(
+            received_kinds.contains(&Kind::ContactList),
+            "No contact list events"
+        );
+
+        // Clean up
+        client.close().await;
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_empty_filter_returns_events_regardless_of_save_order() {
+        let (_tmp_dir, database) = setup_test().await;
+
+        // Create events of different kinds
+        let (keys, text_note) = create_signed_event("Text note event").await;
+        let metadata_event = EventBuilder::new(Kind::Metadata, "{}")
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let metadata_event = keys.sign_event(metadata_event).await.unwrap();
+        let contacts_event = EventBuilder::new(Kind::ContactList, "[]")
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let contacts_event = keys.sign_event(contacts_event).await.unwrap();
+
+        // Save events in reverse order
+        database.save_signed_event(&contacts_event).await.unwrap();
+        database.save_signed_event(&metadata_event).await.unwrap();
+        database.save_signed_event(&text_note).await.unwrap();
+
+        // Start server and connect client
+        let (addr, token) = start_test_server(database).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let url = format!("ws://{}", addr);
+        let mut client = TestClient::connect(&url).await;
+
+        // Subscribe with empty filter
+        let subscription_id = SubscriptionId::new("all_events");
+        let empty_filter = vec![Filter::new()];
+        client
+            .send_message(&ClientMessage::Req {
+                subscription_id: subscription_id.clone(),
+                filters: empty_filter,
+            })
+            .await;
+
+        // We should receive all events
         let mut received_events = Vec::new();
         for _ in 0..3 {
             match client.expect_message().await {
@@ -619,22 +888,118 @@ mod tests {
             }
         }
 
-        // Verify EOSE after all events
         client.expect_eose(&subscription_id).await;
 
-        // Verify we got all events
+        // Verify we got all events regardless of save order
+        assert_eq!(received_events.len(), 3, "Did not receive all events");
+        let received_kinds: Vec<Kind> = received_events.iter().map(|e| e.kind).collect();
         assert!(
-            received_events.iter().any(|e| e.id == text_note.id),
-            "Text note event not found in response"
+            received_kinds.contains(&Kind::TextNote),
+            "Missing text note event"
         );
         assert!(
-            received_events.iter().any(|e| e.id == metadata_event.id),
-            "Metadata event not found in response"
+            received_kinds.contains(&Kind::Metadata),
+            "Missing metadata event"
         );
         assert!(
-            received_events.iter().any(|e| e.id == contacts_event.id),
-            "Contacts event not found in response"
+            received_kinds.contains(&Kind::ContactList),
+            "Missing contact list event"
         );
+
+        // Clean up
+        client.close().await;
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_empty_filter_returns_events_from_single_author() {
+        let (_tmp_dir, database) = setup_test().await;
+
+        // Create multiple events from the same author
+        let (keys, event1) = create_signed_event("First event from author").await;
+        let event2 = EventBuilder::new(Kind::TextNote, "Second event from author")
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let event2 = keys.sign_event(event2).await.unwrap();
+
+        // Save events
+        database.save_signed_event(&event1).await.unwrap();
+        database.save_signed_event(&event2).await.unwrap();
+
+        // Start server and connect client
+        let (addr, token) = start_test_server(database).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let url = format!("ws://{}", addr);
+        let mut client = TestClient::connect(&url).await;
+
+        // Subscribe with empty filter
+        let subscription_id = SubscriptionId::new("single_author_events");
+        let empty_filter = vec![Filter::new()];
+        client
+            .send_message(&ClientMessage::Req {
+                subscription_id: subscription_id.clone(),
+                filters: empty_filter,
+            })
+            .await;
+
+        // We should receive both events from the same author
+        let mut received_events = Vec::new();
+        for _ in 0..2 {
+            match client.expect_message().await {
+                RelayMessage::Event { event, .. } => received_events.push(*event),
+                msg => panic!("Expected Event message, got: {:?}", msg),
+            }
+        }
+
+        client.expect_eose(&subscription_id).await;
+
+        // Verify all events are from the same author
+        for event in received_events {
+            assert_eq!(event.pubkey, keys.public_key(), "Event from wrong author");
+        }
+
+        // Clean up
+        client.close().await;
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_empty_filter_returns_events_from_multiple_authors() {
+        let (_tmp_dir, database) = setup_test().await;
+
+        // Create events with different authors
+        let (keys1, event1) = create_signed_event("Event from author 1").await;
+        let (keys2, event2) = create_signed_event("Event from author 2").await;
+
+        // Save events
+        database.save_signed_event(&event1).await.unwrap();
+        database.save_signed_event(&event2).await.unwrap();
+
+        // Start server and connect client
+        let (addr, token) = start_test_server(database).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let url = format!("ws://{}", addr);
+        let mut client = TestClient::connect(&url).await;
+
+        // Subscribe with empty filter
+        let subscription_id = SubscriptionId::new("multi_author_events");
+        let empty_filter = vec![Filter::new()];
+        client
+            .send_message(&ClientMessage::Req {
+                subscription_id: subscription_id.clone(),
+                filters: empty_filter,
+            })
+            .await;
+
+        // We should receive events from both authors
+        let mut received_events = Vec::new();
+        for _ in 0..2 {
+            match client.expect_message().await {
+                RelayMessage::Event { event, .. } => received_events.push(*event),
+                msg => panic!("Expected Event message, got: {:?}", msg),
+            }
+        }
+
+        client.expect_eose(&subscription_id).await;
 
         // Verify we got events from both authors
         assert!(
@@ -650,25 +1015,109 @@ mod tests {
             "No events from author 2"
         );
 
-        // Verify we got different kinds
-        assert!(
-            received_events.iter().any(|e| e.kind == Kind::TextNote),
-            "No text note events"
-        );
-        assert!(
-            received_events.iter().any(|e| e.kind == Kind::Metadata),
-            "No metadata events"
-        );
-        assert!(
-            received_events.iter().any(|e| e.kind == Kind::ContactList),
-            "No contact list events"
-        );
+        // Clean up
+        client.close().await;
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_empty_filter_subscription_can_be_closed() {
+        let (_tmp_dir, database) = setup_test().await;
+
+        // Create and save an event
+        let (_, event) = create_signed_event("Test event").await;
+        database.save_signed_event(&event).await.unwrap();
+
+        // Start server and connect client
+        let (addr, token) = start_test_server(database).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let url = format!("ws://{}", addr);
+        let mut client = TestClient::connect(&url).await;
+
+        // Subscribe with empty filter
+        let subscription_id = SubscriptionId::new("all_events");
+        let empty_filter = vec![Filter::new()];
+        client
+            .send_message(&ClientMessage::Req {
+                subscription_id: subscription_id.clone(),
+                filters: empty_filter,
+            })
+            .await;
+
+        // Receive event and EOSE
+        client.expect_event(&subscription_id, &event).await;
+        client.expect_eose(&subscription_id).await;
 
         // Send Close message and verify we get a Closed response
         client
             .send_message(&ClientMessage::Close(subscription_id.clone()))
             .await;
         client.expect_closed(&subscription_id).await;
+
+        // Clean up
+        client.close().await;
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_limit_filter_returns_events_in_reverse_chronological_order() {
+        let (_tmp_dir, database) = setup_test().await;
+
+        // Create events with different timestamps
+        let now = Instant::now();
+        let (keys, event1) = create_signed_event("First event").await;
+        let event2 = EventBuilder::new(Kind::TextNote, "Second event")
+            .build_with_ctx(&(now + Duration::from_secs(1)), keys.public_key());
+        let event2 = keys.sign_event(event2).await.unwrap();
+        let event3 = EventBuilder::new(Kind::TextNote, "Third event")
+            .build_with_ctx(&(now + Duration::from_secs(2)), keys.public_key());
+        let event3 = keys.sign_event(event3).await.unwrap();
+
+        // Save events in random order
+        database.save_signed_event(&event2).await.unwrap();
+        database.save_signed_event(&event1).await.unwrap();
+        database.save_signed_event(&event3).await.unwrap();
+
+        // Start server and connect client
+        let (addr, token) = start_test_server(database).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let url = format!("ws://{}", addr);
+        let mut client = TestClient::connect(&url).await;
+
+        // Subscribe with limit filter
+        let subscription_id = SubscriptionId::new("limited_events");
+        let filter = vec![Filter::new().kinds(vec![Kind::TextNote]).limit(3)];
+        client
+            .send_message(&ClientMessage::Req {
+                subscription_id: subscription_id.clone(),
+                filters: filter,
+            })
+            .await;
+
+        // We should receive events in reverse chronological order
+        let mut received_events = Vec::new();
+        for _ in 0..3 {
+            match client.expect_message().await {
+                RelayMessage::Event { event, .. } => received_events.push(*event),
+                msg => panic!("Expected Event message, got: {:?}", msg),
+            }
+        }
+
+        client.expect_eose(&subscription_id).await;
+
+        // Verify events are in reverse chronological order
+        assert_eq!(
+            received_events[0].created_at, event3.created_at,
+            "First event should be the newest"
+        );
+        assert_eq!(
+            received_events[1].created_at, event2.created_at,
+            "Second event should be the second newest"
+        );
+        assert_eq!(
+            received_events[2].created_at, event1.created_at,
+            "Third event should be the oldest"
+        );
 
         // Clean up
         client.close().await;

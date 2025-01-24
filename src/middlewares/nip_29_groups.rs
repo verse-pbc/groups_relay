@@ -448,9 +448,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_process_outbound_visibility() {
+    async fn test_process_outbound_visibility_member_can_see_event() {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
-        let (_, member_keys, non_member_keys) = create_test_keys().await;
+        let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
             Groups::load_groups(database, admin_keys.public_key())
                 .await
@@ -462,7 +462,7 @@ mod tests {
         let group_id = "test_group";
         let create_event = create_test_event(
             &admin_keys,
-            9007, // KIND_GROUP_CREATE
+            9007,
             vec![Tag::custom(TagKind::h(), [group_id])],
         )
         .await;
@@ -471,7 +471,7 @@ mod tests {
         // Add member to group
         let add_member_event = create_test_event(
             &admin_keys,
-            9008, // KIND_GROUP_ADD_USER
+            9008,
             vec![
                 Tag::custom(TagKind::h(), [group_id]),
                 Tag::public_key(member_keys.public_key()),
@@ -494,11 +494,41 @@ mod tests {
             &mut state,
             RelayMessage::Event {
                 subscription_id: SubscriptionId::new("test"),
-                event: Box::new(content_event.clone()),
+                event: Box::new(content_event),
             },
         );
         middleware.process_outbound(&mut ctx).await.unwrap();
         assert!(ctx.message.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_process_outbound_visibility_non_member_cannot_see_event() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, non_member_keys) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create a group
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
+        // Create a group content event
+        let content_event = create_test_event(
+            &member_keys,
+            11,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
 
         // Test non-member cannot see event
         let mut state = create_test_state(Some(non_member_keys.public_key()));
@@ -506,11 +536,41 @@ mod tests {
             &mut state,
             RelayMessage::Event {
                 subscription_id: SubscriptionId::new("test"),
-                event: Box::new(content_event.clone()),
+                event: Box::new(content_event),
             },
         );
         middleware.process_outbound(&mut ctx).await.unwrap();
         assert!(ctx.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_process_outbound_visibility_relay_can_see_event() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create a group
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
+        // Create a group content event
+        let content_event = create_test_event(
+            &member_keys,
+            11,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
 
         // Test relay pubkey can see event
         let mut state = create_test_state(Some(admin_keys.public_key()));
@@ -526,9 +586,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_filter_verification() {
+    async fn test_filter_verification_normal_filter_with_h_tag() {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
-        let (_, member_keys, non_member_keys) = create_test_keys().await;
+        let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
             Groups::load_groups(database, admin_keys.public_key())
                 .await
@@ -558,13 +618,24 @@ mod tests {
         .await;
         groups.handle_put_user(&add_member_event).unwrap();
 
-        // Normal filter with 'h' tag
         let normal_filter = Filter::new()
             .kind(Kind::Custom(11))
             .custom_tag(SingleLetterTag::lowercase(Alphabet::H), vec![group_id]);
         assert!(middleware
             .verify_filter(Some(member_keys.public_key()), &normal_filter)
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_filter_verification_non_existing_group() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
 
         let non_existing_group_filter = Filter::new().kind(Kind::Custom(11)).custom_tag(
             SingleLetterTag::lowercase(Alphabet::H),
@@ -573,46 +644,114 @@ mod tests {
         assert!(middleware
             .verify_filter(Some(member_keys.public_key()), &non_existing_group_filter)
             .is_ok());
+    }
 
-        // Metadata filter with 'd' tag
+    #[tokio::test]
+    async fn test_filter_verification_metadata_filter_with_d_tag() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create a test group
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
         let meta_filter = Filter::new()
             .kind(Kind::Custom(9007))
             .custom_tag(SingleLetterTag::lowercase(Alphabet::D), vec![group_id]);
         assert!(middleware
             .verify_filter(Some(member_keys.public_key()), &meta_filter)
             .is_ok());
+    }
 
-        // Reference filter with 'e' tag
+    #[tokio::test]
+    async fn test_filter_verification_reference_filter_with_e_tag() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
         let ref_filter = Filter::new()
             .kind(Kind::Custom(11))
             .custom_tag(SingleLetterTag::lowercase(Alphabet::E), vec!["test_id"]);
         assert!(middleware
             .verify_filter(Some(member_keys.public_key()), &ref_filter)
             .is_ok());
+    }
 
-        // Reference filter with authors
+    #[tokio::test]
+    async fn test_filter_verification_reference_filter_with_authors() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
         let author_filter = Filter::new()
             .kind(Kind::Custom(11))
             .authors(vec![member_keys.public_key()]);
         assert!(middleware
             .verify_filter(Some(member_keys.public_key()), &author_filter)
             .is_ok());
+    }
 
-        // Metadata filter with addressable kind
+    #[tokio::test]
+    async fn test_filter_verification_metadata_filter_with_addressable_kind() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create a test group
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
         let meta_filter = Filter::new()
             .kinds(vec![Kind::Custom(39000)]) // Just the addressable kind
             .custom_tag(SingleLetterTag::lowercase(Alphabet::D), vec![group_id]);
         assert!(middleware
             .verify_filter(Some(member_keys.public_key()), &meta_filter)
             .is_ok());
+    }
 
-        // Normal filter with non-addressable kind
-        let normal_filter = Filter::new()
-            .kinds(vec![Kind::Custom(11)]) // Just the normal kind
-            .custom_tag(SingleLetterTag::lowercase(Alphabet::H), vec![group_id]);
-        assert!(middleware
-            .verify_filter(Some(member_keys.public_key()), &normal_filter)
-            .is_ok());
+    #[tokio::test]
+    async fn test_filter_verification_private_group_member_access() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
 
         let private_group_id = "private_group";
         let private_create_event = create_test_event(
@@ -647,23 +786,111 @@ mod tests {
         assert!(middleware
             .verify_filter(Some(member_keys.public_key()), &private_filter)
             .is_ok());
+    }
 
-        // Private group access - non-member
+    #[tokio::test]
+    async fn test_filter_verification_private_group_non_member_access() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, _, non_member_keys) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        let private_group_id = "private_group";
+        let private_create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![
+                Tag::custom(TagKind::h(), [private_group_id]),
+                Tag::custom(TagKind::p(), ["true"]),
+            ],
+        )
+        .await;
+        groups
+            .handle_group_create(&private_create_event)
+            .await
+            .unwrap();
+
+        let private_filter = Filter::new().kind(Kind::Custom(11)).custom_tag(
+            SingleLetterTag::lowercase(Alphabet::H),
+            vec![private_group_id],
+        );
         assert!(middleware
             .verify_filter(Some(non_member_keys.public_key()), &private_filter)
             .is_err());
+    }
 
-        // Private group access - no auth
+    #[tokio::test]
+    async fn test_filter_verification_private_group_no_auth() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        let private_group_id = "private_group";
+        let private_create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![
+                Tag::custom(TagKind::h(), [private_group_id]),
+                Tag::custom(TagKind::p(), ["true"]),
+            ],
+        )
+        .await;
+        groups
+            .handle_group_create(&private_create_event)
+            .await
+            .unwrap();
+
+        let private_filter = Filter::new().kind(Kind::Custom(11)).custom_tag(
+            SingleLetterTag::lowercase(Alphabet::H),
+            vec![private_group_id],
+        );
         assert!(middleware.verify_filter(None, &private_filter).is_err());
+    }
 
-        // Private group access - relay pubkey
+    #[tokio::test]
+    async fn test_filter_verification_private_group_relay_access() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        let private_group_id = "private_group";
+        let private_create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![
+                Tag::custom(TagKind::h(), [private_group_id]),
+                Tag::custom(TagKind::p(), ["true"]),
+            ],
+        )
+        .await;
+        groups
+            .handle_group_create(&private_create_event)
+            .await
+            .unwrap();
+
+        let private_filter = Filter::new().kind(Kind::Custom(11)).custom_tag(
+            SingleLetterTag::lowercase(Alphabet::H),
+            vec![private_group_id],
+        );
         assert!(middleware
             .verify_filter(Some(admin_keys.public_key()), &private_filter)
             .is_ok());
     }
 
     #[tokio::test]
-    async fn test_auto_add_member_on_post() {
+    async fn test_auto_add_member_on_post_to_open_group_adds_member() {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
@@ -696,12 +923,12 @@ mod tests {
         .await;
         groups.handle_edit_metadata(&metadata_event).unwrap();
 
-        // Verify group settings
+        // Verify initial state
         let group = groups.get_group(group_id).unwrap();
         assert!(!group.metadata.closed, "Group should not be closed");
         assert!(!group.metadata.private, "Group should not be private");
         assert!(!group.is_member(&member_keys.public_key()));
-        drop(group); // Release the lock
+        drop(group);
 
         // Post content to the group as non-member
         let content_event =
@@ -711,13 +938,104 @@ mod tests {
         let result = middleware.handle_event(&content_event, &None).await;
         assert!(result.is_ok());
 
-        // Verify the events to save contain both the content event and member update
+        // Verify member was added to the group
+        let group = groups.get_group(group_id).unwrap();
+        assert!(group.is_member(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_auto_add_member_on_post_to_open_group_saves_content_event() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create an open group
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
+        let metadata_event = create_test_event(
+            &admin_keys,
+            9002,
+            vec![
+                Tag::custom(TagKind::h(), [group_id]),
+                Tag::custom(TagKind::custom("open"), [""]),
+                Tag::custom(TagKind::custom("public"), [""]),
+            ],
+        )
+        .await;
+        groups.handle_edit_metadata(&metadata_event).unwrap();
+
+        // Post content to the group as non-member
+        let content_event =
+            create_test_event(&member_keys, 7, vec![Tag::custom(TagKind::h(), [group_id])]).await;
+
+        // Handle the event
+        let result = middleware.handle_event(&content_event, &None).await;
+        assert!(result.is_ok());
+
+        // Verify the content event was saved
         let events_to_save = result.unwrap().unwrap();
-        assert_eq!(events_to_save.len(), 3);
         match &events_to_save[0] {
             StoreCommand::SaveSignedEvent(event) => assert_eq!(event.id, content_event.id),
             _ => panic!("Expected SaveSignedEvent"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_auto_add_member_on_post_to_open_group_generates_member_events() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create an open group
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
+        let metadata_event = create_test_event(
+            &admin_keys,
+            9002,
+            vec![
+                Tag::custom(TagKind::h(), [group_id]),
+                Tag::custom(TagKind::custom("open"), [""]),
+                Tag::custom(TagKind::custom("public"), [""]),
+            ],
+        )
+        .await;
+        groups.handle_edit_metadata(&metadata_event).unwrap();
+
+        // Post content to the group as non-member
+        let content_event =
+            create_test_event(&member_keys, 7, vec![Tag::custom(TagKind::h(), [group_id])]).await;
+
+        // Handle the event
+        let result = middleware.handle_event(&content_event, &None).await;
+        assert!(result.is_ok());
+
+        // Verify member events were generated
+        let events_to_save = result.unwrap().unwrap();
+        assert_eq!(events_to_save.len(), 3);
         match &events_to_save[1] {
             StoreCommand::SaveUnsignedEvent(_) => (), // This is the put user event
             _ => panic!("Expected SaveUnsignedEvent for put user event"),
@@ -726,14 +1044,10 @@ mod tests {
             StoreCommand::SaveUnsignedEvent(_) => (), // This is the members event
             _ => panic!("Expected SaveUnsignedEvent for members update"),
         }
-
-        // Verify member was added to the group
-        let group = groups.get_group(group_id).unwrap();
-        assert!(group.is_member(&member_keys.public_key()));
     }
 
     #[tokio::test]
-    async fn test_no_auto_add_member_on_post_to_closed_group() {
+    async fn test_post_to_closed_group_does_not_auto_add_member() {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
@@ -777,21 +1091,210 @@ mod tests {
         let content_event =
             create_test_event(&member_keys, 7, vec![Tag::custom(TagKind::h(), [group_id])]).await;
 
-        // Handle the event - should fail because user is not a member
+        // Handle the event
         let result = middleware.handle_event(&content_event, &None).await;
         assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            format!(
-                "Restricted: User {} is not a member of this group",
-                member_keys.public_key
-            )
-        );
 
-        // Verify member was not added to the group
+        // Verify member was not added
         let group = groups.get_group(group_id).unwrap();
         assert!(!group.is_member(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_post_to_closed_group_as_non_member_is_rejected() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create a group (closed by default)
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
+        // Set group as public but keep it closed
+        let metadata_event = create_test_event(
+            &admin_keys,
+            9002,
+            vec![
+                Tag::custom(TagKind::h(), [group_id]),
+                Tag::custom(TagKind::custom("closed"), [""]),
+                Tag::custom(TagKind::custom("public"), [""]),
+            ],
+        )
+        .await;
+        groups.handle_edit_metadata(&metadata_event).unwrap();
+
+        // Try to post content to the group as non-member
+        let content_event =
+            create_test_event(&member_keys, 7, vec![Tag::custom(TagKind::h(), [group_id])]).await;
+
+        // Handle the event
+        let result = middleware.handle_event(&content_event, &None).await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Restricted: User {} is not a member of this group",
+                member_keys.public_key()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_outbound_visibility_public_group_non_member_can_see_event() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, non_member_keys) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create a public group
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
+        // Set group as public
+        let metadata_event = create_test_event(
+            &admin_keys,
+            9002,
+            vec![
+                Tag::custom(TagKind::h(), [group_id]),
+                Tag::custom(TagKind::custom("public"), [""]),
+            ],
+        )
+        .await;
+        groups.handle_edit_metadata(&metadata_event).unwrap();
+
+        // Create a group content event
+        let content_event = create_test_event(
+            &member_keys,
+            11,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+
+        // Test non-member can see event in public group
+        let mut state = create_test_state(Some(non_member_keys.public_key()));
+        let mut ctx = create_test_context(
+            &mut state,
+            RelayMessage::Event {
+                subscription_id: SubscriptionId::new("test"),
+                event: Box::new(content_event),
+            },
+        );
+        middleware.process_outbound(&mut ctx).await.unwrap();
+        assert!(ctx.message.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_process_outbound_visibility_private_group_non_member_cannot_see_event() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, non_member_keys) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create a private group
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![
+                Tag::custom(TagKind::h(), [group_id]),
+                Tag::custom(TagKind::p(), ["true"]),
+            ],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
+        // Create a group content event
+        let content_event = create_test_event(
+            &member_keys,
+            11,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+
+        // Test non-member cannot see event in private group
+        let mut state = create_test_state(Some(non_member_keys.public_key()));
+        let mut ctx = create_test_context(
+            &mut state,
+            RelayMessage::Event {
+                subscription_id: SubscriptionId::new("test"),
+                event: Box::new(content_event),
+            },
+        );
+        middleware.process_outbound(&mut ctx).await.unwrap();
+        assert!(ctx.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_process_outbound_visibility_unauthenticated_user_cannot_see_private_event() {
+        let (tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database, admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+
+        // Create a private group
+        let group_id = "test_group";
+        let create_event = create_test_event(
+            &admin_keys,
+            9007,
+            vec![
+                Tag::custom(TagKind::h(), [group_id]),
+                Tag::custom(TagKind::p(), ["true"]),
+            ],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
+        // Create a group content event
+        let content_event = create_test_event(
+            &member_keys,
+            11,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+
+        // Test unauthenticated user cannot see event in private group
+        let mut state = create_test_state(None);
+        let mut ctx = create_test_context(
+            &mut state,
+            RelayMessage::Event {
+                subscription_id: SubscriptionId::new("test"),
+                event: Box::new(content_event),
+            },
+        );
+        middleware.process_outbound(&mut ctx).await.unwrap();
+        assert!(ctx.message.is_none());
+
+        // Keep tmp_dir alive until end of test
+        drop(tmp_dir);
     }
 
     fn create_test_context<'a>(

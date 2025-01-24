@@ -337,13 +337,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_group_create() {
+    async fn test_handle_group_create_sets_admin() {
         let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
-
-        // Test creating a duplicate group
-        let tags = vec![Tag::custom(TagKind::h(), [&group_id])];
-        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE_9007, tags).await;
-        assert!(groups.handle_group_create(&event).await.is_err());
 
         // Verify group exists and admin is set
         let group = groups.get_group(&group_id).unwrap();
@@ -351,24 +346,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_set_roles() {
-        let (admin_keys, member_keys, _) = create_test_keys().await;
+    async fn test_handle_group_create_rejects_duplicate_group() {
+        let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
 
-        // Create a group first
+        // Test creating a duplicate group
+        let tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE_9007, tags).await;
+        assert!(groups.handle_group_create(&event).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_set_roles_admin_can_promote_member() {
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let groups = create_test_groups_with_db(&admin_keys).await;
+
+        // Create group and add member
         let create_event = create_test_event(
             &admin_keys,
             KIND_GROUP_CREATE_9007,
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
+        groups.handle_group_create(&create_event).await.unwrap();
 
-        let groups = create_test_groups_with_db(&admin_keys).await;
-
-        // Create the group
-        let group = groups.handle_group_create(&create_event).await.unwrap();
-        assert!(group.id == TEST_GROUP_ID);
-
-        // Add a member first
         let add_event = create_test_event(
             &admin_keys,
             KIND_GROUP_ADD_USER_9000,
@@ -378,10 +378,9 @@ mod tests {
             ],
         )
         .await;
-
         groups.handle_put_user(&add_event).unwrap();
 
-        // Set roles
+        // Promote member to admin
         let set_roles_event = create_test_event(
             &admin_keys,
             KIND_GROUP_SET_ROLES_9006,
@@ -406,24 +405,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_put_user() {
-        let (admin_keys, member_keys, _) = create_test_keys().await;
+    async fn test_handle_set_roles_non_admin_cannot_set_roles() {
+        let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
+        let groups = create_test_groups_with_db(&admin_keys).await;
 
-        // Create a group first
+        // Create group and add member
         let create_event = create_test_event(
             &admin_keys,
             KIND_GROUP_CREATE_9007,
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
+        groups.handle_group_create(&create_event).await.unwrap();
 
+        let add_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_ADD_USER_9000,
+            vec![
+                Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
+                Tag::public_key(member_keys.public_key()),
+            ],
+        )
+        .await;
+        groups.handle_put_user(&add_event).unwrap();
+
+        // Attempt to set roles as non-admin
+        let set_roles_event = create_test_event(
+            &non_member_keys,
+            KIND_GROUP_SET_ROLES_9006,
+            vec![
+                Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
+                Tag::custom(
+                    TagKind::p(),
+                    [member_keys.public_key().to_string(), "admin".to_string()],
+                ),
+            ],
+        )
+        .await;
+
+        assert!(groups.handle_set_roles(&set_roles_event).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_put_user_admin_can_add_member() {
+        let (admin_keys, member_keys, _) = create_test_keys().await;
         let groups = create_test_groups_with_db(&admin_keys).await;
 
-        // Create the group
-        let group = groups.handle_group_create(&create_event).await.unwrap();
-        assert!(group.id == TEST_GROUP_ID);
+        // Create group
+        let create_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_CREATE_9007,
+            vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
 
-        // Add a member
+        // Add member
         let add_event = create_test_event(
             &admin_keys,
             KIND_GROUP_ADD_USER_9000,
@@ -442,24 +479,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_remove_user() {
-        let (admin_keys, member_keys, _) = create_test_keys().await;
+    async fn test_handle_put_user_non_admin_cannot_add_member() {
+        let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
+        let groups = create_test_groups_with_db(&admin_keys).await;
 
-        // Create a group first
+        // Create group
         let create_event = create_test_event(
             &admin_keys,
             KIND_GROUP_CREATE_9007,
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
+        groups.handle_group_create(&create_event).await.unwrap();
 
+        // Attempt to add member as non-admin
+        let add_event = create_test_event(
+            &non_member_keys,
+            KIND_GROUP_ADD_USER_9000,
+            vec![
+                Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
+                Tag::public_key(member_keys.public_key()),
+            ],
+        )
+        .await;
+
+        assert!(groups.handle_put_user(&add_event).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_remove_user_admin_can_remove_member() {
+        let (admin_keys, member_keys, _) = create_test_keys().await;
         let groups = create_test_groups_with_db(&admin_keys).await;
 
-        // Create the group
-        let group = groups.handle_group_create(&create_event).await.unwrap();
-        assert!(group.id == TEST_GROUP_ID);
+        // Create group and add member
+        let create_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_CREATE_9007,
+            vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
 
-        // Add a member first
         let add_event = create_test_event(
             &admin_keys,
             KIND_GROUP_ADD_USER_9000,
@@ -469,10 +529,9 @@ mod tests {
             ],
         )
         .await;
-
         groups.handle_put_user(&add_event).unwrap();
 
-        // Remove the member
+        // Remove member
         let remove_event = create_test_event(
             &admin_keys,
             KIND_GROUP_REMOVE_USER_9001,
@@ -491,10 +550,108 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_edit_metadata() {
+    async fn test_handle_remove_user_non_admin_cannot_remove_member() {
+        let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
+        let groups = create_test_groups_with_db(&admin_keys).await;
+
+        // Create group and add member
+        let create_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_CREATE_9007,
+            vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
+        )
+        .await;
+        groups.handle_group_create(&create_event).await.unwrap();
+
+        let add_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_ADD_USER_9000,
+            vec![
+                Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
+                Tag::public_key(member_keys.public_key()),
+            ],
+        )
+        .await;
+        groups.handle_put_user(&add_event).unwrap();
+
+        // Attempt to remove member as non-admin
+        let remove_event = create_test_event(
+            &non_member_keys,
+            KIND_GROUP_REMOVE_USER_9001,
+            vec![
+                Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
+                Tag::public_key(member_keys.public_key()),
+            ],
+        )
+        .await;
+
+        assert!(groups.handle_remove_user(&remove_event).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_edit_metadata_can_set_name() {
         let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
 
-        // Edit metadata
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Name, ["New Group Name"]),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
+        assert!(groups.handle_edit_metadata(&event).is_ok());
+
+        let group = groups.get_group(&group_id).unwrap();
+        assert_eq!(group.metadata.name, "New Group Name");
+    }
+
+    #[tokio::test]
+    async fn test_handle_edit_metadata_can_set_about() {
+        let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
+
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("about"), ["About text"]),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
+        assert!(groups.handle_edit_metadata(&event).is_ok());
+
+        let group = groups.get_group(&group_id).unwrap();
+        assert_eq!(group.metadata.about, Some("About text".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_edit_metadata_can_set_picture() {
+        let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
+
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("picture"), ["picture_url"]),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
+        assert!(groups.handle_edit_metadata(&event).is_ok());
+
+        let group = groups.get_group(&group_id).unwrap();
+        assert_eq!(group.metadata.picture, Some("picture_url".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_edit_metadata_can_set_visibility() {
+        let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
+
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("public"), &[] as &[String]),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
+        assert!(groups.handle_edit_metadata(&event).is_ok());
+
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(!group.metadata.private);
+    }
+
+    #[tokio::test]
+    async fn test_handle_edit_metadata_can_set_multiple_fields() {
+        let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
+
         let tags = vec![
             Tag::custom(TagKind::h(), [&group_id]),
             Tag::custom(TagKind::Name, ["New Group Name"]),
@@ -505,7 +662,6 @@ mod tests {
         let event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
         assert!(groups.handle_edit_metadata(&event).is_ok());
 
-        // Verify metadata was updated
         let group = groups.get_group(&group_id).unwrap();
         assert_eq!(group.metadata.name, "New Group Name");
         assert_eq!(group.metadata.about, Some("About text".to_string()));
@@ -514,7 +670,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_create_invite() {
+    async fn test_handle_create_invite_creates_valid_invite() {
+        let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
+
+        // Create invite
+        let invite_code = "test_invite_123";
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let event =
+            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags.clone()).await;
+        groups.handle_create_invite(&event).unwrap();
+
+        // Verify invite was created
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(group.invites.contains_key(invite_code));
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_invite_can_be_used_to_join() {
         let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
 
         // Create invite
@@ -523,17 +698,11 @@ mod tests {
             Tag::custom(TagKind::h(), [&group_id]),
             Tag::custom(TagKind::custom("code"), [invite_code]),
         ];
-        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags).await;
-        assert!(groups.handle_create_invite(&event).is_ok());
+        let event =
+            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags.clone()).await;
+        groups.handle_create_invite(&event).unwrap();
 
-        // Verify invite was created
-        let group = groups.get_group(&group_id).unwrap();
-        assert!(group.invites.contains_key(invite_code));
-
-        // Drop the group reference before proceeding
-        drop(group);
-
-        // Test using invite
+        // Use invite
         let join_tags = vec![
             Tag::custom(TagKind::h(), [&group_id]),
             Tag::custom(TagKind::custom("code"), [invite_code]),
@@ -548,16 +717,138 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_join_leave_requests() {
+    async fn test_handle_create_invite_marks_invite_as_used() {
         let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
 
-        // Test join request
+        // Create invite
+        let invite_code = "test_invite_123";
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let event =
+            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags.clone()).await;
+        groups.handle_create_invite(&event).unwrap();
+
+        // Use invite
+        let join_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let join_event =
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
+        groups.handle_join_request(&join_event).unwrap();
+
+        // Verify invite is marked as used
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(group.invites[invite_code].pubkey.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_handle_join_request_with_valid_invite() {
+        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+
+        // Create invite
+        let invite_code = "test_invite_123";
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let event =
+            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags.clone()).await;
+        groups.handle_create_invite(&event).unwrap();
+
+        // Use invite to join
+        let join_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let join_event =
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
+        assert!(groups.handle_join_request(&join_event).unwrap());
+
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(group.is_member(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_join_request_with_invalid_invite() {
+        let (groups, _, member_keys, _, group_id) = setup_test_groups().await;
+
+        // Try to join with invalid invite code
+        let join_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), ["invalid_code"]),
+        ];
+        let join_event =
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
+        assert!(!groups.handle_join_request(&join_event).unwrap());
+
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(!group.is_member(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_join_request_without_invite_adds_to_requests() {
+        let (groups, _, member_keys, _, group_id) = setup_test_groups().await;
+
+        // Join without invite code
         let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let join_event =
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
         assert!(!groups.handle_join_request(&join_event).unwrap());
 
-        // Manually add member
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(!group.is_member(&member_keys.public_key()));
+        assert!(group.join_requests.contains(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_join_request_with_used_invite() {
+        let (groups, admin_keys, member_keys, non_member_keys, group_id) =
+            setup_test_groups().await;
+
+        // Create and use invite
+        let invite_code = "test_invite_123";
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let event =
+            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags.clone()).await;
+        groups.handle_create_invite(&event).unwrap();
+
+        // First member uses invite
+        let join_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let join_event =
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
+        groups.handle_join_request(&join_event).unwrap();
+
+        // Second member tries to use same invite
+        let join_tags2 = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let join_event2 = create_test_event(
+            &non_member_keys,
+            KIND_GROUP_USER_JOIN_REQUEST_9021,
+            join_tags2,
+        )
+        .await;
+        assert!(!groups.handle_join_request(&join_event2).unwrap());
+
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(!group.is_member(&non_member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_leave_request_member_can_leave() {
+        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+
+        // Add member first
         let add_tags = vec![
             Tag::custom(TagKind::h(), [&group_id]),
             Tag::public_key(member_keys.public_key()),
@@ -571,8 +862,258 @@ mod tests {
             create_test_event(&member_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
         assert!(groups.handle_leave_request(&leave_event).unwrap());
 
-        // Verify member was removed
         let group = groups.get_group(&group_id).unwrap();
         assert!(!group.is_member(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_leave_request_non_member_cannot_leave() {
+        let (groups, _, non_member_keys, _, group_id) = setup_test_groups().await;
+
+        // Test leave request from non-member
+        let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let leave_event = create_test_event(
+            &non_member_keys,
+            KIND_GROUP_USER_LEAVE_REQUEST_9022,
+            leave_tags,
+        )
+        .await;
+        assert!(groups.handle_leave_request(&leave_event).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_leave_request_admin_can_leave_if_not_last_admin() {
+        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+
+        // Add member as admin
+        let add_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::public_key(member_keys.public_key()),
+        ];
+        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
+        groups.handle_put_user(&add_event).unwrap();
+
+        // Make member an admin
+        let set_roles_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_SET_ROLES_9006,
+            vec![
+                Tag::custom(TagKind::h(), [&group_id]),
+                Tag::custom(
+                    TagKind::p(),
+                    [member_keys.public_key().to_string(), "admin".to_string()],
+                ),
+            ],
+        )
+        .await;
+        groups.handle_set_roles(&set_roles_event).unwrap();
+
+        // Original admin tries to leave
+        let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let leave_event =
+            create_test_event(&admin_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
+        assert!(groups.handle_leave_request(&leave_event).unwrap());
+
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(!group.is_member(&admin_keys.public_key()));
+        assert!(group.is_admin(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_leave_request_last_admin_can_leave() {
+        let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
+
+        // Test leave request from last admin
+        let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let leave_event =
+            create_test_event(&admin_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
+        assert!(groups.handle_leave_request(&leave_event).unwrap());
+
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(!group.is_member(&admin_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_leave_request_removes_from_join_requests() {
+        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+
+        // Add member first
+        let add_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::public_key(member_keys.public_key()),
+        ];
+        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
+        groups.handle_put_user(&add_event).unwrap();
+
+        // Add to join requests
+        let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let join_event =
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
+        groups.handle_join_request(&join_event).unwrap();
+
+        // Test leave request
+        let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let leave_event =
+            create_test_event(&member_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
+        assert!(groups.handle_leave_request(&leave_event).unwrap());
+
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(!group.join_requests.contains(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_edit_metadata_non_admin_cannot_edit() {
+        let (groups, _, non_member_keys, _, group_id) = setup_test_groups().await;
+
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Name, ["New Group Name"]),
+        ];
+        let event = create_test_event(&non_member_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
+        assert!(groups.handle_edit_metadata(&event).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_edit_metadata_member_cannot_edit() {
+        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+
+        // Add member first
+        let add_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::public_key(member_keys.public_key()),
+        ];
+        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
+        groups.handle_put_user(&add_event).unwrap();
+
+        // Try to edit metadata as member
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Name, ["New Group Name"]),
+        ];
+        let event = create_test_event(&member_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
+        assert!(groups.handle_edit_metadata(&event).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_edit_metadata_rejects_invalid_group() {
+        let (groups, admin_keys, _, _, _) = setup_test_groups().await;
+
+        let tags = vec![
+            Tag::custom(TagKind::h(), ["invalid_group_id"]),
+            Tag::custom(TagKind::Name, ["New Group Name"]),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
+        assert!(groups.handle_edit_metadata(&event).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_edit_metadata_preserves_unmodified_fields() {
+        let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
+
+        // First set multiple fields
+        let initial_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Name, ["Initial Name"]),
+            Tag::custom(TagKind::custom("about"), ["Initial About"]),
+            Tag::custom(TagKind::custom("picture"), ["initial_picture_url"]),
+        ];
+        let initial_event =
+            create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, initial_tags).await;
+        groups.handle_edit_metadata(&initial_event).unwrap();
+
+        // Then update only the name
+        let update_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Name, ["Updated Name"]),
+        ];
+        let update_event =
+            create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, update_tags).await;
+        groups.handle_edit_metadata(&update_event).unwrap();
+
+        // Verify other fields are preserved
+        let group = groups.get_group(&group_id).unwrap();
+        assert_eq!(group.metadata.name, "Updated Name");
+        assert_eq!(group.metadata.about, Some("Initial About".to_string()));
+        assert_eq!(
+            group.metadata.picture,
+            Some("initial_picture_url".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_invite_non_admin_cannot_create() {
+        let (groups, _, non_member_keys, _, group_id) = setup_test_groups().await;
+
+        let invite_code = "test_invite_123";
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let event = create_test_event(&non_member_keys, KIND_GROUP_CREATE_INVITE_9009, tags).await;
+        assert!(groups.handle_create_invite(&event).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_invite_member_cannot_create() {
+        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
+
+        // Add member first
+        let add_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::public_key(member_keys.public_key()),
+        ];
+        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
+        groups.handle_put_user(&add_event).unwrap();
+
+        // Try to create invite as member
+        let invite_code = "test_invite_123";
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let event = create_test_event(&member_keys, KIND_GROUP_CREATE_INVITE_9009, tags).await;
+        assert!(groups.handle_create_invite(&event).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_invite_rejects_duplicate_code() {
+        let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
+
+        // Create first invite
+        let invite_code = "test_invite_123";
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let event =
+            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags.clone()).await;
+        groups.handle_create_invite(&event).unwrap();
+
+        // Try to create invite with same code
+        let duplicate_event =
+            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags).await;
+        assert!(groups.handle_create_invite(&duplicate_event).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_invite_rejects_missing_code() {
+        let (groups, admin_keys, _, _, group_id) = setup_test_groups().await;
+
+        let tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags).await;
+        assert!(groups.handle_create_invite(&event).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_invite_rejects_invalid_group() {
+        let (groups, admin_keys, _, _, _) = setup_test_groups().await;
+
+        let invite_code = "test_invite_123";
+        let tags = vec![
+            Tag::custom(TagKind::h(), ["invalid_group_id"]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags).await;
+        assert!(groups.handle_create_invite(&event).is_err());
     }
 }
