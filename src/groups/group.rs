@@ -186,17 +186,12 @@ impl TryFrom<&Tag> for GroupMember {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Invite {
     pub event_id: EventId,
-    pub pubkey: Option<PublicKey>,
     pub roles: HashSet<GroupRole>,
 }
 
 impl Invite {
     pub fn new(event_id: EventId, roles: HashSet<GroupRole>) -> Self {
-        Self {
-            event_id,
-            pubkey: None,
-            roles,
-        }
+        Self { event_id, roles }
     }
 }
 
@@ -290,9 +285,6 @@ impl std::fmt::Debug for Group {
         writeln!(f, "  invites: {{")?;
         for (code, invite) in &self.invites {
             write!(f, "    {}: {{ ", code)?;
-            if let Some(pubkey) = invite.pubkey {
-                write!(f, "pubkey: \"{}\", ", pubkey)?;
-            }
             writeln!(
                 f,
                 "roles: [{}] }},",
@@ -621,19 +613,8 @@ impl Group {
             return Ok(false);
         };
 
-        if invite.pubkey.is_some() {
-            info!(
-                "Invite already used, adding join request for {}",
-                event.pubkey
-            );
-            self.join_requests.insert(event.pubkey);
-            self.update_state();
-            return Ok(false);
-        }
-
-        // Invite code matched and is available
+        // Invite code matched
         info!("Invite code matched, adding member {}", event.pubkey);
-        invite.pubkey = Some(event.pubkey);
         let roles = invite.roles.clone();
 
         self.members
@@ -1304,7 +1285,6 @@ mod tests {
 
         assert!(group.join_request(&join_event).unwrap());
         assert!(group.is_member(&member_keys.public_key()));
-        assert!(group.invites[invite_code].pubkey.is_some());
     }
 
     #[tokio::test]

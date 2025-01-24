@@ -738,10 +738,6 @@ mod tests {
         let join_event =
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
         groups.handle_join_request(&join_event).unwrap();
-
-        // Verify invite is marked as used
-        let group = groups.get_group(&group_id).unwrap();
-        assert!(group.invites[invite_code].pubkey.is_some());
     }
 
     #[tokio::test]
@@ -827,7 +823,7 @@ mod tests {
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
         groups.handle_join_request(&join_event).unwrap();
 
-        // Second member tries to use same invite
+        // Second member uses same invite
         let join_tags2 = vec![
             Tag::custom(TagKind::h(), [&group_id]),
             Tag::custom(TagKind::custom("code"), [invite_code]),
@@ -838,10 +834,10 @@ mod tests {
             join_tags2,
         )
         .await;
-        assert!(!groups.handle_join_request(&join_event2).unwrap());
+        assert!(groups.handle_join_request(&join_event2).unwrap());
 
         let group = groups.get_group(&group_id).unwrap();
-        assert!(!group.is_member(&non_member_keys.public_key()));
+        assert!(group.is_member(&non_member_keys.public_key()));
     }
 
     #[tokio::test]
