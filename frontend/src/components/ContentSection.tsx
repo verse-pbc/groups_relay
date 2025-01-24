@@ -85,7 +85,7 @@ export class ContentSection extends Component<ContentSectionProps, ContentSectio
     const content = group.content || []
 
     return (
-      <div class="h-full flex flex-col">
+      <div class="h-full flex flex-col overflow-hidden">
         <div class="p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
           <h3 class="text-sm font-medium text-[var(--color-text-primary)] flex items-center gap-2">
             <span>💬</span>
@@ -110,7 +110,7 @@ export class ContentSection extends Component<ContentSectionProps, ContentSectio
                         {this.formatTimestamp(item.created_at)}
                       </span>
                     </div>
-                    <p class="text-sm text-[var(--color-text-primary)] break-words leading-relaxed mt-0.5">
+                    <p class="text-sm text-[var(--color-text-primary)] break-all whitespace-pre-wrap leading-relaxed mt-0.5">
                       {item.content}
                     </p>
                   </div>

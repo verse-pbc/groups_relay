@@ -131,7 +131,7 @@ export class GroupInfo extends Component<GroupInfoProps> {
                 </div>
               </div>
             ) : (
-              <p class="text-sm text-[var(--color-text-secondary)]">
+              <p class="text-sm text-[var(--color-text-secondary)] break-all whitespace-pre-wrap">
                 {group.about || 'No description provided'}
               </p>
             )}
