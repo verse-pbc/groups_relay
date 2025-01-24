@@ -13,6 +13,7 @@ interface GroupCardProps {
   client: NostrClient
   showMessage: (message: string, type: 'success' | 'error' | 'info') => void
   onDelete?: (groupId: string) => void
+  updateGroupsMap: (updater: (map: Map<string, Group>) => void) => void
 }
 
 interface GroupCardState {
@@ -361,6 +362,7 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
                 <InviteSection
                   group={group}
                   client={client}
+                  updateGroupsMap={this.props.updateGroupsMap}
                 />
               )}
               {activeTab === 'requests' && (

@@ -22,6 +22,7 @@ export interface GroupInvite {
   code: string;
   pubkey?: string;
   roles: string[];
+  id: string;
 }
 
 export interface GroupContent {

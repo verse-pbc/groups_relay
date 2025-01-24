@@ -5,6 +5,7 @@ import type { Group } from '../types'
 interface InviteSectionProps {
   group: Group
   client: NostrClient
+  updateGroupsMap: (updater: (map: Map<string, Group>) => void) => void
 }
 
 interface InviteSectionState {
@@ -12,6 +13,7 @@ interface InviteSectionState {
   inviteCode: string
   error: string
   showCopied: boolean
+  inviteAction: { type: 'delete', code: string } | null
 }
 
 export class InviteSection extends Component<InviteSectionProps, InviteSectionState> {
@@ -25,7 +27,8 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
       isCreatingInvite: false,
       inviteCode: '',
       error: '',
-      showCopied: false
+      showCopied: false,
+      inviteAction: null
     }
   }
 
@@ -72,9 +75,30 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
     }, 2000)
   }
 
+  handleDeleteInvite = async (code: string) => {
+    const invite = this.props.group.invites[code]
+    if (!invite?.id) return
+
+    this.setState({ inviteAction: { type: 'delete', code } })
+
+    try {
+      await this.props.client.deleteEvent(this.props.group.id, invite.id)
+      this.props.updateGroupsMap(groupsMap => {
+        const group = groupsMap.get(this.props.group.id)
+        if (group?.invites) {
+          delete group.invites[code]
+        }
+      })
+    } catch (error) {
+      console.error('Failed to delete invite:', error)
+    } finally {
+      this.setState({ inviteAction: null })
+    }
+  }
+
   render() {
     const { group } = this.props
-    const { isCreatingInvite, inviteCode, error, showCopied } = this.state
+    const { isCreatingInvite, inviteCode, error, showCopied, inviteAction } = this.state
     const invites = group.invites || {}
     const hasInvites = Object.keys(invites).length > 0
 
@@ -151,13 +175,34 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
                           </span>
                         )}
                       </div>
-                      <button
-                        onClick={() => this.copyInviteLink(code)}
-                        class="opacity-0 group-hover:opacity-100 text-xs text-[var(--color-text-tertiary)]
-                               hover:text-[var(--color-text-secondary)] transition-all"
-                      >
-                        {showCopied ? 'Copied!' : 'Copy Join Link'}
-                      </button>
+                      <div class="flex items-center gap-1">
+                        <button
+                          onClick={() => this.copyInviteLink(code)}
+                          class="opacity-0 group-hover:opacity-100 text-xs text-[var(--color-text-tertiary)]
+                                 hover:text-[var(--color-text-secondary)] transition-all"
+                        >
+                          {showCopied ? 'Copied!' : 'Copy Join Link'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (inviteAction?.type === 'delete' && inviteAction.code === code) {
+                              this.handleDeleteInvite(code)
+                            } else {
+                              this.setState({ inviteAction: { type: 'delete', code } })
+                            }
+                          }}
+                          class={`text-[11px] opacity-0 group-hover:opacity-100 transition-all duration-150
+                                 ${inviteAction?.type === 'delete' && inviteAction.code === code
+                                   ? 'text-red-400 hover:text-red-300'
+                                   : 'text-[var(--color-text-tertiary)] hover:text-red-400'}`}
+                        >
+                          {inviteAction?.type === 'delete' && inviteAction.code === code ? (
+                            'Delete?'
+                          ) : (
+                            '×'
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </li>

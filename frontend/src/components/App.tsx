@@ -182,7 +182,7 @@ export class App extends Component<AppProps, AppState> {
       if (code) {
         group.invites = {
           ...group.invites,
-          [code]: { roles },
+          [code]: { roles, id: event.id },
         };
         groupsMap.set(groupId, { ...group });
       }
@@ -347,6 +347,7 @@ export class App extends Component<AppProps, AppState> {
                   client={this.props.client}
                   showMessage={this.showMessage}
                   onDelete={this.handleGroupDelete}
+                  updateGroupsMap={this.updateGroupsMap}
                 />
               ))}
             </div>
