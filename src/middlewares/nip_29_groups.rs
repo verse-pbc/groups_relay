@@ -153,9 +153,10 @@ impl Nip29Middleware {
             }
 
             k if k == KIND_GROUP_DELETE_EVENT_9005 => {
-                let Some(group) = self.groups.find_group_from_event(event) else {
-                    return Err(Error::notice("Group not found"));
-                };
+                let mut group = self
+                    .groups
+                    .find_group_from_event_mut(event)?
+                    .ok_or(Error::notice("Group not found"))?;
 
                 match group.delete_event_request(event, &self.relay_pubkey, authed_pubkey) {
                     Ok(commands) => commands,

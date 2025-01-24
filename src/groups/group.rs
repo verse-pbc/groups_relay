@@ -185,13 +185,15 @@ impl TryFrom<&Tag> for GroupMember {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Invite {
+    pub event_id: EventId,
     pub pubkey: Option<PublicKey>,
     pub roles: HashSet<GroupRole>,
 }
 
 impl Invite {
-    pub fn new(roles: HashSet<GroupRole>) -> Self {
+    pub fn new(event_id: EventId, roles: HashSet<GroupRole>) -> Self {
         Self {
+            event_id,
             pubkey: None,
             roles,
         }
@@ -397,7 +399,7 @@ impl Group {
     }
 
     pub fn delete_event_request(
-        &self,
+        &mut self,
         delete_request_event: &Event,
         relay_pubkey: &PublicKey,
         authed_pubkey: &Option<PublicKey>,
@@ -410,7 +412,25 @@ impl Group {
             return Err(Error::notice("User is not authorized to delete this event"));
         }
 
-        let event_ids = delete_request_event.tags.event_ids().copied();
+        let event_ids: Vec<_> = delete_request_event.tags.event_ids().copied().collect();
+
+        // We may be deleting invites, remove them from memory too.
+        let codes_to_remove: Vec<_> = self
+            .invites
+            .iter()
+            .filter_map(|(code, invite)| {
+                if event_ids.contains(&invite.event_id) {
+                    Some(code.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for code in codes_to_remove {
+            self.invites.remove(&code);
+        }
+
         let filter = Filter::new().ids(event_ids);
 
         Ok(vec![
@@ -626,27 +646,27 @@ impl Group {
 
     pub fn create_invite(
         &mut self,
-        event: &Event,
+        invite_event: &Event,
         relay_pubkey: &PublicKey,
     ) -> Result<bool, Error> {
-        if event.kind != KIND_GROUP_CREATE_INVITE_9009 {
+        if invite_event.kind != KIND_GROUP_CREATE_INVITE_9009 {
             return Err(Error::notice(format!(
                 "Invalid event kind for create invite {}",
-                event.kind
+                invite_event.kind
             )));
         }
 
-        if !self.can_create_invites(&event.pubkey, relay_pubkey) {
+        if !self.can_create_invites(&invite_event.pubkey, relay_pubkey) {
             return Err(Error::notice("User is not authorized to create invites"));
         }
 
-        let invite_code = event
+        let invite_code = invite_event
             .tags
             .find(TagKind::custom("code"))
             .and_then(|t| t.content())
             .ok_or(Error::notice("Invite code not found"))?;
 
-        let invite = Invite::new(HashSet::from([GroupRole::Member]));
+        let invite = Invite::new(invite_event.id, HashSet::from([GroupRole::Member]));
 
         self.invites.insert(invite_code.to_string(), invite);
         self.update_state();
@@ -762,10 +782,7 @@ impl Group {
                 .map(|r| GroupRole::from_str(r).unwrap_or(GroupRole::Member))
                 .collect();
 
-            let invite = Invite {
-                pubkey: None,
-                roles,
-            };
+            let invite = Invite::new(event.id, roles);
 
             self.invites.insert(code.to_string(), invite);
             self.updated_at = event.created_at;
@@ -1321,7 +1338,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_event_request() {
         let (admin_keys, member_keys, non_member_keys) = create_test_keys();
-        let (group, _) = create_test_group(&admin_keys).await;
+        let (mut group, _) = create_test_group(&admin_keys).await;
         let relay_pubkey = admin_keys.public_key();
 
         // Create a test event to delete
@@ -1445,5 +1462,42 @@ mod tests {
 
         let result = group.delete_event_request(&delete_request, &relay_pubkey, &None);
         assert!(result.is_err());
+
+        // Test: Deleting an invite event removes it from the invites map
+        let invite_code = "test_invite_123";
+        let create_invite_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_CREATE_INVITE_9009,
+            vec![Tag::custom(TagKind::custom("code"), [invite_code])],
+        )
+        .await;
+
+        // Add the invite to the group
+        group
+            .create_invite(&create_invite_event, &relay_pubkey)
+            .unwrap();
+        assert!(group.invites.contains_key(invite_code));
+
+        // Delete the invite event
+        let delete_invite_request = create_test_event(
+            &admin_keys,
+            KIND_GROUP_DELETE_EVENT_9005,
+            vec![
+                Tag::custom(TagKind::h(), [group.id.clone()]),
+                Tag::event(create_invite_event.id),
+            ],
+        )
+        .await;
+
+        let result = group.delete_event_request(
+            &delete_invite_request,
+            &relay_pubkey,
+            &Some(admin_keys.public_key()),
+        );
+        assert!(result.is_ok());
+        assert!(
+            !group.invites.contains_key(invite_code),
+            "Invite should be removed from the invites map after deletion"
+        );
     }
 }
