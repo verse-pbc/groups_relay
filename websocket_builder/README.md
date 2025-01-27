@@ -1,88 +1,81 @@
 # WebSocket Builder
 
-A flexible middleware-based WebSocket handling framework for Rust applications. This library provides a clean and extensible way to build WebSocket servers with customizable message processing pipelines.
+A middleware-based WebSocket framework for building protocol-aware servers in Rust. Designed for building stateful connection pipelines with type-safe message processing.
 
-## Features
+## Core Features
 
-- Middleware-based architecture for processing incoming and outgoing messages
+- Bidirectional middleware pipeline for message processing
 - Type-safe message conversion between wire format and application types
-- Per-connection state management
-- Graceful connection lifecycle handling
-- Built-in cancellation support
-- Async/await based design
+- Per-connection state management with automatic cleanup
+- Built-in cancellation support via `CancellationToken`
+- Configurable channel size with backpressure handling
 
-## Usage
+## Installation
 
-Here's a basic example of how to use the WebSocket Builder:
+Add this to your `Cargo.toml`:
+
+```toml
+[dependencies]
+websocket_builder = "0.1.0"
+tokio = { version = "1.38", features = ["full"] }
+tokio-util = { version = "0.7.1", features = ["rt"] }
+axum = { version = "0.7", features = ["ws"] }
+async-trait = "0.1"
+```
+
+## Quick Example
 
 ```rust
-use websocket_builder::{WebSocketBuilder, StateFactory, MessageConverter, Middleware};
+use websocket_builder::{WebSocketBuilder, StateFactory, MessageConverter, Middleware, WebSocketHandler};
 use async_trait::async_trait;
+use axum::{
+    extract::{WebSocketUpgrade, ConnectInfo, State},
+    response::IntoResponse,
+};
+use std::{net::SocketAddr, sync::Arc};
+use tokio_util::sync::CancellationToken;
 
-// 1. Define your connection state
-#[derive(Default, Debug)]
-struct ClientState {
+// 1. Define your state
+#[derive(Default)]
+struct MyState {
     message_count: u64,
 }
 
 // 2. Create a state factory
-struct TestStateFactory;
-
-impl StateFactory<ClientState> for TestStateFactory {
-    fn create_state(&self, _token: CancellationToken) -> ClientState {
-        ClientState::default()
+struct MyStateFactory;
+impl StateFactory<MyState> for MyStateFactory {
+    fn create_state(&self, _token: CancellationToken) -> MyState {
+        MyState::default()
     }
 }
 
-// 3. Implement a message converter
-struct MessageConverter;
-
-impl MessageConverter<String, String> for MessageConverter {
-    fn inbound_from_string(&self, payload: String) -> Result<Option<String>, anyhow::Error> {
-        Ok(Some(payload))
-    }
-
-    fn outbound_to_string(&self, payload: String) -> Result<String, anyhow::Error> {
-        Ok(payload)
-    }
-}
-
-// 4. Create your middleware
+// 3. Create a middleware
+#[derive(Debug)]
 struct LoggerMiddleware;
 
 #[async_trait]
 impl Middleware for LoggerMiddleware {
-    type State = ClientState;
+    type State = MyState;
     type IncomingMessage = String;
     type OutgoingMessage = String;
 
-    async fn process_inbound<'a>(
-        &'a self,
-        ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<(), anyhow::Error> {
-        println!("Received message: {}", ctx.message);
-        ctx.next().await
-    }
-
-    async fn process_outbound<'a>(
-        &'a self,
-        ctx: &mut OutboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<(), anyhow::Error> {
-        println!("Sending message: {}", ctx.message.as_ref().unwrap());
+    async fn process_inbound(&self, ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>) -> Result<(), anyhow::Error> {
+        println!("Received: {}", ctx.message);
         ctx.next().await
     }
 }
 
-// 5. Build and use the WebSocket handler
-let ws_handler = WebSocketBuilder::new(TestStateFactory, MessageConverter)
+// 4. Build handler
+let ws_handler = WebSocketBuilder::new(MyStateFactory, JsonConverter)
     .with_middleware(LoggerMiddleware)
+    .with_channel_size(100)
     .build();
 
-// 6. Use with your web framework (example using axum)
-async fn websocket_handler(
+// 5. Use with axum
+async fn ws_route(
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    State(handler): State<Arc<WebSocketHandler<...>>>,
+    State(handler): State<Arc<WebSocketHandler<MyState, String, String, JsonConverter, MyStateFactory>>>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| async move {
         handler
@@ -93,25 +86,23 @@ async fn websocket_handler(
 }
 ```
 
-## Architecture
+## Error Handling
 
-The WebSocket Builder uses a layered architecture:
+Errors are propagated through the middleware chain with state preservation:
 
-1. **State Management**: Each connection maintains its own state through the `StateFactory` trait
-2. **Message Conversion**: The `MessageConverter` trait handles conversion between wire format and application types
-3. **Middleware Pipeline**: A chain of middleware components that process messages in both directions
-4. **Connection Lifecycle**: Handles connection establishment, message processing, and graceful shutdown
+```rust
+pub enum WebsocketError<State> {
+    IoError(std::io::Error, State),
+    WebsocketError(axum::Error, State),
+    HandlerError(Box<dyn std::error::Error + Send + Sync>, State),
+    // ...
+}
+```
 
-## Middleware
+## Status
 
-Middleware components can:
-- Process incoming messages before they reach your application
-- Process outgoing messages before they're sent to the client
-- Modify the message content
-- Access and modify connection state
-- Send messages back to the client
-- Short-circuit the middleware chain
+Early-stage project under active development. Breaking changes should be expected.
 
 ## License
 
-MIT License
+MIT

@@ -1,3 +1,5 @@
+ARG RUST_VERSION=1.84.0
+
 FROM node:20-slim as frontend-builder
 
 WORKDIR /usr/src/app/frontend
