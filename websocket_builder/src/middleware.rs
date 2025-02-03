@@ -8,23 +8,23 @@ pub trait Middleware: Send + Sync + std::fmt::Debug {
     type IncomingMessage: Send + Sync + 'static;
     type OutgoingMessage: Send + Sync + 'static;
 
-    async fn process_inbound<'a>(
-        &'a self,
-        ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    async fn process_inbound(
+        &self,
+        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.next().await
     }
 
-    async fn process_outbound<'a>(
-        &'a self,
-        ctx: &mut OutboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    async fn process_outbound(
+        &self,
+        ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.next().await
     }
 
-    async fn on_connect<'a>(
-        &'a self,
-        ctx: &mut ConnectionContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    async fn on_connect(
+        &self,
+        ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.next().await
     }

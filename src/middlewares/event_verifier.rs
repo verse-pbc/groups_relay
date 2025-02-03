@@ -13,10 +13,10 @@ impl Middleware for EventVerifierMiddleware {
     type IncomingMessage = ClientMessage;
     type OutgoingMessage = RelayMessage;
 
-    async fn process_inbound<'a>(
-        &'a self,
-        ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<()> {
+    async fn process_inbound(
+        &self,
+        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
         match &ctx.message {
             ClientMessage::Event(event) => {
                 if event.verify().is_err() {

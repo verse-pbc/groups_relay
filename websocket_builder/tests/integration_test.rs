@@ -47,18 +47,18 @@ impl Middleware for OneMiddleware {
     type IncomingMessage = String;
     type OutgoingMessage = String;
 
-    async fn process_inbound<'a>(
-        &'a self,
-        ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    async fn process_inbound(
+        &self,
+        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.state.lock().await.inbound_count += 1;
         ctx.message = format!("One({})", ctx.message);
         ctx.next().await
     }
 
-    async fn process_outbound<'a>(
-        &'a self,
-        ctx: &mut OutboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    async fn process_outbound(
+        &self,
+        ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.state.lock().await.outbound_count += 1;
         ctx.message = Some(format!("Uno({})", ctx.message.as_ref().unwrap()));
@@ -77,9 +77,9 @@ impl Middleware for TwoMiddleware {
     type IncomingMessage = String;
     type OutgoingMessage = String;
 
-    async fn process_inbound<'a>(
-        &'a self,
-        ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    async fn process_inbound(
+        &self,
+        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.state.lock().await.inbound_count += 1;
         ctx.message = format!("Two({})", ctx.message);
@@ -87,9 +87,9 @@ impl Middleware for TwoMiddleware {
         ctx.next().await
     }
 
-    async fn process_outbound<'a>(
-        &'a self,
-        ctx: &mut OutboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    async fn process_outbound(
+        &self,
+        ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.state.lock().await.outbound_count += 1;
         ctx.message = Some(format!("Dos({})", ctx.message.as_ref().unwrap()));
@@ -106,26 +106,51 @@ impl Middleware for ThreeMiddleware {
     type IncomingMessage = String;
     type OutgoingMessage = String;
 
-    async fn process_inbound<'a>(
-        &'a self,
-        ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    async fn process_inbound(
+        &self,
+        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.state.lock().await.inbound_count += 1;
         ctx.message = format!("Three({})", ctx.message);
 
-        ctx.send_message(ctx.message.clone()).await?;
-
-        // ctx.next().await would be a no-op here because this is the last inbound middleware
-        Ok(())
+        ctx.next().await
     }
 
-    async fn process_outbound<'a>(
-        &'a self,
-        ctx: &mut OutboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    async fn process_outbound(
+        &self,
+        ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.state.lock().await.outbound_count += 1;
-        let payload = ctx.message.as_ref().unwrap();
-        ctx.message = Some(format!("Tres({})", payload));
+        ctx.message = Some(format!("Tres({})", ctx.message.as_ref().unwrap()));
+        ctx.next().await
+    }
+}
+
+#[derive(Debug)]
+pub struct FourMiddleware;
+
+#[async_trait]
+impl Middleware for FourMiddleware {
+    type State = Arc<Mutex<ClientState>>;
+    type IncomingMessage = String;
+    type OutgoingMessage = String;
+
+    async fn process_inbound(
+        &self,
+        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
+        ctx.state.lock().await.inbound_count += 1;
+        ctx.message = format!("Four({})", ctx.message);
+
+        ctx.next().await
+    }
+
+    async fn process_outbound(
+        &self,
+        ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
+        ctx.state.lock().await.outbound_count += 1;
+        ctx.message = Some(format!("Cuatro({})", ctx.message.as_ref().unwrap()));
         ctx.next().await
     }
 }
@@ -139,9 +164,9 @@ impl Middleware for FloodMiddleware {
     type IncomingMessage = String;
     type OutgoingMessage = String;
 
-    async fn process_inbound<'a>(
-        &'a self,
-        ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    async fn process_inbound(
+        &self,
+        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         println!("FloodMiddleware: Starting to send 200 messages");
         // Send 200 messages (more than the channel size of 10)
@@ -169,9 +194,9 @@ impl Middleware for FloodMiddleware {
         ctx.next().await
     }
 
-    async fn process_outbound<'a>(
-        &'a self,
-        ctx: &mut OutboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    async fn process_outbound(
+        &self,
+        ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.message = Some(format!("Flood({})", ctx.message.as_ref().unwrap()));
         ctx.next().await

@@ -259,6 +259,86 @@ impl Groups {
 
         group.leave_request(event)
     }
+
+    /// Returns counts of groups by their privacy settings
+    pub fn count_groups_by_privacy(&self) -> [(bool, bool, usize); 4] {
+        let mut counts = [
+            (false, false, 0),
+            (false, true, 0),
+            (true, false, 0),
+            (true, true, 0),
+        ];
+
+        for group in self.iter() {
+            let group = group.value();
+            let idx = match (group.metadata.private, group.metadata.closed) {
+                (false, false) => 0,
+                (false, true) => 1,
+                (true, false) => 2,
+                (true, true) => 3,
+            };
+            counts[idx].2 += 1;
+        }
+
+        counts
+    }
+
+    /// Returns counts of active groups by their privacy settings
+    pub async fn count_active_groups_by_privacy(&self) -> Result<[(bool, bool, usize); 4], Error> {
+        let mut counts = [
+            (false, false, 0),
+            (false, true, 0),
+            (true, false, 0),
+            (true, true, 0),
+        ];
+
+        for group in self.iter() {
+            let group = group.value();
+            // First check member count
+            if group.members.len() < 2 {
+                continue;
+            }
+
+            // Then check for content events
+            let events = match self
+                .db
+                .query(vec![Filter::new()
+                    .custom_tag(
+                        SingleLetterTag::lowercase(Alphabet::H),
+                        vec![group.id.as_str()],
+                    )
+                    .limit(1)])
+                .await
+            {
+                Ok(events) => events,
+                Err(e) => return Err(Error::notice(format!("Error querying database: {}", e))),
+            };
+
+            // Check if any event is a content event (not a 9xxx management event)
+            let has_content = events.iter().any(|e| match e.kind {
+                Kind::Custom(k) => k < 9000 || k > 9999,
+                _ => true,
+            });
+
+            if has_content {
+                let idx = match (group.metadata.private, group.metadata.closed) {
+                    (false, false) => 0,
+                    (false, true) => 1,
+                    (true, false) => 2,
+                    (true, true) => 3,
+                };
+                counts[idx].2 += 1;
+            }
+        }
+
+        Ok(counts)
+    }
+
+    /// Returns the number of active groups (groups with 2+ members and at least one content event)
+    pub async fn count_active_groups(&self) -> Result<usize, Error> {
+        let counts = self.count_active_groups_by_privacy().await?;
+        Ok(counts.iter().map(|(_, _, count)| count).sum())
+    }
 }
 
 impl Deref for Groups {

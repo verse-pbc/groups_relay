@@ -3,7 +3,7 @@ use nostr_sdk::client::Error as NostrSdkError;
 use nostr_sdk::prelude::*;
 use snafu::{Backtrace, Snafu};
 use tracing::{error, warn};
-use websocket_builder::{InboundContext, SendMessage};
+use websocket_builder::InboundContext;
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
@@ -172,10 +172,10 @@ impl Error {
         }
     }
 
-    pub async fn handle_inbound_error<'a>(
+    pub async fn handle_inbound_error(
         &self,
-        ctx: &mut InboundContext<'a, NostrConnectionState, ClientMessage, RelayMessage>,
-    ) {
+        ctx: &mut InboundContext<'_, NostrConnectionState, ClientMessage, RelayMessage>,
+    ) -> Result<()> {
         let relay_messages = match &ctx.message {
             ClientMessage::Event(event) => self.to_relay_messages_from_event(ctx.state, event.id),
             ClientMessage::Req {
@@ -187,14 +187,17 @@ impl Error {
             ClientMessage::Auth(auth) => self.to_relay_messages_from_event(ctx.state, auth.id),
             _ => {
                 error!("{}", self);
-                return;
+                return Ok(());
             }
         };
 
-        for relay_message in relay_messages {
-            if let Err(e) = ctx.send_message(relay_message).await {
-                error!("Error sending relay message: {}", e);
+        if let Some(sender) = &mut ctx.sender {
+            for msg in relay_messages {
+                if let Err(e) = sender.send(msg).await {
+                    error!("Failed to send error message: {:?}", e);
+                }
             }
         }
+        Ok(())
     }
 }

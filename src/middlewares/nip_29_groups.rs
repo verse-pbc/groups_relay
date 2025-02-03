@@ -5,6 +5,7 @@ use crate::groups::group::{
     KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006,
     KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022, NON_GROUP_ALLOWED_KINDS,
 };
+use crate::metrics;
 use crate::nostr_session_state::NostrConnectionState;
 use crate::Groups;
 use crate::StoreCommand;
@@ -12,6 +13,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
+use tracing::error;
 use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage};
 
 #[derive(Debug)]
@@ -35,6 +37,9 @@ impl Nip29Middleware {
     ) -> Result<Option<Vec<StoreCommand>>, Error> {
         if event.kind == KIND_GROUP_CREATE_9007 {
             let group = self.groups.handle_group_create(event).await?;
+
+            // Increment the groups created counter
+            metrics::groups_created().increment(1);
 
             let metadata_event = group.generate_metadata_event();
             let put_user_event = group.generate_put_user_event(&event.pubkey);
@@ -119,6 +124,7 @@ impl Nip29Middleware {
                 events.push(StoreCommand::SaveUnsignedEvent(
                     members_event.build(self.relay_pubkey),
                 ));
+
                 events
             }
 
@@ -138,6 +144,7 @@ impl Nip29Middleware {
                 events.push(StoreCommand::SaveUnsignedEvent(
                     members_event.build(self.relay_pubkey),
                 ));
+
                 events
             }
 
@@ -330,24 +337,31 @@ impl Middleware for Nip29Middleware {
     type IncomingMessage = ClientMessage;
     type OutgoingMessage = RelayMessage;
 
-    async fn process_inbound<'a>(
-        &'a self,
-        ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<()> {
+    async fn process_inbound(
+        &self,
+        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
         let response_message = match &ctx.message {
             ClientMessage::Event(ref event) => {
+                // Increment the inbound events processed counter
+                crate::metrics::inbound_events_processed().increment(1);
+
                 match self.handle_event(event, &ctx.state.authed_pubkey).await {
                     Ok(Some(events_to_save)) => {
                         let event_id = event.id;
                         if let Err(e) = ctx.state.save_events(events_to_save).await {
-                            e.handle_inbound_error(ctx).await;
+                            if let Err(e) = e.handle_inbound_error(ctx).await {
+                                error!("Failed to handle inbound error: {}", e);
+                            }
                             return Ok(());
                         }
                         Some(RelayMessage::ok(event_id, true, ""))
                     }
                     Ok(None) => return Ok(()),
                     Err(e) => {
-                        e.handle_inbound_error(ctx).await;
+                        if let Err(e) = e.handle_inbound_error(ctx).await {
+                            error!("Failed to handle inbound error: {}", e);
+                        }
                         return Ok(());
                     }
                 }
@@ -357,7 +371,9 @@ impl Middleware for Nip29Middleware {
                 subscription_id: _,
             } => {
                 if let Err(e) = self.verify_filters(ctx.state.authed_pubkey, filters) {
-                    e.handle_inbound_error(ctx).await;
+                    if let Err(e) = e.handle_inbound_error(ctx).await {
+                        error!("Failed to handle inbound error: {}", e);
+                    }
                     return Ok(());
                 }
                 None
@@ -371,10 +387,10 @@ impl Middleware for Nip29Middleware {
         }
     }
 
-    async fn process_outbound<'a>(
-        &'a self,
-        ctx: &mut OutboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<()> {
+    async fn process_outbound(
+        &self,
+        ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
         if let Some(RelayMessage::Event { event, .. }) = &ctx.message {
             if let Some(group) = self.groups.find_group_from_event(event) {
                 match group.can_see_event(&ctx.state.authed_pubkey, &self.relay_pubkey, event) {

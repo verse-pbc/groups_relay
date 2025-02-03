@@ -11,7 +11,7 @@ use clap::Parser;
 use groups_relay::{
     app_state, config,
     groups::Groups,
-    handler,
+    handler, metrics,
     middlewares::{
         EventStoreMiddleware, EventVerifierMiddleware, LoggerMiddleware, Nip29Middleware,
         Nip42Middleware, Nip70Middleware, NostrMessageConverter, ValidationMiddleware,
@@ -19,9 +19,12 @@ use groups_relay::{
     nostr_database::NostrDatabase,
     nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
 };
+use metrics_exporter_prometheus::PrometheusHandle;
 use nostr_sdk::{ClientMessage, RelayMessage};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use tower_http::cors::{Any, CorsLayer};
@@ -74,6 +77,7 @@ struct AppState {
         >,
     >,
     cancellation_token: CancellationToken,
+    metrics_handle: PrometheusHandle,
 }
 
 impl FromRef<AppState> for Arc<app_state::HttpServerState> {
@@ -101,6 +105,12 @@ impl FromRef<AppState>
 {
     fn from_ref(state: &AppState) -> Self {
         state.ws_handler.clone()
+    }
+}
+
+impl FromRef<AppState> for PrometheusHandle {
+    fn from_ref(state: &AppState) -> Self {
+        state.metrics_handle.clone()
     }
 }
 
@@ -136,11 +146,18 @@ async fn http_websocket_handler(
         let real_ip = get_real_ip(&headers, addr);
         info!("WebSocket upgrade requested from {}", real_ip);
         ws.on_upgrade(move |socket| async move {
-            match state
+            // Increment active connections counter
+            groups_relay::metrics::active_connections().increment(1.0);
+
+            let result = state
                 .ws_handler
                 .start(socket, real_ip.clone(), state.cancellation_token.clone())
-                .await
-            {
+                .await;
+
+            // Decrement active connections counter
+            groups_relay::metrics::active_connections().decrement(1.0);
+
+            match result {
                 Ok(_) => debug!("WebSocket connection closed for {}", real_ip),
                 Err(e) => error!("WebSocket error for {}: {:?}", real_ip, e),
             }
@@ -195,6 +212,10 @@ async fn http_websocket_handler(
     }
 }
 
+async fn metrics_handler(State(metrics_handle): State<PrometheusHandle>) -> impl IntoResponse {
+    metrics_handle.render()
+}
+
 #[cfg(feature = "console")]
 fn setup_tracing() {
     console_subscriber::init();
@@ -244,12 +265,12 @@ async fn main() -> Result<()> {
     let database = NostrDatabase::new(settings.db_path.clone(), relay_keys.clone())?;
     let database = Arc::new(database);
 
-    let groups = Groups::load_groups(database.clone(), relay_keys.public_key)
-        .await
-        .context("Failed to load groups")?;
+    let groups = Arc::new(Groups::load_groups(database.clone(), relay_keys.public_key()).await?);
 
-    let shared_groups = Arc::new(groups);
-    let http_state = Arc::new(app_state::HttpServerState::new(shared_groups.clone()));
+    // Setup metrics
+    let metrics_handle = groups_relay::metrics::setup_metrics()?;
+
+    let http_state = Arc::new(app_state::HttpServerState::new(groups.clone()));
 
     info!(
         "Listening for websocket connections at: {}",
@@ -264,7 +285,7 @@ async fn main() -> Result<()> {
     let event_verifier = EventVerifierMiddleware;
     let nip_42 = Nip42Middleware::new(settings.auth_url.clone());
     let nip_70 = Nip70Middleware;
-    let nip_29 = Nip29Middleware::new(shared_groups.clone(), relay_keys.public_key);
+    let nip_29 = Nip29Middleware::new(groups.clone(), relay_keys.public_key);
     let event_store = EventStoreMiddleware::new(database.clone());
     let connection_state_factory = NostrConnectionFactory::new(settings.relay_url.clone());
     let validation_middleware = ValidationMiddleware::new(relay_keys.public_key);
@@ -285,6 +306,7 @@ async fn main() -> Result<()> {
         http_state: http_state.clone(),
         ws_handler: Arc::new(websocket_handler),
         cancellation_token: cancellation_token.clone(),
+        metrics_handle: metrics_handle.clone(),
     };
 
     let cors = CorsLayer::new()
@@ -296,6 +318,7 @@ async fn main() -> Result<()> {
         .route("/", get(http_websocket_handler))
         .route("/health", get(handler::handle_health))
         .route("/api/groups", get(handler::handle_get_groups))
+        .route("/metrics", get(metrics_handler))
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .fallback_service(ServeDir::new("frontend/dist"))
         .layer(cors)
@@ -310,6 +333,30 @@ async fn main() -> Result<()> {
         info!("Shutdown signal received");
         handle_clone.graceful_shutdown(Some(std::time::Duration::from_secs(5)));
         cancellation_token.cancel();
+    });
+
+    // Start metrics loop
+    let groups_for_metrics = Arc::clone(&groups);
+    tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+
+            // Update total groups by privacy settings
+            for (private, closed, count) in groups_for_metrics.count_groups_by_privacy() {
+                metrics::groups_by_privacy(private, closed).set(count as f64);
+            }
+
+            // Update active groups by privacy settings
+            match groups_for_metrics.count_active_groups_by_privacy().await {
+                Ok(counts) => {
+                    for (private, closed, count) in counts {
+                        metrics::active_groups_by_privacy(private, closed).set(count as f64);
+                    }
+                }
+                Err(e) => error!("Failed to update active groups metrics: {}", e),
+            }
+        }
     });
 
     info!("Starting server on {}", addr);

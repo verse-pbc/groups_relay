@@ -32,13 +32,7 @@ pub const KIND_GROUP_ADMINS_39001: Kind = Kind::Custom(39001); // Relay -> All: 
 pub const KIND_GROUP_MEMBERS_39002: Kind = Kind::Custom(39002); // Relay -> All: List of group members
 pub const KIND_GROUP_ROLES_39003: Kind = Kind::Custom(39003); // Relay -> All: Supported roles in group
 
-// Group Content Kinds
-pub const KIND_GROUP_REACTION_7: Kind = Kind::Custom(7); // Reaction (NIP-25): Used for reactions to messages in groups
-pub const KIND_GROUP_CHAT_9: Kind = Kind::Custom(9); // Group Chat (NIP-29): General group chat messages
-pub const KIND_GROUP_NOTE_10: Kind = Kind::Custom(10); // Group Note (NIP-29): Regular notes in group context
-pub const KIND_GROUP_NOTE_ALT_11: Kind = Kind::Custom(11); // Group Note Alternative (NIP-29): Alternative note format
-pub const KIND_GROUP_REPLY_12: Kind = Kind::Custom(12); // Group Reply (NIP-29): Replies to group messages
-pub const KIND_GROUP_GENERIC_REPLY_1111: Kind = Kind::Custom(1111); // Generic Reply: General-purpose reply messages
+// Non Group Content Kinds
 pub const KIND_SIMPLE_LIST_10009: Kind = Kind::Custom(10009); // Simple Groups (NIP-51): List of groups a user wants to remember being in
 pub const KIND_CLAIM_28934: Kind = Kind::Custom(28934); // Claim (NIP-43): Claim auth
 

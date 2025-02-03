@@ -5,7 +5,7 @@ use nostr_sdk::prelude::*;
 use snafu::Backtrace;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
@@ -20,6 +20,7 @@ enum SubscriptionMessage {
         event: Event,
         sender: MessageSender<RelayMessage>,
     },
+    GetCount(oneshot::Sender<usize>),
 }
 
 // Add after the SubscriptionMessage enum
@@ -223,6 +224,9 @@ impl EventStoreConnection {
                                         }
                                     }
                                 }
+                            }
+                            SubscriptionMessage::GetCount(response) => {
+                                let _ = response.send(subscriptions.len());
                             }
                         }
                     }
@@ -526,6 +530,36 @@ impl EventStoreConnection {
         }
 
         Ok(())
+    }
+
+    /// Returns the current number of active subscriptions for this connection
+    pub async fn subscription_count(&self) -> Result<usize, Error> {
+        let (tx, rx) = oneshot::channel();
+        if let Err(e) = self
+            .subscription_sender
+            .send(SubscriptionMessage::GetCount(tx))
+        {
+            error!(
+                target: "event_store",
+                "[{}] Failed to get subscription count: {:?}",
+                self.id,
+                e
+            );
+            return Ok(0); // Return 0 on error to avoid breaking metrics
+        }
+
+        match rx.await {
+            Ok(count) => Ok(count),
+            Err(e) => {
+                error!(
+                    target: "event_store",
+                    "[{}] Failed to receive subscription count: {:?}",
+                    self.id,
+                    e
+                );
+                Ok(0) // Return 0 on error to avoid breaking metrics
+            }
+        }
     }
 }
 
