@@ -42,18 +42,18 @@ impl<O> MessageSender<O> {
 }
 
 #[derive(Debug)]
-pub struct ConnectionContext<
-    'a,
+pub struct ConnectionContext<'a, S, M, O>
+where
     S: Send + Sync + 'static,
-    I: Send + Sync + 'static,
+    M: Send + Sync + 'static,
     O: Send + Sync + 'static,
-> {
+{
     pub connection_id: String,
     pub state: &'a mut S,
     pub sender: Option<MessageSender<O>>,
     pub(crate) index: usize,
     pub(crate) middlewares:
-        &'a [Arc<dyn Middleware<State = S, IncomingMessage = I, OutgoingMessage = O>>],
+        &'a [Arc<dyn Middleware<State = S, IncomingMessage = M, OutgoingMessage = O>>],
 }
 
 impl<'a, S: Send + Sync + 'static, I: Send + Sync + 'static, O: Send + Sync + 'static>
@@ -117,18 +117,18 @@ pub trait SendMessage<O> {
 }
 
 #[derive(Debug)]
-pub struct DisconnectContext<
-    'a,
+pub struct DisconnectContext<'a, S, M, O>
+where
     S: Send + Sync + 'static,
-    I: Send + Sync + 'static,
+    M: Send + Sync + 'static,
     O: Send + Sync + 'static,
-> {
+{
     pub connection_id: String,
     pub state: &'a mut S,
     pub sender: Option<MessageSender<O>>,
     pub(crate) index: usize,
     pub(crate) middlewares:
-        &'a [Arc<dyn Middleware<State = S, IncomingMessage = I, OutgoingMessage = O>>],
+        &'a [Arc<dyn Middleware<State = S, IncomingMessage = M, OutgoingMessage = O>>],
 }
 
 impl<'a, S: Send + Sync + 'static, I: Send + Sync + 'static, O: Send + Sync + 'static>
@@ -168,12 +168,12 @@ impl<'a, S: Send + Sync + 'static, I: Send + Sync + 'static, O: Send + Sync + 's
 }
 
 #[derive(Debug)]
-pub struct InboundContext<
-    'a,
+pub struct InboundContext<'a, S, M, O>
+where
     S: Send + Sync + 'static,
     M: Send + Sync + 'static,
     O: Send + Sync + 'static,
-> {
+{
     pub connection_id: String,
     pub message: M,
     pub state: &'a mut S,
@@ -238,12 +238,12 @@ impl<S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 'stati
 }
 
 #[derive(Debug)]
-pub struct OutboundContext<
-    'a,
+pub struct OutboundContext<'a, S, M, O>
+where
     S: Send + Sync + 'static,
     M: Send + Sync + 'static,
     O: Send + Sync + 'static,
-> {
+{
     pub connection_id: String,
     pub message: Option<O>,
     pub state: &'a mut S,

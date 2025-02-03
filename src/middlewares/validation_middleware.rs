@@ -39,7 +39,7 @@ impl ValidationMiddleware {
         authed_pubkey: Option<&PublicKey>,
     ) -> Result<(), &'static str> {
         // If the authed pubkey is the relay's pubkey, skip validation
-        if authed_pubkey.map_or(false, |pk| pk == &self.relay_pubkey) {
+        if authed_pubkey == Some(&self.relay_pubkey) {
             debug!("Skipping filter validation for relay pubkey");
             return Ok(());
         }
@@ -91,10 +91,10 @@ impl Middleware for ValidationMiddleware {
     type IncomingMessage = ClientMessage;
     type OutgoingMessage = RelayMessage;
 
-    async fn process_inbound<'a>(
-        &'a self,
-        ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<()> {
+    async fn process_inbound(
+        &self,
+        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
         match &ctx.message {
             ClientMessage::Event(event) => {
                 debug!(

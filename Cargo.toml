@@ -33,6 +33,8 @@ tower = "0.5.2"
 futures = "0.3.31"
 nostr-database = "0.37.0"
 nostr-lmdb = "0.37.0"
+metrics = "0.24.1"
+metrics-exporter-prometheus = "0.16.2"
 
 [features]
 console = ["dep:console-subscriber"]

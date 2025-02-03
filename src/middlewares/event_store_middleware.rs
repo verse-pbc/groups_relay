@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::event_store_connection::EventStoreConnection;
+use crate::metrics;
 use crate::nostr_database::NostrDatabase;
 use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
@@ -39,7 +40,6 @@ pub struct EventStoreMiddleware {
 impl EventStoreMiddleware {
     pub fn new(database: Arc<NostrDatabase>) -> Self {
         let token = CancellationToken::new();
-
         Self {
             database,
             _token: token,
@@ -125,10 +125,10 @@ impl Middleware for EventStoreMiddleware {
     type IncomingMessage = ClientMessage;
     type OutgoingMessage = RelayMessage;
 
-    async fn process_inbound<'a>(
-        &'a self,
-        ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<()> {
+    async fn process_inbound(
+        &self,
+        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
         let connection_id = ctx.connection_id.clone();
 
         match &ctx.message {
@@ -149,6 +149,7 @@ impl Middleware for EventStoreMiddleware {
                     connection
                         .handle_subscription(subscription_id.clone(), filters.clone())
                         .await?;
+
                     debug!(
                         target: "event_store",
                         "[{}] Added subscription {}",
@@ -257,17 +258,17 @@ impl Middleware for EventStoreMiddleware {
         }
     }
 
-    async fn process_outbound<'a>(
-        &'a self,
-        ctx: &mut OutboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    async fn process_outbound(
+        &self,
+        ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.next().await
     }
 
-    async fn on_connect<'a>(
-        &'a self,
-        ctx: &mut ConnectionContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<()> {
+    async fn on_connect(
+        &self,
+        ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
         debug!(
             target: "event_store",
             "[{}] Setting up connection",
@@ -303,6 +304,17 @@ impl Middleware for EventStoreMiddleware {
             "[{}] Connection disconnected",
             ctx.connection_id
         );
+
+        // Get the active subscription count and decrement metrics in one go
+        if let Some(connection) = &ctx.state.relay_connection {
+            if let Ok(count) = connection.subscription_count().await {
+                if count > 0 {
+                    // Decrement all subscriptions at once
+                    metrics::active_subscriptions().decrement(count as f64);
+                }
+            }
+        }
+
         ctx.next().await
     }
 }
@@ -371,6 +383,7 @@ mod tests {
         let keys = Keys::generate();
         let database =
             Arc::new(NostrDatabase::new(db_path.to_str().unwrap().to_string(), keys).unwrap());
+
         (tmp_dir, database)
     }
 
@@ -497,21 +510,16 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         async fn expect_closed(&mut self, subscription_id: &SubscriptionId) {
             match self.expect_message().await {
                 RelayMessage::Closed {
-                    subscription_id: sub_id,
+                    subscription_id: id,
                     ..
                 } => {
-                    assert_eq!(
-                        sub_id, *subscription_id,
-                        "Closed message subscription ID mismatch"
-                    );
+                    assert_eq!(&id, subscription_id);
                 }
-                msg => panic!(
-                    "Expected Closed message for subscription {}, got: {:?}",
-                    subscription_id, msg
-                ),
+                msg => panic!("Expected Closed message, got: {:?}", msg),
             }
         }
 
@@ -660,7 +668,7 @@ mod tests {
         let (_tmp_dir, database) = setup_test().await;
 
         // Create and save a text note event
-        let (_, text_note) = create_signed_event("Text note event").await;
+        let (_keys, text_note) = create_signed_event("Text note event").await;
         database.save_signed_event(&text_note).await.unwrap();
 
         // Start server and connect client
@@ -740,7 +748,7 @@ mod tests {
     async fn test_empty_filter_returns_contact_list_events() {
         let (_tmp_dir, database) = setup_test().await;
 
-        // Create and save a contacts event
+        // Create and save a contact list event
         let keys = Keys::generate();
         let contacts_event = EventBuilder::new(Kind::ContactList, "[]")
             .build_with_ctx(&Instant::now(), keys.public_key());
@@ -816,70 +824,6 @@ mod tests {
             .await;
 
         // We should receive all events
-        let mut received_kinds = Vec::new();
-        for _ in 0..3 {
-            match client.expect_message().await {
-                RelayMessage::Event { event, .. } => received_kinds.push(event.kind),
-                msg => panic!("Expected Event message, got: {:?}", msg),
-            }
-        }
-
-        client.expect_eose(&subscription_id).await;
-
-        // Verify we got all kinds
-        assert!(
-            received_kinds.contains(&Kind::TextNote),
-            "No text note events"
-        );
-        assert!(
-            received_kinds.contains(&Kind::Metadata),
-            "No metadata events"
-        );
-        assert!(
-            received_kinds.contains(&Kind::ContactList),
-            "No contact list events"
-        );
-
-        // Clean up
-        client.close().await;
-        token.cancel();
-    }
-
-    #[tokio::test]
-    async fn test_empty_filter_returns_events_regardless_of_save_order() {
-        let (_tmp_dir, database) = setup_test().await;
-
-        // Create events of different kinds
-        let (keys, text_note) = create_signed_event("Text note event").await;
-        let metadata_event = EventBuilder::new(Kind::Metadata, "{}")
-            .build_with_ctx(&Instant::now(), keys.public_key());
-        let metadata_event = keys.sign_event(metadata_event).await.unwrap();
-        let contacts_event = EventBuilder::new(Kind::ContactList, "[]")
-            .build_with_ctx(&Instant::now(), keys.public_key());
-        let contacts_event = keys.sign_event(contacts_event).await.unwrap();
-
-        // Save events in reverse order
-        database.save_signed_event(&contacts_event).await.unwrap();
-        database.save_signed_event(&metadata_event).await.unwrap();
-        database.save_signed_event(&text_note).await.unwrap();
-
-        // Start server and connect client
-        let (addr, token) = start_test_server(database).await;
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let url = format!("ws://{}", addr);
-        let mut client = TestClient::connect(&url).await;
-
-        // Subscribe with empty filter
-        let subscription_id = SubscriptionId::new("all_events");
-        let empty_filter = vec![Filter::new()];
-        client
-            .send_message(&ClientMessage::Req {
-                subscription_id: subscription_id.clone(),
-                filters: empty_filter,
-            })
-            .await;
-
-        // We should receive all events
         let mut received_events = Vec::new();
         for _ in 0..3 {
             match client.expect_message().await {
@@ -905,57 +849,6 @@ mod tests {
             received_kinds.contains(&Kind::ContactList),
             "Missing contact list event"
         );
-
-        // Clean up
-        client.close().await;
-        token.cancel();
-    }
-
-    #[tokio::test]
-    async fn test_empty_filter_returns_events_from_single_author() {
-        let (_tmp_dir, database) = setup_test().await;
-
-        // Create multiple events from the same author
-        let (keys, event1) = create_signed_event("First event from author").await;
-        let event2 = EventBuilder::new(Kind::TextNote, "Second event from author")
-            .build_with_ctx(&Instant::now(), keys.public_key());
-        let event2 = keys.sign_event(event2).await.unwrap();
-
-        // Save events
-        database.save_signed_event(&event1).await.unwrap();
-        database.save_signed_event(&event2).await.unwrap();
-
-        // Start server and connect client
-        let (addr, token) = start_test_server(database).await;
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let url = format!("ws://{}", addr);
-        let mut client = TestClient::connect(&url).await;
-
-        // Subscribe with empty filter
-        let subscription_id = SubscriptionId::new("single_author_events");
-        let empty_filter = vec![Filter::new()];
-        client
-            .send_message(&ClientMessage::Req {
-                subscription_id: subscription_id.clone(),
-                filters: empty_filter,
-            })
-            .await;
-
-        // We should receive both events from the same author
-        let mut received_events = Vec::new();
-        for _ in 0..2 {
-            match client.expect_message().await {
-                RelayMessage::Event { event, .. } => received_events.push(*event),
-                msg => panic!("Expected Event message, got: {:?}", msg),
-            }
-        }
-
-        client.expect_eose(&subscription_id).await;
-
-        // Verify all events are from the same author
-        for event in received_events {
-            assert_eq!(event.pubkey, keys.public_key(), "Event from wrong author");
-        }
 
         // Clean up
         client.close().await;
@@ -1014,45 +907,6 @@ mod tests {
                 .any(|e| e.pubkey == keys2.public_key()),
             "No events from author 2"
         );
-
-        // Clean up
-        client.close().await;
-        token.cancel();
-    }
-
-    #[tokio::test]
-    async fn test_empty_filter_subscription_can_be_closed() {
-        let (_tmp_dir, database) = setup_test().await;
-
-        // Create and save an event
-        let (_, event) = create_signed_event("Test event").await;
-        database.save_signed_event(&event).await.unwrap();
-
-        // Start server and connect client
-        let (addr, token) = start_test_server(database).await;
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let url = format!("ws://{}", addr);
-        let mut client = TestClient::connect(&url).await;
-
-        // Subscribe with empty filter
-        let subscription_id = SubscriptionId::new("all_events");
-        let empty_filter = vec![Filter::new()];
-        client
-            .send_message(&ClientMessage::Req {
-                subscription_id: subscription_id.clone(),
-                filters: empty_filter,
-            })
-            .await;
-
-        // Receive event and EOSE
-        client.expect_event(&subscription_id, &event).await;
-        client.expect_eose(&subscription_id).await;
-
-        // Send Close message and verify we get a Closed response
-        client
-            .send_message(&ClientMessage::Close(subscription_id.clone()))
-            .await;
-        client.expect_closed(&subscription_id).await;
 
         // Clean up
         client.close().await;

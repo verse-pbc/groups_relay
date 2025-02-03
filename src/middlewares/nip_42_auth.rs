@@ -1,4 +1,5 @@
 use crate::nostr_session_state::NostrConnectionState;
+use anyhow::Error;
 use async_trait::async_trait;
 use nostr_sdk::{
     ClientMessage, Event, Kind, PublicKey, RelayMessage, TagKind, TagStandard, Timestamp,
@@ -92,10 +93,10 @@ impl Middleware for Nip42Auth {
     type IncomingMessage = ClientMessage;
     type OutgoingMessage = RelayMessage;
 
-    async fn process_inbound<'a>(
-        &'a self,
-        ctx: &mut InboundContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<(), anyhow::Error> {
+    async fn process_inbound(
+        &self,
+        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), Error> {
         let connection_id = ctx.connection_id.as_str();
 
         match &ctx.message {
@@ -130,10 +131,10 @@ impl Middleware for Nip42Auth {
         }
     }
 
-    async fn on_connect<'a>(
-        &'a self,
-        ctx: &mut ConnectionContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<(), anyhow::Error> {
+    async fn on_connect(
+        &self,
+        ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), Error> {
         let challenge_event = ctx.state.get_challenge_event();
         ctx.send_message(challenge_event).await?;
         ctx.next().await

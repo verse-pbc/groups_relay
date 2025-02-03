@@ -5,6 +5,7 @@ pub mod error;
 pub mod event_store_connection;
 pub mod groups;
 pub mod handler;
+pub mod metrics;
 pub mod middlewares;
 pub mod nostr_database;
 pub mod nostr_session_state;
