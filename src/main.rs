@@ -146,16 +146,10 @@ async fn http_websocket_handler(
         let real_ip = get_real_ip(&headers, addr);
         info!("WebSocket upgrade requested from {}", real_ip);
         ws.on_upgrade(move |socket| async move {
-            // Increment active connections counter
-            groups_relay::metrics::active_connections().increment(1.0);
-
             let result = state
                 .ws_handler
                 .start(socket, real_ip.clone(), state.cancellation_token.clone())
                 .await;
-
-            // Decrement active connections counter
-            groups_relay::metrics::active_connections().decrement(1.0);
 
             match result {
                 Ok(_) => debug!("WebSocket connection closed for {}", real_ip),

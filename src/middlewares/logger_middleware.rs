@@ -1,3 +1,4 @@
+use crate::metrics;
 use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -130,6 +131,7 @@ impl Middleware for LoggerMiddleware {
         ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         info!("[{}] Connected to relay", ctx.connection_id.as_str());
+        metrics::active_connections().increment(1.0);
         ctx.next().await
     }
 
@@ -138,6 +140,7 @@ impl Middleware for LoggerMiddleware {
         ctx: &mut DisconnectContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         info!("[{}] Disconnected from relay", ctx.connection_id.as_str());
+        metrics::active_connections().decrement(1.0);
         ctx.next().await
     }
 }
