@@ -104,7 +104,7 @@ impl Middleware for LoggerMiddleware {
             }
             RelayMessage::Ok {
                 event_id,
-                status,
+                status: _,
                 message,
             } => {
                 info!(
