@@ -10,6 +10,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -256,33 +257,25 @@ impl StateFactory<Arc<Mutex<ClientState>>> for TestStateFactory {
     }
 }
 
-pub struct TestState {
-    _inbound_count: u64,
-    _outbound_count: u64,
-}
-
 #[derive(Clone)]
-pub struct TestConverter;
-
-impl MessageConverter<String, String> for TestConverter {
-    fn inbound_from_string(&self, payload: String) -> Result<Option<String>, anyhow::Error> {
-        Ok(Some(payload))
-    }
-
-    fn outbound_to_string(&self, payload: String) -> Result<String, anyhow::Error> {
-        Ok(payload)
-    }
+#[allow(dead_code)]
+struct TestState {
+    counter: Arc<AtomicU64>,
 }
 
+#[allow(dead_code)]
 impl TestState {
     fn new() -> Self {
         Self {
-            _inbound_count: 0,
-            _outbound_count: 0,
+            counter: Arc::new(AtomicU64::new(0)),
         }
     }
 }
 
+#[derive(Clone)]
+struct TestConverter;
+
+#[allow(dead_code)]
 impl TestConverter {
     fn new() -> Self {
         Self
@@ -302,7 +295,8 @@ where
     shutdown: CancellationToken,
 }
 
-async fn websocket_handler<
+#[allow(clippy::type_complexity)]
+async fn test_websocket_handler<
     T: Send + Sync + Clone + 'static + std::fmt::Debug,
     I: Send + Sync + Clone + 'static,
     O: Send + Sync + Clone + 'static,
@@ -347,7 +341,7 @@ impl TestServer {
 
         println!("TestServer::start - Creating router");
         let app = Router::new()
-            .route("/", get(websocket_handler))
+            .route("/", get(test_websocket_handler))
             .with_state(Arc::new(server_state))
             .layer(tower_http::trace::TraceLayer::new_for_http());
 

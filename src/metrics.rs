@@ -70,5 +70,10 @@ pub fn setup_metrics() -> Result<PrometheusHandle> {
     let builder = PrometheusBuilder::new();
     let handle = builder.install_recorder()?;
 
+    // Reset gauges to 0 on startup
+    active_connections().set(0.0);
+    active_subscriptions().set(0.0);
+    active_groups().set(0.0);
+
     Ok(handle)
 }

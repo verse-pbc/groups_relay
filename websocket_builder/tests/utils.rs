@@ -15,6 +15,7 @@ pub async fn create_websocket_client(
     Ok(ws_stream)
 }
 
+#[allow(dead_code)]
 pub async fn assert_proxy_response(
     client: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
     message: &str,
@@ -30,6 +31,7 @@ pub async fn assert_proxy_response(
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct ServerState<T, I, O, Converter, Factory>
 where
@@ -43,6 +45,7 @@ where
     shutdown: CancellationToken,
 }
 
+#[allow(dead_code)]
 impl<T, I, O, Converter, Factory> ServerState<T, I, O, Converter, Factory>
 where
     T: Send + Sync + Clone + 'static,
