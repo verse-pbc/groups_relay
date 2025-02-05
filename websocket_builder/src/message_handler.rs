@@ -57,7 +57,7 @@ impl<
     ) -> Result<TapState, WebsocketError<TapState>> {
         let Ok(inbound_message) = self.message_converter.inbound_from_string(payload) else {
             return Err(WebsocketError::InboundMessageConversionError(
-                "Failed to convert inbound message to string".to_string(),
+                "Failed to convert inbound message".to_string(),
                 state,
             ));
         };
@@ -67,7 +67,7 @@ impl<
         };
 
         let mut ctx = InboundContext::new(
-            connection_id,
+            connection_id.clone(),
             inbound_message,
             self.sender.clone(),
             &mut state,
@@ -75,9 +75,27 @@ impl<
             0,
         );
 
+        debug!(
+            "[{}] Starting inbound message processing through middleware chain",
+            connection_id
+        );
+
+        // Process through first middleware
         if let Err(e) = self.middlewares[0].process_inbound(&mut ctx).await {
+            error!("[{}] Error in first middleware: {:?}", connection_id, e);
             return Err(WebsocketError::HandlerError(e.into(), state));
-        };
+        }
+
+        // Continue processing through the rest of the chain
+        if let Err(e) = ctx.next().await {
+            error!("[{}] Error in middleware chain: {:?}", connection_id, e);
+            return Err(WebsocketError::HandlerError(e.into(), state));
+        }
+
+        debug!(
+            "[{}] Completed inbound message processing through middleware chain",
+            connection_id
+        );
 
         Ok(state)
     }

@@ -14,15 +14,18 @@ use websocket_builder::{
     Middleware, OutboundContext, SendMessage,
 };
 
+#[derive(Clone)]
 pub struct NostrMessageConverter;
 
 impl MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
     fn outbound_to_string(&self, message: RelayMessage) -> Result<String> {
+        debug!("Converting outbound message to string: {:?}", message);
         Ok(message.as_json())
     }
 
     fn inbound_from_string(&self, message: String) -> Result<Option<ClientMessage>> {
         if let Ok(client_message) = ClientMessage::from_json(&message) {
+            debug!("Successfully parsed inbound message: {}", message);
             Ok(Some(client_message))
         } else {
             warn!("Ignoring invalid inbound message: {}", message);
