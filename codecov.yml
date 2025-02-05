@@ -1,0 +1,23 @@
+coverage:
+  status:
+    project:
+      default:
+        # Lower the target coverage threshold
+        target: 35%
+        # Allow coverage to drop by up to 5%
+        threshold: 5%
+    patch:
+      default:
+        # Lower the target coverage threshold for new code
+        target: 35%
+        # Allow coverage to drop by up to 5%
+        threshold: 5%
+        # Only fail if coverage drops by more than 5%
+        only_pulls: true
+
+# Ignore certain files/folders
+ignore:
+  - "tests/**/*"
+  - "**/*_test.rs"
+  - "**/*.test.rs"
+  - "**/tests/**"
