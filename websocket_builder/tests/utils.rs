@@ -15,7 +15,6 @@ pub async fn create_websocket_client(
     Ok(ws_stream)
 }
 
-#[allow(dead_code)]
 pub async fn assert_proxy_response(
     client: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
     message: &str,
@@ -28,6 +27,35 @@ pub async fn assert_proxy_response(
         Ok(())
     } else {
         Err(anyhow::anyhow!("Expected text message"))
+    }
+}
+
+#[derive(Clone)]
+pub struct ServerState<T, I, O, Converter, Factory>
+where
+    T: Send + Sync + Clone + 'static,
+    I: Send + Sync + Clone + 'static,
+    O: Send + Sync + Clone + 'static,
+    Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
+    Factory: StateFactory<T> + Send + Sync + Clone + 'static,
+{
+    ws_handler: WebSocketHandler<T, I, O, Converter, Factory>,
+    shutdown: CancellationToken,
+}
+
+impl<T, I, O, Converter, Factory> ServerState<T, I, O, Converter, Factory>
+where
+    T: Send + Sync + Clone + 'static,
+    I: Send + Sync + Clone + 'static,
+    O: Send + Sync + Clone + 'static,
+    Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
+    Factory: StateFactory<T> + Send + Sync + Clone + 'static,
+{
+    pub fn new(ws_handler: WebSocketHandler<T, I, O, Converter, Factory>) -> Self {
+        Self {
+            ws_handler,
+            shutdown: CancellationToken::new(),
+        }
     }
 }
 
