@@ -316,7 +316,7 @@ impl Groups {
 
             // Check if any event is a content event (not a 9xxx management event)
             let has_content = events.iter().any(|e| match e.kind {
-                Kind::Custom(k) => k < 9000 || k > 9999,
+                Kind::Custom(k) => !(9000..=9999).contains(&k),
                 _ => true,
             });
 
