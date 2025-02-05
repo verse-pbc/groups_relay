@@ -127,7 +127,7 @@ impl Nip42Auth {
     }
 
     fn get_auth_failure_reason(&self, event: &Event, challenge: Option<&str>) -> Option<String> {
-        if let None = challenge {
+        if challenge.is_none() {
             return Some("No challenge found in connection state".to_string());
         }
         let challenge = challenge.unwrap();

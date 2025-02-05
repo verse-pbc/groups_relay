@@ -35,14 +35,12 @@ impl ErrorConverter {
     }
 }
 
-#[async_trait]
 impl MessageConverter<String, String> for ErrorConverter {
-    async fn inbound_from_string(&self, message: String) -> Result<Option<String>, anyhow::Error> {
+    fn inbound_from_string(&self, message: String) -> Result<Option<String>, anyhow::Error> {
         if self.fail_inbound {
             Err(anyhow::anyhow!("Inbound conversion failed"))
         } else {
-            // Simulate a slow operation asynchronously by sleeping for 100ms
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            // Since we can't use async/await here, we'll just return immediately
             Ok(Some(message))
         }
     }
@@ -333,7 +331,7 @@ async fn test_channel_overflow() -> Result<(), Error> {
     // Try to receive messages until timeout or connection reset
     loop {
         match tokio::time::timeout(timeout, client.next()).await {
-            Ok(Some(Ok(msg))) => {
+            Ok(Some(Ok(_msg))) => {
                 received_count += 1;
                 if received_count >= 200 {
                     break;

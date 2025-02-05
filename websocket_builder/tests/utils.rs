@@ -1,9 +1,5 @@
 use anyhow::Result;
-use axum::{
-    extract::{ws::WebSocket, ws::WebSocketUpgrade},
-    routing::get,
-    Router,
-};
+use axum::{extract::ws::WebSocketUpgrade, routing::get, Router};
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
@@ -19,6 +15,7 @@ pub async fn create_websocket_client(
     Ok(ws_stream)
 }
 
+#[allow(dead_code)]
 pub async fn assert_proxy_response(
     client: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
     message: &str,
@@ -31,35 +28,6 @@ pub async fn assert_proxy_response(
         Ok(())
     } else {
         Err(anyhow::anyhow!("Expected text message"))
-    }
-}
-
-#[derive(Clone)]
-pub struct ServerState<T, I, O, Converter, Factory>
-where
-    T: Send + Sync + Clone + 'static,
-    I: Send + Sync + Clone + 'static,
-    O: Send + Sync + Clone + 'static,
-    Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
-    Factory: StateFactory<T> + Send + Sync + Clone + 'static,
-{
-    ws_handler: WebSocketHandler<T, I, O, Converter, Factory>,
-    shutdown: CancellationToken,
-}
-
-impl<T, I, O, Converter, Factory> ServerState<T, I, O, Converter, Factory>
-where
-    T: Send + Sync + Clone + 'static,
-    I: Send + Sync + Clone + 'static,
-    O: Send + Sync + Clone + 'static,
-    Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
-    Factory: StateFactory<T> + Send + Sync + Clone + 'static,
-{
-    pub fn new(ws_handler: WebSocketHandler<T, I, O, Converter, Factory>) -> Self {
-        Self {
-            ws_handler,
-            shutdown: CancellationToken::new(),
-        }
     }
 }
 
@@ -99,15 +67,21 @@ where
         let server_state_clone = Arc::clone(&server_state);
 
         let app = Router::new()
-            .route("/", get(move |ws: WebSocketUpgrade| {
-                let state = Arc::clone(&server_state_clone);
-                let addr = addr.clone();
-                async move {
-                    ws.on_upgrade(move |socket| async move {
-                        let _ = state.ws_handler.start(socket, addr.clone(), state.shutdown.clone()).await;
-                    })
-                }
-            }))
+            .route(
+                "/",
+                get(move |ws: WebSocketUpgrade| {
+                    let state = Arc::clone(&server_state_clone);
+                    let addr = addr.clone();
+                    async move {
+                        ws.on_upgrade(move |socket| async move {
+                            let _ = state
+                                .ws_handler
+                                .start(socket, addr.clone(), state.shutdown.clone())
+                                .await;
+                        })
+                    }
+                }),
+            )
             .with_state(server_state);
 
         tokio::spawn(async move {
@@ -138,4 +112,3 @@ where
         }
     }
 }
-
