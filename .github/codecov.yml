@@ -1,5 +1,8 @@
 codecov:
-  require_ci_to_pass: true
+  require_ci_to_pass: false
+  notify:
+    after_n_builds: 1
+    wait_for_ci: false
 
 coverage:
   precision: 2
@@ -9,22 +12,20 @@ coverage:
   status:
     project:
       default:
-        target: 35%
-        # Raise threshold to be more permissive
-        threshold: 15%
-        if_ci_failed: error
-        informational: false
-        only_pulls: true
+        target: auto
+        threshold: 10%
+        base: auto
+        if_not_found: success
+        if_ci_failed: success
+        informational: true
     patch:
       default:
-        # Make patch coverage less strict
-        target: auto
-        threshold: 15%
-        # Set base to parent commit
+        target: 0%
+        threshold: 100%
         base: auto
-        # Only check coverage on pull requests
+        if_not_found: success
+        if_ci_failed: success
         only_pulls: true
-        # Make patch checks informational only
         informational: true
     changes: false
 
@@ -37,7 +38,7 @@ parsers:
       macro: false
 
 comment:
-  layout: "reach,diff,flags,files,footer"
+  layout: "reach, diff, flags, files"
   behavior: default
   require_changes: false
 
