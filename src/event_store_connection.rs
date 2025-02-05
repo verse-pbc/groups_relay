@@ -183,6 +183,7 @@ impl EventStoreConnection {
                                     id_clone2, subscription_id, subscriptions.len()
                                 );
                                 subscriptions.insert(subscription_id, filters);
+                                crate::metrics::active_subscriptions().increment(1.0);
                             }
                             SubscriptionMessage::Remove(subscription_id) => {
                                 if subscriptions.remove(&subscription_id).is_some() {
@@ -193,6 +194,7 @@ impl EventStoreConnection {
                                         subscription_id,
                                         subscriptions.len()
                                     );
+                                    crate::metrics::active_subscriptions().decrement(1.0);
                                 }
                             }
                             SubscriptionMessage::CheckEvent { event, sender } => {
