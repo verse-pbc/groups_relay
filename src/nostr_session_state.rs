@@ -5,6 +5,8 @@ use std::backtrace::Backtrace;
 use tokio_util::sync::CancellationToken;
 use websocket_builder::StateFactory;
 
+const DEFAULT_RELAY_URL: &str = "wss://default.relay";
+
 #[derive(Debug, Clone)]
 pub struct NostrConnectionState {
     pub relay_url: String,
@@ -14,7 +16,29 @@ pub struct NostrConnectionState {
     pub connection_token: CancellationToken,
 }
 
+impl Default for NostrConnectionState {
+    fn default() -> Self {
+        Self {
+            relay_url: DEFAULT_RELAY_URL.to_string(),
+            challenge: None,
+            authed_pubkey: None,
+            relay_connection: None,
+            connection_token: CancellationToken::new(),
+        }
+    }
+}
+
 impl NostrConnectionState {
+    pub fn new(relay_url: String) -> Self {
+        Self {
+            relay_url,
+            challenge: None,
+            authed_pubkey: None,
+            relay_connection: None,
+            connection_token: CancellationToken::new(),
+        }
+    }
+
     pub fn is_authenticated(&self) -> bool {
         self.authed_pubkey.is_some()
     }
@@ -47,6 +71,7 @@ impl NostrConnectionState {
     }
 }
 
+#[derive(Clone)]
 pub struct NostrConnectionFactory {
     relay_url: String,
 }

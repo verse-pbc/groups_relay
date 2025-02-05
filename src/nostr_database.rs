@@ -61,8 +61,9 @@ impl NostrDatabase {
         self.save(event).await?;
 
         // Broadcast the event after successful save
+        // It's normal for this to fail if there are no subscribers
         if let Err(e) = self.event_sender.send(event.clone()) {
-            error!("Failed to broadcast saved event: {:?}", e);
+            debug!("No subscribers available for broadcast: {:?}", e);
         }
 
         Ok(())

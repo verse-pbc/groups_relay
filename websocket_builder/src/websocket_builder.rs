@@ -45,19 +45,18 @@ pub enum WebsocketError<TapState: Send + Sync + 'static> {
 }
 
 impl<TapState: Send + Sync + 'static> WebsocketError<TapState> {
-    pub fn state(self) -> TapState {
+    pub fn get_state(self) -> TapState {
         match self {
-            WebsocketError::HandlerError(_, state) => state,
-            WebsocketError::IoError(_, state) => state,
-            WebsocketError::ResolveError(_, state) => state,
-            WebsocketError::NoAddressesFound(_, state) => state,
-            WebsocketError::JoinError(_, state) => state,
-            WebsocketError::WebsocketError(_, state) => state,
-            WebsocketError::NoClosingHandshake(_, state) => state,
-            WebsocketError::MissingMiddleware(state) => state,
-            WebsocketError::InvalidTargetUrl(state) => state,
-            WebsocketError::InboundMessageConversionError(_, state) => state,
-            WebsocketError::OutboundMessageConversionError(_, state) => state,
+            Self::HandlerError(_, state) => state,
+            Self::IoError(_, state) => state,
+            Self::ResolveError(_, state) => state,
+            Self::NoAddressesFound(_, state) => state,
+            Self::JoinError(_, state) => state,
+            Self::WebsocketError(_, state) => state,
+            Self::NoClosingHandshake(_, state) => state,
+            Self::MissingMiddleware(state) => state,
+            Self::InvalidTargetUrl(state) => state,
+            Self::InboundMessageConversionError(_, state) | Self::OutboundMessageConversionError(_, state) => state,
         }
     }
 }
@@ -75,8 +74,8 @@ pub struct WebSocketBuilder<
     TapState: Send + Sync + 'static,
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
-    Converter: MessageConverter<I, O> + Send + Sync + 'static,
-    Factory: StateFactory<TapState>,
+    Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
+    Factory: StateFactory<TapState> + Send + Sync + Clone + 'static,
 > {
     state_factory: Factory,
     middlewares:
@@ -89,8 +88,8 @@ impl<
         TapState: std::fmt::Debug + Send + Sync + 'static,
         I: Send + Sync + 'static,
         O: Send + Sync + 'static,
-        Converter: MessageConverter<I, O> + Send + Sync + 'static,
-        Factory: StateFactory<TapState> + Send + Sync + 'static,
+        Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
+        Factory: StateFactory<TapState> + Send + Sync + Clone + 'static,
     > WebSocketBuilder<TapState, I, O, Converter, Factory>
 {
     pub fn new(state_factory: Factory, message_converter: Converter) -> Self {
@@ -102,7 +101,7 @@ impl<
         }
     }
 
-    /// The passed middleware will be used to wrap the existing middleware.
+    #[must_use]
     pub fn with_middleware<
         M: Middleware<State = TapState, IncomingMessage = I, OutgoingMessage = O> + 'static,
     >(
@@ -113,7 +112,8 @@ impl<
         self
     }
 
-    pub fn with_channel_size(mut self, size: usize) -> Self {
+    #[must_use]
+    pub const fn with_channel_size(mut self, size: usize) -> Self {
         self.channel_size = size;
         self
     }
@@ -131,13 +131,14 @@ impl<
 pub type MiddlewareVec<S, I, O> =
     Vec<Arc<dyn Middleware<State = S, IncomingMessage = I, OutgoingMessage = O>>>;
 
+#[derive(Clone)]
 pub struct WebSocketHandler<S, I, O, C, F>
 where
     S: Send + Sync + 'static,
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
-    C: MessageConverter<I, O> + Send + Sync + 'static,
-    F: StateFactory<S> + Send + Sync + 'static,
+    C: MessageConverter<I, O> + Send + Sync + Clone + 'static,
+    F: StateFactory<S> + Send + Sync + Clone + 'static,
 {
     middlewares: Arc<MiddlewareVec<S, I, O>>,
     message_converter: Arc<C>,
@@ -150,9 +151,22 @@ where
     TapState: Send + Sync + 'static,
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
-    Converter: MessageConverter<I, O> + Send + Sync + 'static,
-    Factory: StateFactory<TapState> + Send + Sync + 'static,
+    Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
+    Factory: StateFactory<TapState> + Send + Sync + Clone + 'static,
 {
+    /// Starts the WebSocket handler with the given socket.
+    ///
+    /// # Arguments
+    /// * `socket` - The WebSocket connection to handle
+    /// * `connection_id` - A unique identifier for this connection
+    /// * `cancellation_token` - A token that can be used to cancel the handler
+    ///
+    /// # Errors
+    /// Returns a `WebsocketError` if:
+    /// * The WebSocket connection fails
+    /// * Message conversion fails
+    /// * Middleware processing fails
+    /// * The handler encounters an IO error
     pub async fn start(
         &self,
         socket: WebSocket,
@@ -183,7 +197,7 @@ where
         .await
         {
             Ok(state) => state,
-            Err(e) => e.state(),
+            Err(e) => e.get_state(),
         };
 
         if let Err(e) = session_handler
@@ -210,9 +224,20 @@ async fn handle_connection_lifecycle<
     cancellation_token: CancellationToken,
     state: TapState,
 ) -> Result<TapState, WebsocketError<TapState>> {
-    let (state, server_receiver) = session_handler
+    info!("[{}] Starting connection lifecycle", connection_id);
+
+    let (state, server_receiver) = match session_handler
         .on_connect(connection_id.clone(), state)
-        .await?;
+        .await {
+            Ok(result) => {
+                info!("[{}] Connection setup successful", connection_id);
+                result
+            }
+            Err(e) => {
+                error!("[{}] Connection setup failed: {}", connection_id, e);
+                return Err(e);
+            }
+    };
 
     let state = match message_loop(
         &connection_id,
@@ -224,19 +249,23 @@ async fn handle_connection_lifecycle<
     )
     .await
     {
-        Ok(state) => state,
+        Ok(state) => {
+            info!("[{}] Message loop completed normally", connection_id);
+            state
+        }
         Err(e) => match e {
             WebsocketError::NoClosingHandshake(e, state) => {
-                debug!("Client closed without closing handshake: {}", e);
+                info!("[{}] Client closed without handshake: {}", connection_id, e);
                 return Ok(state);
             }
             _ => {
-                error!("Client error: {}", e);
+                error!("[{}] Message loop error: {}", connection_id, e);
                 return Err(e);
             }
         },
     };
 
+    info!("[{}] Connection lifecycle completed", connection_id);
     Ok(state)
 }
 
@@ -253,7 +282,7 @@ async fn message_loop<
     cancellation_token: CancellationToken,
     mut state: TapState,
 ) -> Result<TapState, WebsocketError<TapState>> {
-    debug!("[{}] Starting message loop", connection_id);
+    info!("[{}] Starting message loop", connection_id);
 
     // Helper function to handle a single message
     async fn handle_outgoing_message<TapState, I, O, Converter>(
@@ -326,11 +355,12 @@ async fn message_loop<
             biased;
 
             _ = cancellation_token.cancelled() => {
-                debug!("[{}] Cancellation token triggered, flushing pending messages", connection_id);
+                info!("[{}] Cancellation token triggered, starting graceful shutdown", connection_id);
 
                 // Flush any pending messages in the channel
                 while let Ok(msg) = server_receiver.try_recv() {
                     let (message, middleware_index) = msg;
+                    debug!("[{}] Flushing pending message from middleware {}", connection_id, middleware_index);
                     state = handle_outgoing_message(
                         connection_id,
                         &mut socket,
@@ -344,11 +374,12 @@ async fn message_loop<
                 }
 
                 // Send a close frame
+                info!("[{}] Sending close frame", connection_id);
                 if let Err(e) = socket.send(Message::Close(None)).await {
                     warn!("[{}] Failed to send close frame: {}", connection_id, e);
                 }
 
-                debug!("[{}] Finished flushing messages", connection_id);
+                info!("[{}] Graceful shutdown completed", connection_id);
                 return Ok(state);
             }
 
@@ -356,6 +387,7 @@ async fn message_loop<
                 debug!("[{}] Server receiver got message", connection_id);
                 match server_message {
                     Some((message, middleware_index)) => {
+                        debug!("[{}] Processing outbound message from middleware {}", connection_id, middleware_index);
                         state = handle_outgoing_message(
                             connection_id,
                             &mut socket,
@@ -366,9 +398,10 @@ async fn message_loop<
                             false,
                         )
                         .await?;
+                        debug!("[{}] Finished processing outbound message", connection_id);
                     }
                     None => {
-                        debug!("[{}] Receiver closed", connection_id);
+                        info!("[{}] Server receiver closed", connection_id);
                         return Ok(state);
                     }
                 }
@@ -377,32 +410,43 @@ async fn message_loop<
             message = socket.next() => {
                 match message {
                     Some(Ok(Message::Text(text))) => {
+                        debug!("[{}] Received text message: {}", connection_id, text);
                         state = handler
                             .handle_incoming_message(connection_id.to_string(), text, state)
-                            .await?
+                            .await?;
+                        debug!("[{}] Finished processing text message", connection_id);
                     }
                     Some(Ok(Message::Binary(_))) => {
+                        debug!("[{}] Received binary message (not implemented)", connection_id);
                         todo!("handle binary message")
                     }
                     Some(Ok(Message::Ping(payload))) => {
+                        debug!("[{}] Received ping, sending pong", connection_id);
                         if let Err(e) = socket.send(Message::Pong(payload)).await {
-                            warn!("Pong failed: {}", e);
+                            warn!("[{}] Failed to send pong: {}", connection_id, e);
                         }
                     }
                     Some(Ok(Message::Pong(_))) => {
-
+                        debug!("[{}] Received pong", connection_id);
                     }
                     Some(Ok(Message::Close(_))) => {
-                        info!("Client closed");
+                        info!("[{}] Received close frame from client", connection_id);
+                        // Send close frame in response if we haven't already
+                        if let Err(e) = socket.send(Message::Close(None)).await {
+                            debug!("[{}] Failed to send close frame response: {}", connection_id, e);
+                        }
                         return Ok(state);
                     }
                     Some(Err(e)) => {
                         if e.to_string().contains("without closing handshake") {
+                            info!("[{}] Client disconnected without closing handshake", connection_id);
                             return Err(WebsocketError::NoClosingHandshake(e, state));
                         }
+                        error!("[{}] WebSocket error: {}", connection_id, e);
                         return Err(WebsocketError::WebsocketError(e, state));
                     }
                     None => {
+                        info!("[{}] Client stream ended", connection_id);
                         return Ok(state);
                     }
                 }

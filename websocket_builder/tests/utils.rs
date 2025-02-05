@@ -1,12 +1,21 @@
+use anyhow::Result;
+use axum::{
+    extract::{ws::WebSocket, ws::WebSocketUpgrade},
+    routing::get,
+    Router,
+};
 use futures_util::{SinkExt, StreamExt};
-use tokio::net::TcpStream;
+use std::sync::Arc;
+use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use tokio_util::sync::CancellationToken;
+use websocket_builder::{MessageConverter, StateFactory, WebSocketHandler};
 
 pub async fn create_websocket_client(
     proxy_addr: &str,
-) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, Box<dyn std::error::Error>> {
-    let url = format!("ws://{}", proxy_addr);
-    let (ws_stream, _) = connect_async(url).await?;
+) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>> {
+    let url = format!("ws://{proxy_addr}");
+    let (ws_stream, _) = connect_async(&url).await?;
     Ok(ws_stream)
 }
 
@@ -14,13 +23,119 @@ pub async fn assert_proxy_response(
     client: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
     message: &str,
     expected_response: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     client.send(Message::Text(message.to_string())).await?;
 
     if let Some(Ok(Message::Text(response))) = client.next().await {
         assert_eq!(response, expected_response);
         Ok(())
     } else {
-        Err("Expected text message".into())
+        Err(anyhow::anyhow!("Expected text message"))
     }
 }
+
+#[derive(Clone)]
+pub struct ServerState<T, I, O, Converter, Factory>
+where
+    T: Send + Sync + Clone + 'static,
+    I: Send + Sync + Clone + 'static,
+    O: Send + Sync + Clone + 'static,
+    Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
+    Factory: StateFactory<T> + Send + Sync + Clone + 'static,
+{
+    ws_handler: WebSocketHandler<T, I, O, Converter, Factory>,
+    shutdown: CancellationToken,
+}
+
+impl<T, I, O, Converter, Factory> ServerState<T, I, O, Converter, Factory>
+where
+    T: Send + Sync + Clone + 'static,
+    I: Send + Sync + Clone + 'static,
+    O: Send + Sync + Clone + 'static,
+    Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
+    Factory: StateFactory<T> + Send + Sync + Clone + 'static,
+{
+    pub fn new(ws_handler: WebSocketHandler<T, I, O, Converter, Factory>) -> Self {
+        Self {
+            ws_handler,
+            shutdown: CancellationToken::new(),
+        }
+    }
+}
+
+pub struct TestServer<T, I, O, Converter, Factory>
+where
+    T: Send + Sync + Clone + 'static,
+    I: Send + Sync + Clone + 'static,
+    O: Send + Sync + Clone + 'static,
+    Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
+    Factory: StateFactory<T> + Send + Sync + Clone + 'static,
+{
+    ws_handler: WebSocketHandler<T, I, O, Converter, Factory>,
+    shutdown: CancellationToken,
+}
+
+impl<T, I, O, Converter, Factory> TestServer<T, I, O, Converter, Factory>
+where
+    T: Send + Sync + Clone + 'static,
+    I: Send + Sync + Clone + 'static,
+    O: Send + Sync + Clone + 'static,
+    Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
+    Factory: StateFactory<T> + Send + Sync + Clone + 'static,
+{
+    pub async fn start(
+        addr: impl Into<String>,
+        ws_handler: WebSocketHandler<T, I, O, Converter, Factory>,
+    ) -> Result<Self> {
+        let addr = addr.into();
+        let listener = TcpListener::bind(&addr).await?;
+        let shutdown = CancellationToken::new();
+        let server = Self {
+            ws_handler,
+            shutdown: shutdown.clone(),
+        };
+
+        let server_state = Arc::new(server.clone());
+        let server_state_clone = Arc::clone(&server_state);
+
+        let app = Router::new()
+            .route("/", get(move |ws: WebSocketUpgrade| {
+                let state = Arc::clone(&server_state_clone);
+                let addr = addr.clone();
+                async move {
+                    ws.on_upgrade(move |socket| async move {
+                        let _ = state.ws_handler.start(socket, addr.clone(), state.shutdown.clone()).await;
+                    })
+                }
+            }))
+            .with_state(server_state);
+
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        Ok(server)
+    }
+
+    pub async fn shutdown(&self) -> Result<()> {
+        self.shutdown.cancel();
+        Ok(())
+    }
+}
+
+impl<T, I, O, Converter, Factory> Clone for TestServer<T, I, O, Converter, Factory>
+where
+    T: Send + Sync + Clone + 'static,
+    I: Send + Sync + Clone + 'static,
+    O: Send + Sync + Clone + 'static,
+    Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
+    Factory: StateFactory<T> + Send + Sync + Clone + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            ws_handler: self.ws_handler.clone(),
+            shutdown: self.shutdown.clone(),
+        }
+    }
+}
+
