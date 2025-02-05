@@ -11,11 +11,10 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
-use utils::{create_websocket_client, assert_proxy_response};
+use utils::{assert_proxy_response, create_websocket_client};
 use websocket_builder::{
     InboundContext, MessageConverter, Middleware, OutboundContext, SendMessage, StateFactory,
     WebSocketBuilder, WebSocketHandler,
@@ -30,9 +29,8 @@ pub struct ClientState {
 #[derive(Clone)]
 pub struct Converter;
 
-#[async_trait]
 impl MessageConverter<String, String> for Converter {
-    async fn inbound_from_string(&self, payload: String) -> Result<Option<String>, anyhow::Error> {
+    fn inbound_from_string(&self, payload: String) -> Result<Option<String>, anyhow::Error> {
         Ok(Some(payload))
     }
 
@@ -257,41 +255,6 @@ impl StateFactory<Arc<Mutex<ClientState>>> for TestStateFactory {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct TestState {
-    inbound_count: u64,
-    outbound_count: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct TestConverter;
-
-#[async_trait]
-impl MessageConverter<String, String> for TestConverter {
-    async fn inbound_from_string(&self, payload: String) -> Result<Option<String>, anyhow::Error> {
-        Ok(Some(payload))
-    }
-
-    fn outbound_to_string(&self, payload: String) -> Result<String, anyhow::Error> {
-        Ok(payload)
-    }
-}
-
-impl TestState {
-    fn new() -> Self {
-        Self {
-            inbound_count: 0,
-            outbound_count: 0,
-        }
-    }
-}
-
-impl TestConverter {
-    fn new() -> Self {
-        Self
-    }
-}
-
 #[derive(Clone)]
 pub struct ServerState<T, I, O, Converter, Factory>
 where
@@ -326,7 +289,7 @@ async fn websocket_handler<
 }
 
 pub struct TestServer {
-    server_task: tokio::task::JoinHandle<()>,
+    _server_task: tokio::task::JoinHandle<()>,
     shutdown: CancellationToken,
 }
 
@@ -363,7 +326,7 @@ impl TestServer {
         });
 
         Ok(Self {
-            server_task,
+            _server_task: server_task,
             shutdown: cancellation_token,
         })
     }
@@ -498,8 +461,16 @@ async fn test_concurrent_message_processing() -> Result<(), anyhow::Error> {
 
     // Send messages concurrently
     let (result1, result2) = tokio::join!(
-        assert_proxy_response(&mut client1, "test1", "Uno(Dos(Tres(Three(Two(One(test1))))))"),
-        assert_proxy_response(&mut client2, "test2", "Uno(Dos(Tres(Three(Two(One(test2))))))")
+        assert_proxy_response(
+            &mut client1,
+            "test1",
+            "Uno(Dos(Tres(Three(Two(One(test1))))))"
+        ),
+        assert_proxy_response(
+            &mut client2,
+            "test2",
+            "Uno(Dos(Tres(Three(Two(One(test2))))))"
+        )
     );
 
     result1?;

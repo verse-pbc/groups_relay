@@ -25,15 +25,15 @@ impl MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
 
     fn inbound_from_string(&self, message: String) -> Result<Option<ClientMessage>> {
         // Parse synchronously since JSON parsing doesn't need to be async
-        let result = if let Ok(client_message) = ClientMessage::from_json(&message) {
+        
+        // Return immediately to maintain message order
+        if let Ok(client_message) = ClientMessage::from_json(&message) {
             debug!("Successfully parsed inbound message: {}", message);
             Ok(Some(client_message))
         } else {
             warn!("Ignoring invalid inbound message: {}", message);
             Ok(None)
-        };
-        // Return immediately to maintain message order
-        result
+        }
     }
 }
 
