@@ -3,7 +3,7 @@ mod utils;
 use anyhow::Result;
 use async_trait::async_trait;
 use axum::{
-    extract::{ConnectInfo, State, WebSocketUpgrade},
+    extract::{ws::WebSocketUpgrade, ConnectInfo, State},
     response::IntoResponse,
     routing::get,
     Router,
@@ -11,6 +11,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
@@ -252,6 +253,39 @@ pub struct TestStateFactory;
 impl StateFactory<Arc<Mutex<ClientState>>> for TestStateFactory {
     fn create_state(&self, _token: CancellationToken) -> Arc<Mutex<ClientState>> {
         Arc::new(Mutex::new(ClientState::default()))
+    }
+}
+
+pub struct TestState {
+    _inbound_count: u64,
+    _outbound_count: u64,
+}
+
+#[derive(Clone)]
+pub struct TestConverter;
+
+impl MessageConverter<String, String> for TestConverter {
+    fn inbound_from_string(&self, payload: String) -> Result<Option<String>, anyhow::Error> {
+        Ok(Some(payload))
+    }
+
+    fn outbound_to_string(&self, payload: String) -> Result<String, anyhow::Error> {
+        Ok(payload)
+    }
+}
+
+impl TestState {
+    fn new() -> Self {
+        Self {
+            _inbound_count: 0,
+            _outbound_count: 0,
+        }
+    }
+}
+
+impl TestConverter {
+    fn new() -> Self {
+        Self
     }
 }
 
@@ -546,5 +580,61 @@ async fn test_middleware_chain_format() -> Result<(), anyhow::Error> {
 
     server.shutdown().await?;
     println!("Server shut down");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_flood_middleware_with_backpressure() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Starting flood middleware test");
+    let addr = "127.0.0.1:8089";
+
+    let ws_handler = WebSocketBuilder::new(TestStateFactory, Converter)
+        .with_channel_size(10)
+        .with_middleware(FloodMiddleware)
+        .build();
+
+    let server = utils::TestServer::start(addr, ws_handler).await?;
+    let mut client = create_websocket_client(addr).await?;
+
+    // This message triggers FloodMiddleware to send 200 messages through a channel of size 10
+    client
+        .send(Message::Text("trigger flood".to_string()))
+        .await?;
+
+    // We should receive exactly 10 messages (the channel capacity) before the middleware starts dropping messages
+    let mut received_count = 0;
+    while let Ok(Some(msg)) = tokio::time::timeout(Duration::from_millis(100), client.next()).await
+    {
+        match msg {
+            Ok(Message::Text(msg)) => {
+                received_count += 1;
+                println!("Received message: {}", msg);
+                assert!(
+                    msg.starts_with("flood message "),
+                    "Expected message to start with 'flood message', got: {}",
+                    msg
+                );
+                assert!(
+                    msg.split_whitespace()
+                        .last()
+                        .unwrap()
+                        .parse::<usize>()
+                        .is_ok(),
+                    "Expected message to end with a number"
+                );
+            }
+            _ => {
+                panic!("Received unexpected message: {:?}", msg);
+            }
+        }
+    }
+
+    assert_eq!(
+        received_count, 10,
+        "Expected to receive exactly 10 messages (channel capacity) before messages start being dropped, got {}",
+        received_count
+    );
+
+    server.shutdown().await?;
     Ok(())
 }
