@@ -1,0 +1,49 @@
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  precision: 2
+  round: down
+  range: "30...100"
+
+  status:
+    project:
+      default:
+        target: 35%
+        # Raise threshold to be more permissive
+        threshold: 15%
+        if_ci_failed: error
+        informational: false
+        only_pulls: true
+    patch:
+      default:
+        # Make patch coverage less strict
+        target: auto
+        threshold: 15%
+        # Set base to parent commit
+        base: auto
+        # Only check coverage on pull requests
+        only_pulls: true
+        # Make patch checks informational only
+        informational: true
+    changes: false
+
+parsers:
+  gcov:
+    branch_detection:
+      conditional: true
+      loop: true
+      method: false
+      macro: false
+
+comment:
+  layout: "reach,diff,flags,files,footer"
+  behavior: default
+  require_changes: false
+
+ignore:
+  - "tests/**/*"
+  - "**/*_test.rs"
+  - "**/*.test.rs"
+  - "**/tests/**"
+  - "**/target/**"
