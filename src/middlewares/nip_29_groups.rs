@@ -1313,10 +1313,10 @@ mod tests {
         drop(tmp_dir);
     }
 
-    fn create_test_context<'a>(
-        state: &'a mut NostrConnectionState,
+    fn create_test_context(
+        state: &mut NostrConnectionState,
         message: RelayMessage,
-    ) -> OutboundContext<'a, NostrConnectionState, ClientMessage, RelayMessage> {
+    ) -> OutboundContext<'_, NostrConnectionState, ClientMessage, RelayMessage> {
         OutboundContext::new("test_conn".to_string(), message, None, state, &[], 0)
     }
 }

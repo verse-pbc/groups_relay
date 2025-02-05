@@ -3,14 +3,16 @@ use crate::{
     WebsocketError,
 };
 use anyhow::Result;
+use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver as MpscReceiver, Sender as MpscSender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-pub trait MessageConverter<I, O> {
-    fn outbound_to_string(&self, message: O) -> Result<String>;
-    fn inbound_from_string(&self, message: String) -> Result<Option<I>>;
+#[async_trait]
+pub trait MessageConverter<I, O>: Send + Sync {
+    async fn inbound_from_string(&self, message: String) -> Result<Option<I>, anyhow::Error>;
+    fn outbound_to_string(&self, message: O) -> Result<String, anyhow::Error>;
 }
 
 pub struct MessageHandler<
@@ -55,7 +57,7 @@ impl<
         payload: String,
         mut state: TapState,
     ) -> Result<TapState, WebsocketError<TapState>> {
-        let Ok(inbound_message) = self.message_converter.inbound_from_string(payload) else {
+        let Ok(inbound_message) = self.message_converter.inbound_from_string(payload).await else {
             return Err(WebsocketError::InboundMessageConversionError(
                 "Failed to convert inbound message".to_string(),
                 state,

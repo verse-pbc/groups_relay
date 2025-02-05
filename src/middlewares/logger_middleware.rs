@@ -1,7 +1,8 @@
 use crate::nostr_session_state::NostrConnectionState;
+use anyhow::Result;
 use async_trait::async_trait;
-use nostr_sdk::prelude::*;
-use tracing::{info, warn};
+use nostr_sdk::{ClientMessage, JsonUtil, RelayMessage};
+use tracing::info;
 use websocket_builder::{
     ConnectionContext, DisconnectContext, InboundContext, Middleware, OutboundContext,
 };
@@ -11,7 +12,7 @@ pub struct LoggerMiddleware;
 
 impl LoggerMiddleware {
     pub fn new() -> Self {
-        Self {}
+        Self
     }
 }
 
@@ -30,95 +31,56 @@ impl Middleware for LoggerMiddleware {
     async fn process_inbound(
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<()> {
         match &ctx.message {
             ClientMessage::Event(event) => {
                 info!(
                     "[{}] > event kind {}: {}",
                     ctx.connection_id.as_str(),
                     event.kind,
-                    event.as_json().replace("\\\\\"", "\\\"")
+                    event.as_json()
                 );
             }
             ClientMessage::Req {
                 subscription_id,
                 filters,
-                ..
             } => {
                 info!(
-                    "[{}] > request {}: {:?}",
+                    "[{}] > request {}: {}",
                     ctx.connection_id.as_str(),
                     subscription_id,
                     filters
                         .iter()
-                        .map(|f| f.as_json().replace("\\\\\"", "\\\""))
+                        .map(|f| f.as_json())
                         .collect::<Vec<String>>()
-                        .join(", "),
+                        .join(", ")
                 );
             }
-            ClientMessage::Auth(challenge) => {
-                info!("[{}] > auth: {:?}", ctx.connection_id.as_str(), challenge);
-            }
-
-            ClientMessage::Count {
-                subscription_id,
-                filters,
-            } => {
-                info!(
-                    "[{}] > count: {:?}, {:?}",
-                    ctx.connection_id.as_str(),
-                    subscription_id,
-                    filters
-                );
+            ClientMessage::Auth(event) => {
+                info!("[{}] > auth: {}", ctx.connection_id.as_str(), event.id);
             }
             ClientMessage::Close(subscription_id) => {
                 info!(
-                    "[{}] > close: {:?}",
+                    "[{}] > close: {}",
                     ctx.connection_id.as_str(),
                     subscription_id
                 );
             }
-            ClientMessage::NegClose { subscription_id } => {
+            _ => {
                 info!(
-                    "[{}] > neg close: {:?}",
+                    "[{}] > {}",
                     ctx.connection_id.as_str(),
-                    subscription_id
+                    ctx.message.as_json()
                 );
             }
-            ClientMessage::NegOpen {
-                subscription_id,
-                filter,
-                id_size,
-                initial_message,
-            } => {
-                info!(
-                    "[{}] > neg open: {:?}, {:?}, {:?}, {:?}",
-                    ctx.connection_id.as_str(),
-                    subscription_id,
-                    filter,
-                    id_size,
-                    initial_message
-                );
-            }
-            ClientMessage::NegMsg {
-                subscription_id,
-                message,
-            } => {
-                info!(
-                    "[{}] > neg msg: {:?}, {:?}",
-                    ctx.connection_id.as_str(),
-                    subscription_id,
-                    message
-                );
-            }
-        };
-        ctx.next().await
+        }
+        Ok(())
     }
 
     async fn process_outbound(
         &self,
         ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<()> {
         let Some(outbound_message) = &ctx.message else {
             return Ok(());
         };
@@ -137,86 +99,30 @@ impl Middleware for LoggerMiddleware {
                     event.pubkey
                 );
             }
-            RelayMessage::Closed {
-                subscription_id,
-                message,
-            } => {
-                info!(
-                    "[{}] < closed: {:?}, {:?}",
-                    ctx.connection_id.as_str(),
-                    subscription_id,
-                    message
-                );
-            }
-            RelayMessage::Notice { message } => {
-                warn!("[{}] < notice: {:?}", ctx.connection_id.as_str(), message);
+            RelayMessage::Auth { challenge } => {
+                info!("[{}] < auth: {}", ctx.connection_id.as_str(), challenge);
             }
             RelayMessage::Ok {
                 event_id,
                 status,
                 message,
             } => {
-                if *status {
-                    info!(
-                        "[{}] < ok: {:?}, {:?}",
-                        ctx.connection_id.as_str(),
-                        event_id,
-                        message
-                    );
-                } else {
-                    warn!(
-                        "[{}] < ok: {:?}, {:?}",
-                        ctx.connection_id.as_str(),
-                        event_id,
-                        message
-                    );
-                }
-            }
-            RelayMessage::EndOfStoredEvents(subscription_id) => {
                 info!(
-                    "[{}] < eose for sub {}",
+                    "[{}] < ok: {}, {}",
                     ctx.connection_id.as_str(),
-                    subscription_id
-                );
-            }
-            RelayMessage::Auth { challenge } => {
-                info!("[{}] < auth: {:?}", ctx.connection_id.as_str(), challenge);
-            }
-            RelayMessage::Count {
-                subscription_id,
-                count,
-            } => {
-                info!(
-                    "[{}] < count: {:?}, {:?}",
-                    ctx.connection_id.as_str(),
-                    subscription_id,
-                    count
-                );
-            }
-            RelayMessage::NegErr {
-                subscription_id,
-                code,
-            } => {
-                warn!(
-                    "[{}] < neg err: {:?}, {:?}",
-                    ctx.connection_id.as_str(),
-                    subscription_id,
-                    code
-                );
-            }
-            RelayMessage::NegMsg {
-                subscription_id,
-                message,
-            } => {
-                warn!(
-                    "[{}] < neg msg: {:?}, {:?}",
-                    ctx.connection_id.as_str(),
-                    subscription_id,
+                    event_id,
                     message
                 );
             }
-        };
-        ctx.next().await
+            _ => {
+                info!(
+                    "[{}] < {}",
+                    ctx.connection_id.as_str(),
+                    outbound_message.as_json()
+                );
+            }
+        }
+        Ok(())
     }
 
     async fn on_connect(
@@ -233,5 +139,72 @@ impl Middleware for LoggerMiddleware {
     ) -> Result<(), anyhow::Error> {
         info!("[{}] Disconnected from relay", ctx.connection_id.as_str());
         ctx.next().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr_sdk::SubscriptionId;
+    use std::sync::Arc;
+
+    fn create_test_state() -> NostrConnectionState {
+        NostrConnectionState::new("wss://test.relay".to_string())
+    }
+
+    #[tokio::test]
+    async fn test_inbound_message_logging() {
+        let middleware = LoggerMiddleware::new();
+        let chain: Vec<
+            Arc<
+                dyn Middleware<
+                    State = NostrConnectionState,
+                    IncomingMessage = ClientMessage,
+                    OutgoingMessage = RelayMessage,
+                >,
+            >,
+        > = vec![Arc::new(middleware)];
+        let mut state = create_test_state();
+
+        let mut ctx = InboundContext::new(
+            "test_connection".to_string(),
+            ClientMessage::Close(SubscriptionId::new("test_sub")),
+            None,
+            &mut state,
+            &chain,
+            0,
+        );
+
+        let result = chain[0].process_inbound(&mut ctx).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_outbound_message_logging() {
+        let middleware = LoggerMiddleware::new();
+        let chain: Vec<
+            Arc<
+                dyn Middleware<
+                    State = NostrConnectionState,
+                    IncomingMessage = ClientMessage,
+                    OutgoingMessage = RelayMessage,
+                >,
+            >,
+        > = vec![Arc::new(middleware)];
+        let mut state = create_test_state();
+
+        let mut ctx = OutboundContext::new(
+            "test_connection".to_string(),
+            RelayMessage::Notice {
+                message: "test notice".to_string(),
+            },
+            None,
+            &mut state,
+            &chain,
+            0,
+        );
+
+        let result = chain[0].process_outbound(&mut ctx).await;
+        assert!(result.is_ok());
     }
 }
