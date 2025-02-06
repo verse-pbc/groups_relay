@@ -38,7 +38,7 @@ export class NostrClient {
   constructor(key: string, config?: Partial<NostrClientConfig>) {
     try {
       this.config = {
-        relayUrl: "/ws",
+        relayUrl: "/",
         ...config,
       };
 

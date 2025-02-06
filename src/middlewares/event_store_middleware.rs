@@ -25,7 +25,7 @@ impl MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
 
     fn inbound_from_string(&self, message: String) -> Result<Option<ClientMessage>> {
         // Parse synchronously since JSON parsing doesn't need to be async
-        
+
         // Return immediately to maintain message order
         if let Ok(client_message) = ClientMessage::from_json(&message) {
             debug!("Successfully parsed inbound message: {}", message);
@@ -381,10 +381,26 @@ impl Middleware for EventStoreMiddleware {
 
         // Get the active subscription count and decrement metrics in one go
         if let Some(connection) = &ctx.state.relay_connection {
-            if let Ok(count) = connection.subscription_count().await {
-                if count > 0 {
+            match connection.subscription_count().await {
+                Ok(count) if count > 0 => {
                     // Decrement all subscriptions at once
                     metrics::active_subscriptions().decrement(count as f64);
+                }
+                Ok(_) => {
+                    debug!(
+                        target: "event_store",
+                        "[{}] No active subscriptions to clean up",
+                        ctx.connection_id
+                    );
+                }
+                Err(e) => {
+                    // Just log the error and continue - this is expected during shutdown
+                    debug!(
+                        target: "event_store",
+                        "[{}] Could not get final subscription count during disconnect: {}",
+                        ctx.connection_id,
+                        e
+                    );
                 }
             }
         }
