@@ -272,17 +272,17 @@ async fn main() -> Result<()> {
         WebSocketBuilder::new(connection_state_factory, NostrMessageConverter);
 
     // Apply WebSocket settings from configuration
-    websocket_builder = websocket_builder.with_channel_size(settings.websocket.channel_size);
+    websocket_builder = websocket_builder.with_channel_size(settings.websocket.channel_size());
     info!(
         "Configuring WebSocket handler with channel_size={}",
-        settings.websocket.channel_size
+        settings.websocket.channel_size()
     );
 
-    if let Some(max_time) = settings.websocket.max_connection_time {
+    if let Some(max_time) = settings.websocket.max_connection_time() {
         websocket_builder = websocket_builder.with_max_connection_time(max_time);
     }
 
-    if let Some(max_conns) = settings.websocket.max_connections {
+    if let Some(max_conns) = settings.websocket.max_connections() {
         websocket_builder = websocket_builder.with_max_connections(max_conns);
     }
 

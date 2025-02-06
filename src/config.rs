@@ -20,37 +20,49 @@ pub struct RelaySettings {
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct WebSocketSettings {
-    #[serde(
-        default = "default_channel_size",
-        deserialize_with = "validate_channel_size"
-    )]
+    #[serde(default = "default_channel_size")]
     pub channel_size: usize,
-    #[serde(with = "humantime_serde", default)]
+    #[serde(with = "humantime_serde", default = "default_max_connection_time")]
     pub max_connection_time: Option<Duration>,
-    #[serde(default)]
+    #[serde(default = "default_max_connections")]
     pub max_connections: Option<usize>,
 }
 
 fn default_channel_size() -> usize {
-    300 // Default channel size matching settings.yml
+    300 // Default channel size
 }
 
-fn validate_channel_size<'de, D>(deserializer: D) -> Result<usize, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::Error;
-    let size = usize::deserialize(deserializer)?;
-    if size == 0 {
-        return Err(D::Error::custom("channel_size must be greater than 0"));
-    }
-    Ok(size)
+fn default_max_connection_time() -> Option<Duration> {
+    Some(Duration::from_secs(10 * 60)) // 10 minutes default
+}
+
+fn default_max_connections() -> Option<usize> {
+    Some(1000) // Default max connections
 }
 
 impl RelaySettings {
     pub fn relay_keys(&self) -> Result<Keys, anyhow::Error> {
         let secret_key = SecretKey::from_hex(&self.relay_secret_key)?;
         Ok(Keys::new(secret_key))
+    }
+}
+
+impl WebSocketSettings {
+    pub fn channel_size(&self) -> usize {
+        if self.channel_size == 0 {
+            default_channel_size()
+        } else {
+            self.channel_size
+        }
+    }
+
+    pub fn max_connection_time(&self) -> Option<Duration> {
+        self.max_connection_time
+            .or_else(default_max_connection_time)
+    }
+
+    pub fn max_connections(&self) -> Option<usize> {
+        self.max_connections.or_else(default_max_connections)
     }
 }
 
@@ -86,8 +98,8 @@ impl Config {
 
     pub fn get_settings(&self) -> Result<RelaySettings, ConfigError> {
         let settings: RelaySettings = self.config.get("relay")?;
-        // Only log non-sensitive websocket configuration
-        tracing::debug!(
+        // Log non-sensitive websocket configuration at info level
+        tracing::info!(
             "WebSocket config: channel_size={}, max_connections={:?}, max_connection_time={:?}",
             settings.websocket.channel_size,
             settings.websocket.max_connections,
