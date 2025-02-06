@@ -62,6 +62,7 @@ pub struct Settings {
     pub local_addr: String,
     pub auth_url: String,
     pub admin_keys: Vec<String>,
+    pub websocket: config::WebSocketSettings,
 }
 
 #[derive(Clone)]
@@ -270,7 +271,6 @@ async fn main() -> Result<()> {
     info!("Auth requests must match this URL: {}", settings.auth_url);
 
     let logger = LoggerMiddleware::new();
-    // TODO: this is a temporary solution to verify events while we forward requests to the relay
     let event_verifier = EventVerifierMiddleware;
     let nip_42 = Nip42Middleware::new(settings.auth_url.clone());
     let nip_70 = Nip70Middleware;
@@ -279,8 +279,21 @@ async fn main() -> Result<()> {
     let connection_state_factory = NostrConnectionFactory::new(settings.relay_url.clone());
     let validation_middleware = ValidationMiddleware::new(relay_keys.public_key);
 
-    let websocket_handler = WebSocketBuilder::new(connection_state_factory, NostrMessageConverter)
-        .with_channel_size(1000)
+    let mut websocket_builder =
+        WebSocketBuilder::new(connection_state_factory, NostrMessageConverter);
+
+    // Apply WebSocket settings from configuration
+    websocket_builder = websocket_builder.with_channel_size(settings.websocket.channel_size);
+
+    if let Some(max_time) = settings.websocket.max_connection_time {
+        websocket_builder = websocket_builder.with_max_connection_time(max_time);
+    }
+
+    if let Some(max_conns) = settings.websocket.max_connections {
+        websocket_builder = websocket_builder.with_max_connections(max_conns);
+    }
+
+    let websocket_handler = websocket_builder
         .with_middleware(logger)
         .with_middleware(nip_42)
         .with_middleware(validation_middleware)

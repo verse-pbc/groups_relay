@@ -2,6 +2,7 @@ use config::{Config as ConfigTree, ConfigError, Environment, File};
 use nostr_sdk::{Keys, SecretKey};
 use serde::Deserialize;
 use std::path::Path;
+use std::time::Duration;
 
 const ENVIRONMENT_PREFIX: &str = "NIP29";
 const CONFIG_SEPARATOR: &str = "__";
@@ -13,6 +14,21 @@ pub struct RelaySettings {
     pub relay_url: String,
     pub auth_url: String,
     pub db_path: String,
+    pub websocket: WebSocketSettings,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct WebSocketSettings {
+    #[serde(default = "default_channel_size")]
+    pub channel_size: usize,
+    #[serde(with = "humantime_serde", default)]
+    pub max_connection_time: Option<Duration>,
+    #[serde(default)]
+    pub max_connections: Option<usize>,
+}
+
+fn default_channel_size() -> usize {
+    100
 }
 
 impl RelaySettings {

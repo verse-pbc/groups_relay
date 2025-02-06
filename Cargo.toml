@@ -36,6 +36,7 @@ nostr-lmdb = "0.37.0"
 metrics = "0.24.1"
 metrics-exporter-prometheus = "0.16.2"
 time = { version = "0.3.37", features = ["local-offset", "macros"] }
+humantime-serde = "1.1.1"
 
 [features]
 console = ["dep:console-subscriber"]

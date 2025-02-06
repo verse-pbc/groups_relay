@@ -2,3 +2,12 @@
 relay:
   auth_url: "ws://127.0.0.1:8080"
   db_path: "./db"
+
+  # WebSocket settings for testing limits
+  websocket:
+    # Small channel size to test backpressure
+    channel_size: 10
+    # Short connection time to test auto-disconnect
+    max_connection_time: "30s"
+    # Small number of connections to test connection limiting
+    max_connections: 3

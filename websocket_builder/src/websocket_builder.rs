@@ -3,8 +3,10 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::Error as AxumError;
 use futures_util::StreamExt;
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::mpsc::Receiver as MpscReceiver;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -42,6 +44,9 @@ pub enum WebsocketError<TapState: Send + Sync + 'static> {
 
     #[error("Outbound message conversion error: {0}")]
     OutboundMessageConversionError(String, TapState),
+
+    #[error("Maximum concurrent connections limit reached")]
+    MaxConnectionsExceeded(TapState),
 }
 
 impl<TapState: Send + Sync + 'static> WebsocketError<TapState> {
@@ -56,6 +61,7 @@ impl<TapState: Send + Sync + 'static> WebsocketError<TapState> {
             Self::NoClosingHandshake(_, state) => state,
             Self::MissingMiddleware(state) => state,
             Self::InvalidTargetUrl(state) => state,
+            Self::MaxConnectionsExceeded(state) => state,
             Self::InboundMessageConversionError(_, state)
             | Self::OutboundMessageConversionError(_, state) => state,
         }
@@ -83,6 +89,8 @@ pub struct WebSocketBuilder<
         Vec<Arc<dyn Middleware<State = TapState, IncomingMessage = I, OutgoingMessage = O>>>,
     message_converter: Converter,
     channel_size: usize,
+    max_connection_time: Option<Duration>,
+    max_connections: Option<usize>,
 }
 
 impl<
@@ -99,6 +107,8 @@ impl<
             middlewares: Vec::new(),
             message_converter,
             channel_size: 100, // Default size
+            max_connection_time: None,
+            max_connections: None,
         }
     }
 
@@ -114,6 +124,18 @@ impl<
     }
 
     #[must_use]
+    pub fn with_max_connection_time(mut self, duration: Duration) -> Self {
+        self.max_connection_time = Some(duration);
+        self
+    }
+
+    #[must_use]
+    pub fn with_max_connections(mut self, max: usize) -> Self {
+        self.max_connections = Some(max);
+        self
+    }
+
+    #[must_use]
     pub const fn with_channel_size(mut self, size: usize) -> Self {
         self.channel_size = size;
         self
@@ -125,6 +147,10 @@ impl<
             message_converter: Arc::new(self.message_converter),
             state_factory: self.state_factory,
             channel_size: self.channel_size,
+            max_connection_time: self.max_connection_time,
+            connection_semaphore: self
+                .max_connections
+                .map(|cap| Arc::new(Semaphore::new(cap))),
         }
     }
 }
@@ -145,6 +171,8 @@ where
     message_converter: Arc<C>,
     state_factory: F,
     channel_size: usize,
+    max_connection_time: Option<Duration>,
+    connection_semaphore: Option<Arc<Semaphore>>,
 }
 
 impl<TapState, I, O, Converter, Factory> WebSocketHandler<TapState, I, O, Converter, Factory>
@@ -174,7 +202,48 @@ where
         connection_id: String,
         cancellation_token: CancellationToken,
     ) -> Result<(), WebsocketError<TapState>> {
+        // Enforce max connections (if configured)
+        let _connection_permit: Option<OwnedSemaphorePermit> =
+            if let Some(semaphore) = &self.connection_semaphore {
+                match semaphore.clone().try_acquire_owned() {
+                    Ok(permit) => {
+                        debug!(
+                            "[{}] Connection permit acquired (within connection limit)",
+                            connection_id
+                        );
+                        Some(permit)
+                    }
+                    Err(_) => {
+                        warn!(
+                            "[{}] Maximum connections limit reached, rejecting connection",
+                            connection_id
+                        );
+                        let state = self
+                            .state_factory
+                            .create_state(cancellation_token.child_token());
+                        return Err(WebsocketError::MaxConnectionsExceeded(state));
+                    }
+                }
+            } else {
+                None
+            };
+
         let connection_token = cancellation_token.child_token();
+
+        // If max connection time is set, spawn a task to cancel the connection after the duration
+        if let Some(max_time) = self.max_connection_time {
+            let child_token = connection_token.clone();
+            let conn_id = connection_id.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(max_time).await;
+                warn!(
+                    "[{}] Max connection time ({:?}) exceeded, initiating graceful connection shutdown",
+                    conn_id, max_time
+                );
+                child_token.cancel();
+            });
+        }
+
         let state = self.state_factory.create_state(connection_token.clone());
         let middlewares = self.middlewares.clone();
         let message_converter = self.message_converter.clone();
