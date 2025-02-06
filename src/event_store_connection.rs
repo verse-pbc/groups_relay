@@ -4,8 +4,9 @@ use anyhow::Result;
 use nostr_sdk::prelude::*;
 use snafu::Backtrace;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
@@ -20,7 +21,6 @@ enum SubscriptionMessage {
         event: Event,
         sender: MessageSender<RelayMessage>,
     },
-    GetCount(oneshot::Sender<usize>),
 }
 
 // Add after the SubscriptionMessage enum
@@ -112,6 +112,7 @@ pub struct EventStoreConnection {
     replaceable_event_queue: mpsc::UnboundedSender<UnsignedEvent>,
     subscription_sender: mpsc::UnboundedSender<SubscriptionMessage>,
     pub outgoing_sender: Option<MessageSender<RelayMessage>>,
+    local_subscription_count: Arc<AtomicUsize>,
 }
 
 impl EventStoreConnection {
@@ -133,6 +134,7 @@ impl EventStoreConnection {
         let buffer = ReplaceableEventsBuffer::new();
         let replaceable_event_queue = buffer.get_sender();
         let (subscription_sender, subscription_receiver) = mpsc::unbounded_channel();
+        let local_subscription_count = Arc::new(AtomicUsize::new(0));
 
         let connection = Self {
             id: id_clone.clone(),
@@ -142,6 +144,7 @@ impl EventStoreConnection {
             replaceable_event_queue,
             subscription_sender,
             outgoing_sender: Some(outgoing_sender.clone()),
+            local_subscription_count: local_subscription_count.clone(),
         };
 
         // Start the buffer task
@@ -183,6 +186,7 @@ impl EventStoreConnection {
                                     id_clone2, subscription_id, subscriptions.len()
                                 );
                                 subscriptions.insert(subscription_id, filters);
+                                local_subscription_count.fetch_add(1, Ordering::Relaxed);
                                 crate::metrics::active_subscriptions().increment(1.0);
                             }
                             SubscriptionMessage::Remove(subscription_id) => {
@@ -194,6 +198,7 @@ impl EventStoreConnection {
                                         subscription_id,
                                         subscriptions.len()
                                     );
+                                    local_subscription_count.fetch_sub(1, Ordering::Relaxed);
                                     crate::metrics::active_subscriptions().decrement(1.0);
                                 }
                             }
@@ -226,9 +231,6 @@ impl EventStoreConnection {
                                         }
                                     }
                                 }
-                            }
-                            SubscriptionMessage::GetCount(response) => {
-                                let _ = response.send(subscriptions.len());
                             }
                         }
                     }
@@ -535,33 +537,8 @@ impl EventStoreConnection {
     }
 
     /// Returns the current number of active subscriptions for this connection
-    pub async fn subscription_count(&self) -> Result<usize, Error> {
-        let (tx, rx) = oneshot::channel();
-        if let Err(e) = self
-            .subscription_sender
-            .send(SubscriptionMessage::GetCount(tx))
-        {
-            error!(
-                target: "event_store",
-                "[{}] Failed to get subscription count: {:?}",
-                self.id,
-                e
-            );
-            return Ok(0); // Return 0 on error to avoid breaking metrics
-        }
-
-        match rx.await {
-            Ok(count) => Ok(count),
-            Err(e) => {
-                error!(
-                    target: "event_store",
-                    "[{}] Failed to receive subscription count: {:?}",
-                    self.id,
-                    e
-                );
-                Ok(0) // Return 0 on error to avoid breaking metrics
-            }
-        }
+    pub fn get_local_subscription_count(&self) -> usize {
+        self.local_subscription_count.load(Ordering::Relaxed)
     }
 }
 

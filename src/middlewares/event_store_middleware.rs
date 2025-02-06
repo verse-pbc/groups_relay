@@ -379,29 +379,18 @@ impl Middleware for EventStoreMiddleware {
             ctx.connection_id
         );
 
-        // Get the active subscription count and decrement metrics in one go
+        // Clean up any remaining subscriptions from the global metrics
         if let Some(connection) = &ctx.state.relay_connection {
-            match connection.subscription_count().await {
-                Ok(count) if count > 0 => {
-                    // Decrement all subscriptions at once
-                    metrics::active_subscriptions().decrement(count as f64);
-                }
-                Ok(_) => {
-                    debug!(
-                        target: "event_store",
-                        "[{}] No active subscriptions to clean up",
-                        ctx.connection_id
-                    );
-                }
-                Err(e) => {
-                    // Just log the error and continue - this is expected during shutdown
-                    debug!(
-                        target: "event_store",
-                        "[{}] Could not get final subscription count during disconnect: {}",
-                        ctx.connection_id,
-                        e
-                    );
-                }
+            let remaining_subs = connection.get_local_subscription_count();
+            if remaining_subs > 0 {
+                debug!(
+                    target: "event_store",
+                    "[{}] Cleaning up {} remaining subscriptions from metrics",
+                    ctx.connection_id,
+                    remaining_subs
+                );
+                // Decrement the global metrics by the number of subscriptions that weren't explicitly closed
+                metrics::active_subscriptions().decrement(remaining_subs as f64);
             }
         }
 
@@ -1134,6 +1123,4 @@ mod tests {
         client.close().await;
         token.cancel();
     }
-
-    // ... rest of the test code ...
 }
