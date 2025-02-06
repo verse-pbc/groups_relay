@@ -25,7 +25,7 @@ use tracing::info;
 pub struct Groups {
     db: Arc<NostrDatabase>,
     groups: DashMap<String, Group>,
-    relay_pubkey: PublicKey,
+    pub relay_pubkey: PublicKey,
 }
 
 impl Groups {

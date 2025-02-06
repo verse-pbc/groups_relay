@@ -79,17 +79,27 @@ fn try_get_groups(
 }
 
 pub async fn handle_nostr_json(
-    State(_state): State<Arc<HttpServerState>>,
+    State(state): State<Arc<HttpServerState>>,
 ) -> Json<RelayInformationDocument> {
     let relay_info = RelayInformationDocument {
         name: Some("Nostr Groups Relay".to_string()),
         description: Some(
             "A specialized relay implementing NIP-29 for Nostr group management".to_string(),
         ),
-        supported_nips: Some(vec![1, 11, 29, 42]),
+        supported_nips: Some(vec![1, 11, 29, 42, 70]),
         software: Some("groups_relay".to_string()),
         version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        ..Default::default()
+        pubkey: Some(state.groups.relay_pubkey.to_string()),
+        contact: Some("https://daniel.nos.social".to_string()),
+        limitation: None,
+        payments_url: None,
+        fees: None,
+        icon: Some("https://pfp.nostr.build/c60f4853a6d4ae046bdbbd935f0ccd7354c9c411c324b411666d325562a5a906.png".to_string()),
+        relay_countries: vec![],
+        language_tags: vec![],
+        tags: vec![],
+        posting_policy: None,
+        retention: vec![],
     };
 
     Json(relay_info)
