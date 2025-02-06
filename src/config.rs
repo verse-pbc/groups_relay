@@ -14,10 +14,11 @@ pub struct RelaySettings {
     pub relay_url: String,
     pub auth_url: String,
     pub db_path: String,
+    #[serde(default)]
     pub websocket: WebSocketSettings,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct WebSocketSettings {
     #[serde(default = "default_channel_size")]
     pub channel_size: usize,
