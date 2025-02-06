@@ -143,67 +143,56 @@ async fn http_websocket_handler(
     headers: axum::http::HeaderMap,
     uri: axum::http::Uri,
 ) -> impl IntoResponse {
+    // 1. WebSocket upgrade: if the upgrade header is present, upgrade the connection.
     if let Some(ws) = ws {
         let real_ip = get_real_ip(&headers, addr);
         info!("WebSocket upgrade requested from {}", real_ip);
-        ws.on_upgrade(move |socket| async move {
+        return ws.on_upgrade(move |socket| async move {
             let result = state
                 .ws_handler
                 .start(socket, real_ip.clone(), state.cancellation_token.clone())
                 .await;
-
             match result {
                 Ok(_) => debug!("WebSocket connection closed for {}", real_ip),
                 Err(e) => error!("WebSocket error for {}: {:?}", real_ip, e),
             }
-        })
-    } else if uri.path() == "/api/groups" {
+        });
+    }
+
+    // 2. API endpoint: handle groups if the path matches "/api/groups".
+    if uri.path() == "/api/groups" {
         debug!("Handling API request for groups");
-        handler::handle_get_groups(State(state.http_state.clone()))
+        return handler::handle_get_groups(State(state.http_state.clone()))
             .await
-            .into_response()
-    } else if let Some(accept_header) = headers.get(axum::http::header::ACCEPT) {
-        match accept_header.to_str().unwrap_or_default() {
-            "application/nostr+json" => {
+            .into_response();
+    }
+
+    // 3. Nostr JSON: if the Accept header is "application/nostr+json", serve Nostr JSON.
+    if let Some(accept_header) = headers.get(axum::http::header::ACCEPT) {
+        if let Ok(value) = accept_header.to_str() {
+            if value == "application/nostr+json" {
                 debug!("Handling Nostr JSON request");
-                handler::handle_nostr_json(State(state.http_state.clone()))
+                return handler::handle_nostr_json(State(state.http_state.clone()))
                     .await
-                    .into_response()
-            }
-            _ => {
-                debug!("Serving Vite frontend");
-                match ServeDir::new("frontend/dist")
-                    .oneshot(
-                        Request::builder()
-                            .method(Method::GET)
-                            .uri("/")
-                            .body(Body::empty())
-                            .unwrap(),
-                    )
-                    .await
-                {
-                    Ok(res) => res.into_response(),
-                    Err(_) => {
-                        (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
-                    }
-                }
+                    .into_response();
             }
         }
-    } else {
-        debug!("Serving Vite frontend");
-        match ServeDir::new("frontend/dist")
-            .oneshot(
-                Request::builder()
-                    .method(Method::GET)
-                    .uri("/")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-        {
-            Ok(res) => res.into_response(),
-            Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response(),
-        }
+    }
+
+    // 4. Fallback: serve the static HTML (Vite frontend).
+    debug!("Serving Vite frontend");
+    match ServeDir::new("frontend/dist")
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+    {
+        Ok(response) => response.into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response(),
     }
 }
 
