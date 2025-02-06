@@ -365,14 +365,12 @@ impl Group {
         }
 
         // Delete all group kinds possible except this delete request (kind 9008)
-        let non_addressable_filter = Filter::new()
-            .kinds(ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE)
-            .custom_tag(
-                SingleLetterTag::lowercase(Alphabet::H),
-                &[self.id.to_string()],
-            );
+        let non_addressable_filter = Filter::new().custom_tag(
+            SingleLetterTag::lowercase(Alphabet::H),
+            &[self.id.to_string()],
+        );
 
-        let addressable_filter = Filter::new().kinds(ADDRESSABLE_EVENT_KINDS).custom_tag(
+        let addressable_filter = Filter::new().custom_tag(
             SingleLetterTag::lowercase(Alphabet::D),
             &[self.id.to_string()],
         );
