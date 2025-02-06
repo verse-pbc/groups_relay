@@ -210,26 +210,21 @@ async fn metrics_handler(State(metrics_handle): State<PrometheusHandle>) -> impl
     metrics_handle.render()
 }
 
-#[cfg(feature = "console")]
-fn setup_tracing() {
-    console_subscriber::init();
-}
-
-#[cfg(not(feature = "console"))]
 fn setup_tracing() {
     use tracing_subscriber::{fmt, EnvFilter};
 
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,groups_relay=debug,websocket_builder=debug"));
 
     fmt()
+        .with_env_filter(env_filter)
+        .with_timer(fmt::time::SystemTime)
         .with_target(true)
         .with_thread_ids(false)
         .with_thread_names(false)
         .with_file(false)
         .with_line_number(false)
         .with_level(true)
-        .without_time()
-        .with_env_filter(filter)
         .init();
 }
 

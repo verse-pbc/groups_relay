@@ -24,7 +24,7 @@ serde = { version = "1.0", features = ["derive"] }
 axum = "0.7"
 axum-server = "0.6"
 tracing = { version = "0.1" }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 strum = { version = "0.26.3", features = ["derive", "strum_macros"] }
 snafu = { version = "0.8.5", features = ["backtrace"] }
 console-subscriber = { version = "0.4.1", optional = true }
@@ -35,6 +35,7 @@ nostr-database = "0.37.0"
 nostr-lmdb = "0.37.0"
 metrics = "0.24.1"
 metrics-exporter-prometheus = "0.16.2"
+time = { version = "0.3.37", features = ["local-offset", "macros"] }
 
 [features]
 console = ["dep:console-subscriber"]
