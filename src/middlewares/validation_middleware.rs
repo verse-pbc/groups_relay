@@ -24,7 +24,7 @@ impl ValidationMiddleware {
 
     fn validate_event(&self, event: &Event) -> Result<(), &'static str> {
         // If the event is from the relay pubkey and has a 'd' tag, allow it.
-        if event.pubkey == self.relay_pubkey && event.tags.find(TagKind::custom("d")).is_some() {
+        if event.pubkey == self.relay_pubkey && event.tags.find(TagKind::d()).is_some() {
             return Ok(());
         }
 
