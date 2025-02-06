@@ -29,6 +29,16 @@ pub trait Middleware: Send + Sync + std::fmt::Debug {
         ctx.next().await
     }
 
+    /// Called exactly once when a connection ends, regardless of how it ended
+    /// (graceful shutdown, error, or client disconnect). This ensures proper cleanup
+    /// in all cases.
+    ///
+    /// The connection state is preserved and passed to this method in all scenarios:
+    /// - Normal message processing completion
+    /// - Token-based graceful shutdown
+    /// - Client-initiated close
+    /// - Error conditions
+    /// - No closing handshake
     async fn on_disconnect<'a>(
         &'a self,
         ctx: &mut DisconnectContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,

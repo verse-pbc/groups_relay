@@ -6,7 +6,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc::Receiver as MpscReceiver;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 #[derive(Error, Debug)]
 pub enum WebsocketError<TapState: Send + Sync + 'static> {
@@ -56,7 +56,8 @@ impl<TapState: Send + Sync + 'static> WebsocketError<TapState> {
             Self::NoClosingHandshake(_, state) => state,
             Self::MissingMiddleware(state) => state,
             Self::InvalidTargetUrl(state) => state,
-            Self::InboundMessageConversionError(_, state) | Self::OutboundMessageConversionError(_, state) => state,
+            Self::InboundMessageConversionError(_, state)
+            | Self::OutboundMessageConversionError(_, state) => state,
         }
     }
 }
@@ -177,7 +178,7 @@ where
         let state = self.state_factory.create_state(connection_token.clone());
         let middlewares = self.middlewares.clone();
         let message_converter = self.message_converter.clone();
-        info!("[{}] New connection", connection_id);
+        debug!("[{}] New WebSocket connection established", connection_id);
 
         let mut session_handler = MessageHandler::new(
             middlewares,
@@ -187,6 +188,13 @@ where
             self.channel_size,
         );
 
+        // handle_connection_lifecycle handles all connection states including:
+        // - Normal message processing
+        // - Token-based graceful shutdown
+        // - Client-initiated close
+        // - Error conditions
+        // - No closing handshake
+        // In all cases, the connection state is preserved and returned here
         let state = match handle_connection_lifecycle(
             connection_id.clone(),
             socket,
@@ -200,14 +208,20 @@ where
             Err(e) => e.get_state(),
         };
 
+        // on_disconnect is always called exactly once when the connection ends,
+        // regardless of how it ended (graceful shutdown, error, or client disconnect).
+        // This ensures proper cleanup in all cases.
         if let Err(e) = session_handler
             .on_disconnect(connection_id.clone(), state)
             .await
         {
-            error!("Disconnect error: {}", e);
+            error!(
+                "[{}] Error during connection disconnect handler: {}",
+                connection_id, e
+            );
         }
 
-        info!("[{}] Connection closed", connection_id);
+        debug!("[{}] WebSocket connection closed", connection_id);
         Ok(())
     }
 }
@@ -224,19 +238,26 @@ async fn handle_connection_lifecycle<
     cancellation_token: CancellationToken,
     state: TapState,
 ) -> Result<TapState, WebsocketError<TapState>> {
-    info!("[{}] Starting connection lifecycle", connection_id);
+    debug!(
+        "[{}] Starting WebSocket connection lifecycle",
+        connection_id
+    );
 
     let (state, server_receiver) = match session_handler
         .on_connect(connection_id.clone(), state)
-        .await {
-            Ok(result) => {
-                info!("[{}] Connection setup successful", connection_id);
-                result
-            }
-            Err(e) => {
-                error!("[{}] Connection setup failed: {}", connection_id, e);
-                return Err(e);
-            }
+        .await
+    {
+        Ok(result) => {
+            debug!("[{}] WebSocket connection setup successful", connection_id);
+            result
+        }
+        Err(e) => {
+            error!(
+                "[{}] WebSocket connection setup failed: {}",
+                connection_id, e
+            );
+            return Err(e);
+        }
     };
 
     let state = match message_loop(
@@ -250,22 +271,31 @@ async fn handle_connection_lifecycle<
     .await
     {
         Ok(state) => {
-            info!("[{}] Message loop completed normally", connection_id);
+            debug!(
+                "[{}] WebSocket message loop completed normally",
+                connection_id
+            );
             state
         }
         Err(e) => match e {
             WebsocketError::NoClosingHandshake(e, state) => {
-                info!("[{}] Client closed without handshake: {}", connection_id, e);
+                debug!(
+                    "[{}] Client closed WebSocket connection without handshake: {}",
+                    connection_id, e
+                );
                 return Ok(state);
             }
             _ => {
-                error!("[{}] Message loop error: {}", connection_id, e);
+                error!("[{}] WebSocket message loop error: {}", connection_id, e);
                 return Err(e);
             }
         },
     };
 
-    info!("[{}] Connection lifecycle completed", connection_id);
+    debug!(
+        "[{}] WebSocket connection lifecycle completed",
+        connection_id
+    );
     Ok(state)
 }
 
@@ -282,7 +312,7 @@ async fn message_loop<
     cancellation_token: CancellationToken,
     mut state: TapState,
 ) -> Result<TapState, WebsocketError<TapState>> {
-    info!("[{}] Starting message loop", connection_id);
+    debug!("[{}] Starting message loop", connection_id);
 
     // Helper function to handle a single message
     async fn handle_outgoing_message<TapState, I, O, Converter>(
@@ -355,12 +385,12 @@ async fn message_loop<
             biased;
 
             _ = cancellation_token.cancelled() => {
-                info!("[{}] Cancellation token triggered, starting graceful shutdown", connection_id);
+                debug!("[{}] Connection cancellation token triggered, starting graceful connection shutdown", connection_id);
 
                 // Flush any pending messages in the channel
                 while let Ok(msg) = server_receiver.try_recv() {
                     let (message, middleware_index) = msg;
-                    debug!("[{}] Flushing pending message from middleware {}", connection_id, middleware_index);
+                    debug!("[{}] Flushing pending message from middleware {} before connection close", connection_id, middleware_index);
                     state = handle_outgoing_message(
                         connection_id,
                         &mut socket,
@@ -374,12 +404,12 @@ async fn message_loop<
                 }
 
                 // Send a close frame
-                info!("[{}] Sending close frame", connection_id);
+                debug!("[{}] Sending WebSocket close frame to client", connection_id);
                 if let Err(e) = socket.send(Message::Close(None)).await {
-                    warn!("[{}] Failed to send close frame: {}", connection_id, e);
+                    warn!("[{}] Failed to send WebSocket close frame to client: {}", connection_id, e);
                 }
 
-                info!("[{}] Graceful shutdown completed", connection_id);
+                debug!("[{}] Graceful connection shutdown completed", connection_id);
                 return Ok(state);
             }
 
@@ -401,7 +431,7 @@ async fn message_loop<
                         debug!("[{}] Finished processing outbound message", connection_id);
                     }
                     None => {
-                        info!("[{}] Server receiver closed", connection_id);
+                        debug!("[{}] Server receiver closed", connection_id);
                         return Ok(state);
                     }
                 }
@@ -430,7 +460,7 @@ async fn message_loop<
                         debug!("[{}] Received pong", connection_id);
                     }
                     Some(Ok(Message::Close(_))) => {
-                        info!("[{}] Received close frame from client", connection_id);
+                        debug!("[{}] Received close frame from client", connection_id);
                         // Send close frame in response if we haven't already
                         if let Err(e) = socket.send(Message::Close(None)).await {
                             debug!("[{}] Failed to send close frame response: {}", connection_id, e);
@@ -439,14 +469,14 @@ async fn message_loop<
                     }
                     Some(Err(e)) => {
                         if e.to_string().contains("without closing handshake") {
-                            info!("[{}] Client disconnected without closing handshake", connection_id);
+                            debug!("[{}] Client disconnected without closing handshake", connection_id);
                             return Err(WebsocketError::NoClosingHandshake(e, state));
                         }
                         error!("[{}] WebSocket error: {}", connection_id, e);
                         return Err(WebsocketError::WebsocketError(e, state));
                     }
                     None => {
-                        info!("[{}] Client stream ended", connection_id);
+                        debug!("[{}] Client stream ended", connection_id);
                         return Ok(state);
                     }
                 }
