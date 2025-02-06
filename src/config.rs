@@ -20,7 +20,10 @@ pub struct RelaySettings {
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct WebSocketSettings {
-    #[serde(default = "default_channel_size")]
+    #[serde(
+        default = "default_channel_size",
+        deserialize_with = "validate_channel_size"
+    )]
     pub channel_size: usize,
     #[serde(with = "humantime_serde", default)]
     pub max_connection_time: Option<Duration>,
@@ -29,7 +32,19 @@ pub struct WebSocketSettings {
 }
 
 fn default_channel_size() -> usize {
-    100
+    300 // Default channel size matching settings.yml
+}
+
+fn validate_channel_size<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let size = usize::deserialize(deserializer)?;
+    if size == 0 {
+        return Err(D::Error::custom("channel_size must be greater than 0"));
+    }
+    Ok(size)
 }
 
 impl RelaySettings {
@@ -55,7 +70,7 @@ impl Config {
         let env_config = config_dir.join(format!("settings.{}.yml", environment));
         let local_config = config_dir.join("settings.local.yml");
 
-        ConfigTree::builder()
+        let config = ConfigTree::builder()
             .add_source(File::from(default_config))
             .add_source(File::from(env_config).required(false))
             .add_source(File::from(local_config).required(false))
@@ -64,11 +79,20 @@ impl Config {
                     .separator(CONFIG_SEPARATOR)
                     .try_parsing(true),
             )
-            .build()
-            .map(|config| Config { config })
+            .build()?;
+
+        Ok(Config { config })
     }
 
     pub fn get_settings(&self) -> Result<RelaySettings, ConfigError> {
-        self.config.get("relay")
+        let settings: RelaySettings = self.config.get("relay")?;
+        // Only log non-sensitive websocket configuration
+        tracing::debug!(
+            "WebSocket config: channel_size={}, max_connections={:?}, max_connection_time={:?}",
+            settings.websocket.channel_size,
+            settings.websocket.max_connections,
+            settings.websocket.max_connection_time,
+        );
+        Ok(settings)
     }
 }
