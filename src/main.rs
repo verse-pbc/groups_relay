@@ -218,6 +218,7 @@ fn setup_tracing() {
         .init();
 }
 
+#[tracing::instrument]
 #[tokio::main]
 async fn main() -> Result<()> {
     setup_tracing();
@@ -273,11 +274,6 @@ async fn main() -> Result<()> {
 
     // Apply WebSocket settings from configuration
     websocket_builder = websocket_builder.with_channel_size(settings.websocket.channel_size());
-    info!(
-        "Configuring WebSocket handler with channel_size={}",
-        settings.websocket.channel_size()
-    );
-
     if let Some(max_time) = settings.websocket.max_connection_time() {
         websocket_builder = websocket_builder.with_max_connection_time(max_time);
     }

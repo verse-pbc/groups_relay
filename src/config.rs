@@ -98,9 +98,9 @@ impl Config {
 
     pub fn get_settings(&self) -> Result<RelaySettings, ConfigError> {
         let settings: RelaySettings = self.config.get("relay")?;
-        // Log non-sensitive websocket configuration at info level
+        // Only log non-sensitive WebSocket settings
         tracing::info!(
-            "WebSocket config: channel_size={}, max_connections={:?}, max_connection_time={:?}",
+            "WebSocket settings: channel_size={}, max_connections={:?}, max_connection_time={:?}",
             settings.websocket.channel_size,
             settings.websocket.max_connections,
             settings.websocket.max_connection_time,
