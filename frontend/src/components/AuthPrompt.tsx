@@ -5,8 +5,6 @@ interface AuthPromptProps {
   onSubmit: (key: string) => void
 }
 
-const TEST_KEY = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e'
-
 export const AuthPrompt: FunctionComponent<AuthPromptProps> = ({ onSubmit }) => {
   const [key, setKey] = useState('')
   const [error, setError] = useState('')
@@ -85,17 +83,6 @@ export const AuthPrompt: FunctionComponent<AuthPromptProps> = ({ onSubmit }) => 
                 )}
               </button>
             </div>
-
-            {/* Test Key Button */}
-              <button
-                onClick={() => onSubmit(TEST_KEY)}
-                class="w-full px-4 py-3 bg-purple-100 text-purple-700 rounded-lg
-                       hover:bg-purple-200 transition-all flex items-center justify-center gap-2
-                       border border-purple-200"
-              >
-                <span class="text-base">🔑</span>
-                Use Test Key
-              </button>
 
             {/* Divider */}
             <div class="relative">
