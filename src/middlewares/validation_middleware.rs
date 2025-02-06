@@ -23,6 +23,12 @@ impl ValidationMiddleware {
     }
 
     fn validate_event(&self, event: &Event) -> Result<(), &'static str> {
+        // If the event is from the relay pubkey and has a 'd' tag, allow it.
+        if event.pubkey == self.relay_pubkey && event.tags.find(TagKind::custom("d")).is_some() {
+            return Ok(());
+        }
+
+        // For all other cases, require an 'h' tag for group events unless the kind is in the non-group allowed set.
         if event.tags.find(TagKind::h()).is_none() && !NON_GROUP_ALLOWED_KINDS.contains(&event.kind)
         {
             return Err("invalid: group events must contain an 'h' tag");
@@ -38,13 +44,13 @@ impl ValidationMiddleware {
         filter: &Filter,
         authed_pubkey: Option<&PublicKey>,
     ) -> Result<(), &'static str> {
-        // If the authed pubkey is the relay's pubkey, skip validation
+        // If the authed pubkey is the relay's pubkey, skip validation.
         if authed_pubkey == Some(&self.relay_pubkey) {
             debug!("Skipping filter validation for relay pubkey");
             return Ok(());
         }
 
-        // Check if filter has either 'h' or 'd' tag
+        // Check if filter has either 'h' or 'd' tag.
         let has_h_tag = filter
             .generic_tags
             .contains_key(&SingleLetterTag::lowercase(Alphabet::H));
@@ -53,7 +59,7 @@ impl ValidationMiddleware {
             .generic_tags
             .contains_key(&SingleLetterTag::lowercase(Alphabet::D));
 
-        // Check if kinds are supported (if specified)
+        // Check if kinds are supported (if specified).
         let has_valid_kinds = if let Some(kinds) = &filter.kinds {
             kinds.iter().all(|kind| {
                 NON_GROUP_ALLOWED_KINDS.contains(kind)
@@ -76,7 +82,7 @@ impl ValidationMiddleware {
             false
         };
 
-        // Filter must either have valid tags or valid kinds
+        // Filter must either have valid tags or valid kinds.
         if !has_h_tag && !has_d_tag && !has_valid_kinds {
             return Err("invalid: filter must contain either 'h'/'d' tag or supported kinds");
         }
@@ -171,18 +177,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_event_validation_accepts_event_with_different_kind() {
+    async fn test_event_validation_accepts_d_tag_from_relay() {
         let (admin_keys, _, _) = create_test_keys().await;
         let middleware = Arc::new(ValidationMiddleware::new(admin_keys.public_key()));
         let chain: Vec<Arc<TestMiddleware>> = vec![middleware.clone()];
 
         let event = create_test_event(
             &admin_keys,
-            10009, // This kind doesn't need an 'h' tag
-            vec![],
+            39003,
+            vec![Tag::custom(TagKind::custom("d"), ["test_group"])],
         )
         .await;
 
+        let mut state = NostrConnectionState {
+            relay_url: "wss://test.relay".to_string(),
+            challenge: None,
+            authed_pubkey: None,
+            relay_connection: None,
+            connection_token: CancellationToken::new(),
+        };
+
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Event(Box::new(event)),
+            None,
+            &mut state,
+            &chain,
+            1,
+        );
+
+        assert!(middleware.process_inbound(&mut ctx).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_event_validation_rejects_d_tag_from_non_relay() {
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let middleware = Arc::new(ValidationMiddleware::new(admin_keys.public_key()));
+        let chain: Vec<Arc<TestMiddleware>> = vec![middleware.clone()];
+
+        let event = create_test_event(
+            &member_keys, // Using member keys instead of admin/relay keys
+            39003,
+            vec![Tag::custom(TagKind::custom("d"), ["test_group"])],
+        )
+        .await;
+
+        // The event should be rejected with an error message
+        let result = middleware.validate_event(&event);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "invalid: group events must contain an 'h' tag"
+        );
+
+        // Also verify the middleware handles it correctly
         let mut state = NostrConnectionState {
             relay_url: "wss://test.relay".to_string(),
             challenge: None,
