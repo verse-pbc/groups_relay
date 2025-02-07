@@ -6,8 +6,8 @@ relay:
   # WebSocket settings for testing limits
   websocket:
     # Small channel size to test backpressure
-    channel_size: 10
+    channel_size: 1000
     # Short connection time to test auto-disconnect
-    max_connection_time: "30s"
+    max_connection_time: "5m"
     # Small number of connections to test connection limiting
-    max_connections: 3
+    max_connections: 300
