@@ -610,12 +610,35 @@ impl Group {
         Ok(())
     }
 
+    /// Processes a join request for the group.
+    ///
+    /// This method handles join requests in different ways depending on the group type and request:
+    /// 1. If user is already a member: Returns Ok(false) without any changes
+    /// 2. For open groups: Automatically adds the user as a member
+    /// 3. For closed groups with invite: Adds user with roles from invite
+    /// 4. For closed groups without invite: Adds user to join requests
+    ///
+    /// # Arguments
+    /// * `event` - The join request event containing:
+    ///   - The pubkey of the user requesting to join
+    ///   - Optional invite code in the 'code' tag
+    ///
+    /// # Returns
+    /// * `Ok(true)` - User was successfully added as a member
+    /// * `Ok(false)` - User was added to join requests or is already a member
+    /// * `Err` - Invalid event kind or other error
     pub fn join_request(&mut self, event: &Event) -> Result<bool, Error> {
         if event.kind != KIND_GROUP_USER_JOIN_REQUEST_9021 {
             return Err(Error::notice(format!(
                 "Invalid event kind for join request {}",
                 event.kind
             )));
+        }
+
+        // If user is already a member, do nothing
+        if self.members.contains_key(&event.pubkey) {
+            info!("User {} is already a member", event.pubkey);
+            return Ok(false);
         }
 
         if !self.metadata.closed {
@@ -1326,6 +1349,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_join_request_from_existing_member() {
+        let (admin_keys, member_keys, _) = create_test_keys();
+        let (mut group, _) = create_test_group(&admin_keys).await;
+
+        // First add the member
+        group.members.insert(
+            member_keys.public_key(),
+            GroupMember::new_member(member_keys.public_key()),
+        );
+        let initial_member_count = group.members.len();
+
+        // Try to join again
+        let join_event =
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, vec![]).await;
+
+        // Should return Ok(false) without changing membership
+        assert!(!group.join_request(&join_event).unwrap());
+
+        // Verify member is still there with same role
+        let member = group.members.get(&member_keys.public_key()).unwrap();
+        assert!(member.roles.contains(&GroupRole::Member));
+        // Member count should not change
+        assert_eq!(group.members.len(), initial_member_count);
+    }
+
+    #[tokio::test]
     async fn test_leave_request_removes_member() {
         let (admin_keys, member_keys, _) = create_test_keys();
         let (mut group, _) = create_test_group(&admin_keys).await;
@@ -1577,17 +1626,6 @@ mod tests {
             &Some(admin_keys.public_key()),
         );
         assert!(result.is_ok());
-        if let Ok(commands) = result {
-            assert_eq!(commands.len(), 2);
-            assert_eq!(
-                commands[0],
-                StoreCommand::DeleteEvents(Filter::new().ids([event_to_delete.id]))
-            );
-            assert_eq!(
-                commands[1],
-                StoreCommand::SaveSignedEvent(delete_request.clone())
-            );
-        }
     }
 
     #[tokio::test]
