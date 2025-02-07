@@ -189,6 +189,14 @@ impl Invite {
     }
 }
 
+/// A Nostr group that implements NIP-29 group management.
+///
+/// Groups have the following key characteristics:
+/// - Must always have at least one admin
+/// - Can be public (readable by anyone) or private (requires authentication)
+/// - Can be open (anyone can join) or closed (requires invite)
+/// - Supports role-based access control (admin, member, custom roles)
+/// - Maintains state for members, invites, and join requests
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Group {
     pub id: String,
@@ -579,7 +587,6 @@ impl Group {
             return Err(Error::notice("User is not authorized to set roles"));
         }
 
-        // First check if this would remove the last admin
         let current_admins = self.admin_pubkeys();
         for tag in event.tags.filter(TagKind::p()) {
             let member = GroupMember::try_from(tag)?;
@@ -591,7 +598,6 @@ impl Group {
             }
         }
 
-        // If we get here, it's safe to update the roles
         for tag in event.tags.filter(TagKind::p()) {
             let member = GroupMember::try_from(tag)?;
             if let Some(existing_member) = self.members.get_mut(&member.pubkey) {
@@ -635,10 +641,8 @@ impl Group {
             return Ok(false);
         };
 
-        // Invite code matched
         info!("Invite code matched, adding member {}", event.pubkey);
         let roles = invite.roles.clone();
-
         self.members
             .insert(event.pubkey, GroupMember::new(event.pubkey, roles));
 
