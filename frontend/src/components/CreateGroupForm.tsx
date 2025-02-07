@@ -59,7 +59,26 @@ export class CreateGroupForm extends Component<CreateGroupFormProps, CreateGroup
       })
 
       this.props.updateGroupsMap(groupsMap => {
-        groupsMap.set(group.id, group)
+        // Create a deep copy of the group to prevent reference issues
+        const groupCopy = {
+          ...group,
+          members: [...group.members],
+          joinRequests: [...group.joinRequests],
+          invites: { ...group.invites },
+          content: group.content ? [...group.content] : []
+        };
+
+        // Get existing group if any
+        const existingGroup = groupsMap.get(group.id);
+        if (existingGroup) {
+          // Preserve existing members and state
+          groupCopy.members = [...existingGroup.members];
+          groupCopy.joinRequests = [...existingGroup.joinRequests];
+          groupCopy.invites = { ...existingGroup.invites };
+          groupCopy.content = existingGroup.content ? [...existingGroup.content] : [];
+        }
+
+        groupsMap.set(group.id, groupCopy);
       })
 
       this.setState({

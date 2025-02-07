@@ -8,7 +8,9 @@ import type {
 import { CreateGroupForm } from "./CreateGroupForm";
 import { GroupCard } from "./GroupCard";
 import { FlashMessage } from "./FlashMessage";
-import type { NDKKind } from "@nostr-dev-kit/ndk";
+
+// Define NDKKind type since we can't import it
+type NDKKind = number;
 
 const metadataKinds = [39000, 39001, 39002, 39003];
 
@@ -42,8 +44,9 @@ export class App extends Component<AppProps, AppState> {
     };
   }
 
-  private getOrCreateGroup = (groupId: string, createdAt: number): Group => {
-    if (!this.state.groupsMap.has(groupId)) {
+  private getOrCreateGroup = (groupId: string, createdAt: number, groupsMap: Map<string, Group>): Group => {
+    const existingGroup = groupsMap.get(groupId);
+    if (!existingGroup) {
       const group: Group = {
         id: groupId,
         name: "",
@@ -58,169 +61,189 @@ export class App extends Component<AppProps, AppState> {
         joinRequests: [],
         content: [],
       };
-      this.state.groupsMap.set(groupId, group);
+      return group;
     }
-    if (createdAt > this.state.groupsMap.get(groupId)!.updated_at) {
-      this.state.groupsMap.get(groupId)!.updated_at = createdAt;
-    }
-    return this.state.groupsMap.get(groupId)!;
+
+    return {
+      ...existingGroup,
+      updated_at: Math.max(existingGroup.updated_at, createdAt)
+    };
   };
 
   processEvent = (event: any, groupsMap: Map<string, Group>) => {
-    console.log("processing event", event.kind, event);
+    const groupId = event.tags.find((t: string[]) => t[0] === "h" || t[0] === "d")?.[1];
+    if (!groupId) return groupsMap;
 
-    // Handle group creation events
-    if (event.kind === GroupEventKind.CreateGroup) {
-      const groupId = event.tags.find((t: string[]) => t[0] === "h")?.[1];
-      if (!groupId) return;
+    const group = this.getOrCreateGroup(groupId, event.created_at, groupsMap);
 
-      let group = this.getOrCreateGroup(groupId, event.created_at);
-      group.created_at = event.created_at;
-    }
-
-    // Handle relay-generated metadata events
-    if (event.kind >= 39000 && event.kind <= 39003) {
-      const groupId = event.tags.find((t: string[]) => t[0] === "d")?.[1];
-      if (!groupId) return;
-
-      const group = this.getOrCreateGroup(groupId, event.created_at);
-
-      switch (event.kind) {
-        case 39000: // Group metadata
-          for (const [tag, value] of event.tags) {
-            switch (tag) {
-              case "name":
-                group.name = value;
-                break;
-              case "about":
-                group.about = value;
-                break;
-              case "picture":
-                group.picture = value;
-                break;
-              case "private":
-                group.private = true;
-                break;
-              case "public":
-                group.private = false;
-                break;
-              case "closed":
-                group.closed = true;
-                break;
-              case "open":
-                group.closed = false;
-                break;
-            }
-          }
-          break;
-
-        case 39001: // Group admins
-          group.members = group.members.filter(
-            (m) => !m.roles.includes("admin")
-          );
-          event.tags
-            .filter((t: string[]) => t[0] === "p")
-            .forEach((t: string[]) => {
-              const [_, pubkey, ...roles] = t;
-              const memberIndex = group.members.findIndex(
-                (m) => m.pubkey === pubkey
-              );
-              if (memberIndex >= 0) {
-                group.members[memberIndex].roles = roles;
-              } else {
-                group.members.push({ pubkey, roles } as GroupMember);
-              }
-
-              if (group.joinRequests.includes(pubkey)) {
-                group.joinRequests = group.joinRequests.filter(
-                  (p) => p !== pubkey
-                );
-              }
-            });
-          break;
-
-        case 39002: // Group members
-          const existingPrivilegedMembers = group.members.filter((m) =>
-            m.roles.some((role) => role !== "member")
-          );
-          group.members = existingPrivilegedMembers;
-          event.tags
-            .filter((t: string[]) => t[0] === "p")
-            .forEach((t: string[]) => {
-              const pubkey = t[1];
-              // Only add as member if they don't already have a privileged role
-              if (!group.members.some((m) => m.pubkey === pubkey)) {
-                group.members.push({
-                  pubkey,
-                  roles: ["member"],
-                } as GroupMember);
-
-                if (group.joinRequests.includes(pubkey)) {
-                  group.joinRequests = group.joinRequests.filter(
-                    (p) => p !== pubkey
-                  );
-                }
-              }
-            });
-          break;
-      }
-
+    if (!groupsMap.has(groupId)) {
       groupsMap.set(groupId, group);
     }
 
-    if (event.kind === GroupEventKind.CreateInvite) {
-      const groupId = event.tags.find((t: string[]) => t[0] === "h")?.[1];
-      if (!groupId) return;
+    const baseGroup = {
+      ...group,
+      members: [...group.members],
+      joinRequests: [...group.joinRequests],
+      invites: { ...group.invites },
+      content: group.content ? [...group.content] : []
+    };
 
-      const group = this.getOrCreateGroup(groupId, event.created_at);
+    let updatedGroup: Group | null = null;
 
-      const code = event.tags.find((t: string[]) => t[0] === "code")?.[1];
-      const roles = event.tags
-        .find((t: string[]) => t[0] === "roles")?.[1]
-        ?.split(",") || ["member"];
+    switch (event.kind) {
+      case GroupEventKind.CreateGroup: {
+        updatedGroup = baseGroup;
+        break;
+      }
 
-      if (code) {
-        group.invites = {
-          ...group.invites,
-          [code]: { roles, id: event.id },
+      case GroupEventKind.PutUser: {
+        const memberTag = event.tags.find((t: string[]) => t[0] === "p");
+        if (memberTag) {
+          const [_, pubkey, ...roles] = memberTag;
+          const updatedMembers = [...baseGroup.members];
+          const memberIndex = updatedMembers.findIndex((m: GroupMember) => m.pubkey === pubkey);
+
+          if (memberIndex >= 0) {
+            updatedMembers[memberIndex] = {
+              ...updatedMembers[memberIndex],
+              roles: [...new Set([...updatedMembers[memberIndex].roles, ...roles])]
+            };
+          } else {
+            updatedMembers.push({ pubkey, roles } as GroupMember);
+          }
+
+          updatedGroup = {
+            ...baseGroup,
+            members: updatedMembers,
+            joinRequests: baseGroup.joinRequests.filter(p => p !== pubkey)
+          };
+        }
+        break;
+      }
+
+      case 39000: { // Group metadata
+        const newMetadata: Partial<Group> = {};
+        for (const [tag, value] of event.tags) {
+          switch (tag) {
+            case "name":
+              newMetadata.name = value;
+              break;
+            case "about":
+              newMetadata.about = value;
+              break;
+            case "picture":
+              newMetadata.picture = value;
+              break;
+            case "private":
+              newMetadata.private = true;
+              break;
+            case "public":
+              newMetadata.private = false;
+              break;
+            case "closed":
+              newMetadata.closed = true;
+              break;
+            case "open":
+              newMetadata.closed = false;
+              break;
+          }
+        }
+
+        updatedGroup = {
+          ...baseGroup,
+          ...newMetadata,
+          members: baseGroup.members // Explicitly preserve members
         };
-        groupsMap.set(groupId, { ...group });
+        break;
+      }
+
+      case 39001: { // Group admins
+        const currentMembers = new Map(baseGroup.members.map(m => [m.pubkey, { ...m }]));
+
+        event.tags
+          .filter((t: string[]) => t[0] === "p")
+          .forEach((t: string[]) => {
+            const [_, pubkey, ...roles] = t;
+            if (currentMembers.has(pubkey)) {
+              const member = currentMembers.get(pubkey)!;
+              member.roles = [...new Set([...member.roles, ...roles])];
+            } else {
+              currentMembers.set(pubkey, { pubkey, roles } as GroupMember);
+            }
+          });
+
+        const newMembers = Array.from(currentMembers.values());
+        updatedGroup = {
+          ...baseGroup,
+          members: newMembers
+        };
+        break;
+      }
+
+      case 39002: { // Group members
+        const existingRoles = new Map(
+          baseGroup.members.map(member => [member.pubkey, [...member.roles]])
+        );
+
+        const newMembers = event.tags
+          .filter((t: string[]) => t[0] === "p")
+          .map((t: string[]) => {
+            const pubkey = t[1];
+            return {
+              pubkey,
+              roles: existingRoles.get(pubkey) || ["member"]
+            } as GroupMember;
+          });
+
+        if (newMembers.length > 0) {
+          updatedGroup = {
+            ...baseGroup,
+            members: newMembers,
+            joinRequests: baseGroup.joinRequests.filter(pubkey =>
+              !newMembers.some((m: GroupMember) => m.pubkey === pubkey)
+            )
+          };
+        } else {
+          updatedGroup = baseGroup; // Preserve existing state if no new members
+        }
+        break;
+      }
+
+      case 9:
+      case 11: {
+        const content: GroupChatMessage = {
+          id: event.id,
+          pubkey: event.pubkey,
+          kind: event.kind,
+          content: event.content,
+          created_at: event.created_at,
+        };
+
+        updatedGroup = {
+          ...baseGroup,
+          content: [content, ...(baseGroup.content || [])].slice(0, 50)
+        };
+        break;
+      }
+
+      default: {
+        updatedGroup = baseGroup;
+        break;
       }
     }
 
-    if (event.kind === GroupEventKind.JoinRequest) {
-      console.log("join request", event);
-      const groupId = event.tags.find((t: string[]) => t[0] === "h")?.[1];
-      if (!groupId) return;
-
-      const group = this.getOrCreateGroup(groupId, event.created_at);
-
-      if (
-        !group.joinRequests.includes(event.pubkey) &&
-        !group.members.some((member) => member.pubkey === event.pubkey)
-      ) {
-        group.joinRequests.push(event.pubkey);
-        groupsMap.set(groupId, { ...group });
+    if (updatedGroup) {
+      if (updatedGroup.members.length > 0 || !groupsMap.has(groupId)) {
+        groupsMap.set(groupId, updatedGroup);
+      } else {
+        groupsMap.set(groupId, {
+          ...updatedGroup,
+          members: group.members // Keep existing members if update would clear them
+        });
       }
     }
 
-    if (event.kind === 9 || event.kind === 11) {
-      const groupId = event.tags.find((t: string[]) => t[0] === "h")?.[1];
-      if (!groupId) return;
-
-      const group = this.getOrCreateGroup(groupId, event.created_at);
-
-      const content: GroupChatMessage = {
-        id: event.id,
-        pubkey: event.pubkey,
-        kind: event.kind,
-        content: event.content,
-        created_at: event.created_at,
-      };
-
-      group.content = [content, ...(group.content || [])].slice(0, 50);
-      groupsMap.set(groupId, { ...group });
-    }
+    return groupsMap;
   };
 
   async componentDidMount() {
@@ -243,17 +266,20 @@ export class App extends Component<AppProps, AppState> {
         );
 
         sub.on("event", async (event: any) => {
-          console.log("received event", event.kind);
-          this.processEvent(event, this.state.groupsMap);
-          const sortedGroups = Array.from(this.state.groupsMap.values()).sort(
+          const newGroupsMap = new Map(this.state.groupsMap);
+          this.processEvent(event, newGroupsMap);
+
+          const sortedGroups = Array.from(newGroupsMap.values()).sort(
             (a, b) => b.created_at - a.created_at
           );
-          this.setState({ groups: sortedGroups });
+
+          this.setState({
+            groupsMap: newGroupsMap,
+            groups: sortedGroups
+          });
         });
 
-        // Store the cleanup function
         this.cleanup = () => {
-          console.log("Stopping subscription");
           sub.stop();
         };
       } catch (error) {
@@ -266,18 +292,39 @@ export class App extends Component<AppProps, AppState> {
 
   componentWillUnmount() {
     if (this.cleanup) {
-      console.log("Cleaning up subscription");
       this.cleanup();
     }
   }
 
   updateGroupsMap = (updater: (map: Map<string, Group>) => void) => {
     this.setState((prevState) => {
-      const newGroupsMap = new Map(prevState.groupsMap);
+      const newGroupsMap = new Map(
+        Array.from(prevState.groupsMap.entries()).map(([id, group]) => [
+          id,
+          {
+            ...group,
+            members: [...group.members],
+            joinRequests: [...group.joinRequests],
+            invites: { ...group.invites },
+            content: group.content ? [...group.content] : []
+          }
+        ])
+      );
+
       updater(newGroupsMap);
+
+      // Verify no members were cleared
+      newGroupsMap.forEach((group, id) => {
+        const prevGroup = prevState.groupsMap.get(id);
+        if (prevGroup?.members.length && !group.members.length) {
+          group.members = [...prevGroup.members];
+        }
+      });
+
       const sortedGroups = Array.from(newGroupsMap.values()).sort(
         (a, b) => b.created_at - a.created_at
       );
+
       return {
         groupsMap: newGroupsMap,
         groups: sortedGroups,
@@ -287,11 +334,25 @@ export class App extends Component<AppProps, AppState> {
 
   handleGroupDelete = (groupId: string) => {
     this.setState((prevState) => {
-      const newGroupsMap = new Map(prevState.groupsMap);
-      newGroupsMap.delete(groupId);
+      const newGroupsMap = new Map(
+        Array.from(prevState.groupsMap.entries())
+          .filter(([id]) => id !== groupId)
+          .map(([id, group]) => [
+            id,
+            {
+              ...group,
+              members: [...group.members],
+              joinRequests: [...group.joinRequests],
+              invites: { ...group.invites },
+              content: group.content ? [...group.content] : []
+            }
+          ])
+      );
+
       const sortedGroups = Array.from(newGroupsMap.values()).sort(
         (a, b) => b.created_at - a.created_at
       );
+
       return {
         groupsMap: newGroupsMap,
         groups: sortedGroups,

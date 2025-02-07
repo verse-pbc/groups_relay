@@ -295,8 +295,9 @@ impl EventStoreConnection {
                 }
                 info!(
                     target: "event_store",
-                    "[{}] Saved signed event: {}",
+                    "[{}] Saved signed event: kind={} {}",
                     self.id,
+                    event.kind,
                     event.id
                 );
             }
