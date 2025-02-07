@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 use websocket_builder::MessageSender;
@@ -23,93 +22,12 @@ enum SubscriptionMessage {
     },
 }
 
-// Add after the SubscriptionMessage enum
-struct ReplaceableEventsBuffer {
-    buffer: HashMap<(PublicKey, Kind), UnsignedEvent>,
-    sender: mpsc::UnboundedSender<UnsignedEvent>,
-    receiver: Option<mpsc::UnboundedReceiver<UnsignedEvent>>,
-}
-
-impl ReplaceableEventsBuffer {
-    pub fn new() -> Self {
-        let (sender, receiver) = mpsc::unbounded_channel();
-        Self {
-            buffer: HashMap::new(),
-            sender,
-            receiver: Some(receiver),
-        }
-    }
-
-    pub fn get_sender(&self) -> mpsc::UnboundedSender<UnsignedEvent> {
-        self.sender.clone()
-    }
-
-    pub fn insert(&mut self, event: UnsignedEvent) {
-        self.buffer.insert((event.pubkey, event.kind), event);
-    }
-
-    async fn flush(&mut self, database: &Arc<NostrDatabase>) {
-        if self.buffer.is_empty() {
-            return;
-        }
-
-        for (_, event) in self.buffer.drain() {
-            match database.save_unsigned_event(event).await {
-                Ok(event) => {
-                    info!(
-                        target: "event_store",
-                        "Saved replaceable event: kind={}",
-                        event.kind
-                    );
-                }
-                Err(e) => {
-                    error!(
-                        target: "event_store",
-                        "Error saving event: {:?}",
-                        e
-                    );
-                }
-            }
-        }
-    }
-
-    pub fn start(mut self, database: Arc<NostrDatabase>, token: CancellationToken, id: String) {
-        let mut receiver = self.receiver.take().expect("Receiver already taken");
-
-        tokio::spawn(Box::pin(async move {
-            loop {
-                tokio::select! {
-                    _ = token.cancelled() => {
-                        debug!(
-                            target: "event_store",
-                            "[{}] Replaceable events handler shutting down",
-                            id
-                        );
-                        self.flush(&database).await;
-                        return;
-                    }
-
-                    event = receiver.recv() => {
-                        if let Some(event) = event {
-                            self.insert(event);
-                        }
-                    }
-                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                        self.flush(&database).await;
-                    }
-                }
-            }
-        }));
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct EventStoreConnection {
     id: String,
     database: Arc<NostrDatabase>,
     db_connection: String,
     connection_token: CancellationToken,
-    replaceable_event_queue: mpsc::UnboundedSender<UnsignedEvent>,
     subscription_sender: mpsc::UnboundedSender<SubscriptionMessage>,
     pub outgoing_sender: Option<MessageSender<RelayMessage>>,
     local_subscription_count: Arc<AtomicUsize>,
@@ -131,8 +49,6 @@ impl EventStoreConnection {
             db_connection
         );
 
-        let buffer = ReplaceableEventsBuffer::new();
-        let replaceable_event_queue = buffer.get_sender();
         let (subscription_sender, subscription_receiver) = mpsc::unbounded_channel();
         let local_subscription_count = Arc::new(AtomicUsize::new(0));
 
@@ -141,18 +57,10 @@ impl EventStoreConnection {
             database: database.clone(),
             db_connection,
             connection_token: cancellation_token.child_token(),
-            replaceable_event_queue,
             subscription_sender,
             outgoing_sender: Some(outgoing_sender.clone()),
             local_subscription_count: local_subscription_count.clone(),
         };
-
-        // Start the buffer task
-        buffer.start(
-            database.clone(),
-            connection.connection_token.clone(),
-            id_clone.clone(),
-        );
 
         // Spawn subscription management task
         let token = connection.connection_token.clone();
@@ -355,14 +263,25 @@ impl EventStoreConnection {
 
     pub async fn save_event(&self, event_builder: StoreCommand) -> Result<(), Error> {
         match event_builder {
+            // These events are signed by the relay key
             StoreCommand::SaveUnsignedEvent(event) => {
-                if let Err(e) = self.replaceable_event_queue.send(event) {
-                    error!(
-                        target: "event_store",
-                        "[{}] Error sending event to replaceable events sender: {:?}",
-                        self.id,
-                        e
-                    );
+                match self.database.save_unsigned_event(event).await {
+                    Ok(event) => {
+                        info!(
+                            target: "event_store",
+                            "[{}] Saved unsigned event: kind={}",
+                            self.id,
+                            event.kind
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            target: "event_store",
+                            "[{}] Error saving unsigned event: {:?}",
+                            self.id,
+                            e
+                        );
+                    }
                 }
             }
             StoreCommand::SaveSignedEvent(event) => {
@@ -447,30 +366,6 @@ impl EventStoreConnection {
                     e
                 );
             }
-        }
-
-        Ok(())
-    }
-
-    pub async fn handle_unsigned_event(&self, event: UnsignedEvent) -> Result<(), Error> {
-        debug!(
-            target: "event_store",
-            "[{}] Handling unsigned event from {}",
-            self.id,
-            self.db_connection
-        );
-
-        if let Err(e) = self.replaceable_event_queue.send(event) {
-            error!(
-                target: "event_store",
-                "[{}] Failed to send event to replaceable events buffer: {:?}",
-                self.id,
-                e
-            );
-            return Err(Error::Internal {
-                message: format!("Failed to send event to replaceable events buffer: {}", e),
-                backtrace: Backtrace::capture(),
-            });
         }
 
         Ok(())
