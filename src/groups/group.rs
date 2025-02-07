@@ -557,11 +557,41 @@ impl Group {
         Ok(())
     }
 
+    /// Changes the roles of one or more group members.
+    ///
+    /// This method enforces several important constraints to maintain group integrity:
+    /// 1. Only admins or the relay can change roles
+    /// 2. The last admin's role cannot be changed to non-admin
+    /// 3. The target users must already be members of the group
+    ///
+    /// # Arguments
+    /// * `event` - The event containing role changes. Must have p-tags with pubkey and role.
+    /// * `relay_pubkey` - The relay's public key, which has special permissions.
+    ///
+    /// # Returns
+    /// * `Ok(())` if the roles were successfully updated
+    /// * `Err` if:
+    ///   - The user is not authorized to change roles
+    ///   - Attempting to remove the last admin
+    ///   - Invalid tag format
     pub fn set_roles(&mut self, event: &Event, relay_pubkey: &PublicKey) -> Result<(), Error> {
         if !self.can_edit_members(&event.pubkey, relay_pubkey) {
             return Err(Error::notice("User is not authorized to set roles"));
         }
 
+        // First check if this would remove the last admin
+        let current_admins = self.admin_pubkeys();
+        for tag in event.tags.filter(TagKind::p()) {
+            let member = GroupMember::try_from(tag)?;
+            if current_admins.len() == 1
+                && current_admins.contains(&member.pubkey)
+                && !member.roles.contains(&GroupRole::Admin)
+            {
+                return Err(Error::notice("Cannot remove last admin"));
+            }
+        }
+
+        // If we get here, it's safe to update the roles
         for tag in event.tags.filter(TagKind::p()) {
             let member = GroupMember::try_from(tag)?;
             if let Some(existing_member) = self.members.get_mut(&member.pubkey) {
@@ -1687,5 +1717,115 @@ mod tests {
             !group.invites.contains_key(invite_code),
             "Invite should be removed from the invites map after deletion"
         );
+    }
+
+    #[tokio::test]
+    async fn test_remove_members_cannot_remove_last_admin() {
+        let (admin_keys, _, _) = create_test_keys();
+        let (mut group, _) = create_test_group(&admin_keys).await;
+
+        // Attempt to remove the last admin
+        let remove_tags = vec![Tag::public_key(admin_keys.public_key())];
+        let remove_event =
+            create_test_event(&admin_keys, KIND_GROUP_REMOVE_USER_9001, remove_tags).await;
+
+        // Should fail with "Cannot remove last admin" error
+        let result = group.remove_members(&remove_event, &admin_keys.public_key());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Cannot remove last admin");
+    }
+
+    #[tokio::test]
+    async fn test_group_creation_always_has_admin() {
+        let (admin_keys, _, _) = create_test_keys();
+        let (group, _) = create_test_group(&admin_keys).await;
+
+        // Verify there is exactly one admin
+        let admins: Vec<_> = group
+            .members
+            .values()
+            .filter(|member| member.is(GroupRole::Admin))
+            .collect();
+        assert_eq!(admins.len(), 1, "A new group should have exactly one admin");
+        assert_eq!(
+            admins[0].pubkey,
+            admin_keys.public_key(),
+            "The group creator should be the admin"
+        );
+
+        // Verify the group cannot be created without an admin
+        let group_without_admin = Group {
+            id: "test".to_string(),
+            metadata: GroupMetadata::new("test".to_string()),
+            members: HashMap::new(), // Empty members map = no admin
+            ..Default::default()
+        };
+        assert!(
+            group_without_admin.admin_pubkeys().is_empty(),
+            "Group should have no admins"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_roles_cannot_change_last_admin() {
+        let (admin_keys, _, _) = create_test_keys();
+        let (mut group, _) = create_test_group(&admin_keys).await;
+
+        // Attempt to change the last admin to a regular member
+        let set_roles_tags = vec![Tag::custom(
+            TagKind::p(),
+            [admin_keys.public_key().to_string(), "member".to_string()],
+        )];
+        let set_roles_event =
+            create_test_event(&admin_keys, KIND_GROUP_SET_ROLES_9006, set_roles_tags).await;
+
+        // Should fail with "Cannot remove last admin" error
+        let result = group.set_roles(&set_roles_event, &admin_keys.public_key());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Cannot remove last admin");
+
+        // Verify the admin still has admin role
+        assert!(group.is_admin(&admin_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_set_roles_can_change_admin_when_multiple_admins() {
+        let (admin_keys, member_keys, _) = create_test_keys();
+        let (mut group, _) = create_test_group(&admin_keys).await;
+
+        // First add the user as a regular member
+        let add_member_tags = vec![Tag::public_key(member_keys.public_key())];
+        let add_member_event =
+            create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_member_tags).await;
+        group
+            .add_members_from_event(&add_member_event, &admin_keys.public_key())
+            .unwrap();
+        assert!(group.is_member(&member_keys.public_key()));
+
+        // Then make them an admin
+        let add_admin_tags = vec![Tag::custom(
+            TagKind::p(),
+            [member_keys.public_key().to_string(), "admin".to_string()],
+        )];
+        let add_admin_event =
+            create_test_event(&admin_keys, KIND_GROUP_SET_ROLES_9006, add_admin_tags).await;
+        group
+            .set_roles(&add_admin_event, &admin_keys.public_key())
+            .unwrap();
+        assert!(group.is_admin(&member_keys.public_key()));
+
+        // Now we can change the original admin to a member since there's another admin
+        let change_role_tags = vec![Tag::custom(
+            TagKind::p(),
+            [admin_keys.public_key().to_string(), "member".to_string()],
+        )];
+        let change_role_event =
+            create_test_event(&admin_keys, KIND_GROUP_SET_ROLES_9006, change_role_tags).await;
+
+        // Should succeed
+        let result = group.set_roles(&change_role_event, &admin_keys.public_key());
+        assert!(result.is_ok());
+        assert!(!group.is_admin(&admin_keys.public_key()));
+        assert!(group.is_admin(&member_keys.public_key()));
     }
 }
