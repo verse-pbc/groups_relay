@@ -1,5 +1,22 @@
 ARG RUST_VERSION=1.84.0
 
+FROM rust:${RUST_VERSION}-slim-bookworm as rust-builder
+
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /usr/src/app
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+COPY groups_relay ./groups_relay
+COPY websocket_builder ./websocket_builder
+
+# Build the relay binary
+RUN cargo build --release --package groups_relay
+
 FROM node:20-slim as frontend-builder
 
 WORKDIR /usr/src/app/frontend
@@ -34,7 +51,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy pre-built artifacts and default config
-COPY groups_relay ./groups_relay
+COPY --from=rust-builder /usr/src/app/target/release/groups_relay ./groups_relay
 COPY config/settings.yml ./config/
 COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
 

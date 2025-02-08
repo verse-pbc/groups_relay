@@ -1,0 +1,42 @@
+[package]
+name = "groups_relay"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+websocket_builder = { path = "../websocket_builder" }
+tokio.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+serde.workspace = true
+futures.workspace = true
+clap.workspace = true
+nostr-sdk.workspace = true
+tracing-subscriber.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+rand.workspace = true
+
+tokio-util = { version = "0.7.1", features = ["rt"] }
+dashmap = "6.1.0"
+config = "0.13"
+axum = "0.7"
+axum-server = "0.6"
+strum = { version = "0.26.3", features = ["derive", "strum_macros"] }
+snafu = { version = "0.8.5", features = ["backtrace"] }
+console-subscriber = { version = "0.4.1", optional = true }
+tower-http = { version = "0.6.2", features = ["cors", "fs"] }
+tower = "0.5.2"
+nostr-database = "0.37.0"
+nostr-lmdb = "0.37.0"
+time = { version = "0.3.37", features = ["local-offset", "macros"] }
+humantime-serde = "1.1.1"
+
+[features]
+console = ["dep:console-subscriber"]
+
+[dev-dependencies]
+futures-util = "0.3.31"
+tempfile = "3.14.0"
+tokio-tungstenite.workspace = true

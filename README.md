@@ -1,8 +1,39 @@
-# Nostr Group Relay
+# Groups Relay
 
-[![codecov](https://codecov.io/gh/verse-pbc/groups_relay/branch/main/graph/badge.svg)](https://codecov.io/gh/verse-pbc/groups_relay)
+A Nostr relay implementation specialized for group chat functionality.
 
-A Nostr relay implementation with NIP-29 group chat support, built using a middleware-based architecture and LMDB for storage.
+## Project Structure
+
+This is a Rust workspace containing two crates:
+
+- **groups_relay**: The main relay server implementation with group chat functionality
+- **websocket_builder**: A generic, middleware-based WebSocket framework
+
+## Development
+
+### Prerequisites
+
+- Rust 1.75 or later
+- Docker (optional, for containerized development)
+
+### Building
+
+Build all workspace crates:
+```bash
+cargo build --workspace
+```
+
+Run tests across all crates:
+```bash
+cargo test --workspace
+```
+
+### Running the Relay
+
+From the workspace root:
+```bash
+cargo run -p groups_relay
+```
 
 ## Key Features
 
