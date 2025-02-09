@@ -307,12 +307,19 @@ where
             let child_token = connection_token.clone();
             let conn_id = connection_id.clone();
             tokio::spawn(async move {
-                tokio::time::sleep(max_time).await;
-                warn!(
-                    "[{}] Max connection time ({:?}) exceeded, initiating graceful connection shutdown",
-                    conn_id, max_time
-                );
-                child_token.cancel();
+                tokio::select! {
+                    _ = tokio::time::sleep(max_time) => {
+                        // Only cancel if the connection is still alive
+                        if !child_token.is_cancelled() {
+                            warn!(
+                                "[{}] Max connection time ({:?}) exceeded, initiating graceful connection shutdown",
+                                conn_id, max_time
+                            );
+                            child_token.cancel();
+                        }
+                    }
+                    _ = child_token.cancelled() => {}
+                }
             });
         }
 
