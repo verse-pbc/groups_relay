@@ -1,6 +1,6 @@
 ARG RUST_VERSION=1.84.0
 
-FROM rust:${RUST_VERSION}-slim-bookworm as rust-builder
+FROM rust:${RUST_VERSION}-slim-bookworm AS rust-builder
 
 RUN apt-get update && apt-get install -y \
     pkg-config \
@@ -17,7 +17,7 @@ COPY websocket_builder ./websocket_builder
 # Build the relay binary
 RUN cargo build --release --package groups_relay
 
-FROM node:20-slim as frontend-builder
+FROM node:20-slim AS frontend-builder
 
 WORKDIR /usr/src/app/frontend
 
