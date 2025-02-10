@@ -22,6 +22,7 @@ use groups_relay::{
 use metrics_exporter_prometheus::PrometheusHandle;
 use nostr_sdk::{ClientMessage, RelayMessage};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
@@ -31,6 +32,39 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tracing::{debug, error, info};
 use websocket_builder::{WebSocketBuilder, WebSocketHandler};
+
+/// A RAII guard for tracking active WebSocket connections
+#[derive(Debug)]
+struct ConnectionCounter {
+    counter: Arc<AtomicUsize>,
+    connection_id: String,
+}
+
+impl ConnectionCounter {
+    fn new(counter: Arc<AtomicUsize>, connection_id: String) -> Self {
+        let prev = counter.fetch_add(1, Ordering::SeqCst);
+        info!(
+            "[{}] New connection. Total active connections: {}",
+            connection_id,
+            prev + 1
+        );
+        Self {
+            counter,
+            connection_id,
+        }
+    }
+}
+
+impl Drop for ConnectionCounter {
+    fn drop(&mut self) {
+        let prev = self.counter.fetch_sub(1, Ordering::SeqCst);
+        info!(
+            "[{}] Connection closed. Total active connections: {}",
+            self.connection_id,
+            prev - 1
+        );
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -79,6 +113,7 @@ struct AppState {
     >,
     cancellation_token: CancellationToken,
     metrics_handle: PrometheusHandle,
+    connection_counter: Arc<AtomicUsize>,
 }
 
 impl FromRef<AppState> for Arc<app_state::HttpServerState> {
@@ -147,7 +182,12 @@ async fn http_websocket_handler(
     if let Some(ws) = ws {
         let real_ip = get_real_ip(&headers, addr);
         info!("WebSocket upgrade requested from {}", real_ip);
+
         return ws.on_upgrade(move |socket| async move {
+            // Create the connection counter guard - it will be automatically dropped when the connection ends
+            let _counter =
+                ConnectionCounter::new(state.connection_counter.clone(), real_ip.clone());
+
             let result = state
                 .ws_handler
                 .start(socket, real_ip.clone(), state.cancellation_token.clone())
@@ -298,6 +338,7 @@ async fn main() -> Result<()> {
         ws_handler: Arc::new(websocket_handler),
         cancellation_token: cancellation_token.clone(),
         metrics_handle: metrics_handle.clone(),
+        connection_counter: Arc::new(AtomicUsize::new(0)),
     };
 
     let cors = CorsLayer::new()

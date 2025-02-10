@@ -1,0 +1,20 @@
+[package]
+name = "load_tester"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+groups_relay = { path = "../groups_relay" }
+tokio.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+serde.workspace = true
+futures.workspace = true
+clap.workspace = true
+nostr-sdk.workspace = true
+tracing-subscriber.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+rand.workspace = true
+tokio-tungstenite.workspace = true
