@@ -239,6 +239,56 @@ where
     Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
     Factory: StateFactory<TapState> + Send + Sync + Clone + 'static,
 {
+    /// Handles connection permit acquisition
+    async fn try_acquire_connection_permit(
+        &self,
+        connection_id: &str,
+        state: TapState,
+    ) -> Result<(TapState, Option<OwnedSemaphorePermit>), WebsocketError<TapState>> {
+        if let Some(semaphore) = &self.connection_semaphore {
+            match semaphore.clone().try_acquire_owned() {
+                Ok(permit) => {
+                    debug!(
+                        "[{}] Connection permit acquired (within connection limit)",
+                        connection_id
+                    );
+                    Ok((state, Some(permit)))
+                }
+                Err(_) => {
+                    warn!(
+                        "[{}] Maximum connections limit reached, rejecting connection",
+                        connection_id
+                    );
+                    Err(WebsocketError::MaxConnectionsExceeded(state))
+                }
+            }
+        } else {
+            Ok((state, None))
+        }
+    }
+
+    /// Spawns timeout task if max_connection_time is configured
+    fn spawn_timeout_task(&self, connection_id: String, connection_token: CancellationToken) {
+        if let Some(max_time) = self.max_connection_time {
+            let token = connection_token.clone();
+            let conn_id = connection_id;
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = tokio::time::sleep(max_time) => {
+                        if !token.is_cancelled() {
+                            warn!(
+                                "[{}] Max connection time ({:?}) exceeded, initiating graceful shutdown",
+                                conn_id, max_time
+                            );
+                            token.cancel();
+                        }
+                    }
+                    _ = token.cancelled() => {} // Connection already cancelled.
+                }
+            });
+        }
+    }
+
     /// Starts handling a WebSocket connection.
     ///
     /// This method processes the lifecycle of a WebSocket connection, including:
@@ -251,11 +301,6 @@ where
     /// * The cancellation token is triggered
     /// * The maximum connection time is reached (if configured)
     /// * An error occurs during processing
-    ///
-    /// # Arguments
-    /// * `socket` - The WebSocket connection to handle
-    /// * `connection_id` - A unique identifier for this connection
-    /// * `cancellation_token` - A token that can be used to cancel the handler
     ///
     /// # Returns
     /// * `Ok(())` if the connection was processed successfully
@@ -274,75 +319,26 @@ where
         connection_id: String,
         cancellation_token: CancellationToken,
     ) -> Result<(), WebsocketError<TapState>> {
-        // Enforce max connections (if configured)
-        let _connection_permit: Option<OwnedSemaphorePermit> =
-            if let Some(semaphore) = &self.connection_semaphore {
-                match semaphore.clone().try_acquire_owned() {
-                    Ok(permit) => {
-                        debug!(
-                            "[{}] Connection permit acquired (within connection limit)",
-                            connection_id
-                        );
-                        Some(permit)
-                    }
-                    Err(_) => {
-                        warn!(
-                            "[{}] Maximum connections limit reached, rejecting connection",
-                            connection_id
-                        );
-                        let state = self
-                            .state_factory
-                            .create_state(cancellation_token.child_token());
-                        return Err(WebsocketError::MaxConnectionsExceeded(state));
-                    }
-                }
-            } else {
-                None
-            };
-
+        // Create a child cancellation token to isolate connection termination from
+        // server-wide shutdowns, ensuring only this specific connection is affected
         let connection_token = cancellation_token.child_token();
 
-        // If max connection time is set, spawn a task to cancel the connection after the duration
-        if let Some(max_time) = self.max_connection_time {
-            let child_token = connection_token.clone();
-            let conn_id = connection_id.clone();
-            tokio::spawn(async move {
-                tokio::select! {
-                    _ = tokio::time::sleep(max_time) => {
-                        // Only cancel if the connection is still alive
-                        if !child_token.is_cancelled() {
-                            warn!(
-                                "[{}] Max connection time ({:?}) exceeded, initiating graceful connection shutdown",
-                                conn_id, max_time
-                            );
-                            child_token.cancel();
-                        }
-                    }
-                    _ = child_token.cancelled() => {}
-                }
-            });
-        }
-
         let state = self.state_factory.create_state(connection_token.clone());
-        let middlewares = self.middlewares.clone();
-        let message_converter = self.message_converter.clone();
-        debug!("[{}] New WebSocket connection established", connection_id);
+
+        let (state, _connection_permit) = self
+            .try_acquire_connection_permit(&connection_id, state)
+            .await?;
+
+        self.spawn_timeout_task(connection_id.clone(), connection_token.clone());
 
         let mut session_handler = MessageHandler::new(
-            middlewares,
-            message_converter,
+            self.middlewares.clone(),
+            self.message_converter.clone(),
             None,
             connection_token.clone(),
             self.channel_size,
         );
 
-        // handle_connection_lifecycle handles all connection states including:
-        // - Normal message processing
-        // - Token-based graceful shutdown
-        // - Client-initiated close
-        // - Error conditions
-        // - No closing handshake
-        // In all cases, the connection state is preserved and returned here
         let state = match handle_connection_lifecycle(
             connection_id.clone(),
             socket,
@@ -352,13 +348,10 @@ where
         )
         .await
         {
-            Ok(state) => state,
+            Ok(final_state) => final_state,
             Err(e) => e.get_state(),
         };
 
-        // on_disconnect is always called exactly once when the connection ends,
-        // regardless of how it ended (graceful shutdown, error, or client disconnect).
-        // This ensures proper cleanup in all cases.
         if let Err(e) = session_handler
             .on_disconnect(connection_id.clone(), state)
             .await
@@ -369,7 +362,6 @@ where
             );
         }
 
-        debug!("[{}] WebSocket connection closed", connection_id);
         Ok(())
     }
 }
