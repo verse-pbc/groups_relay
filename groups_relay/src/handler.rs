@@ -84,7 +84,7 @@ pub async fn handle_nostr_json(
     let relay_info = RelayInformationDocument {
         name: Some("Nostr Groups Relay".to_string()),
         description: Some(
-            "A specialized relay implementing NIP-29 for Nostr group management".to_string(),
+            "A specialized relay implementing NIP-29 for Nostr group management. This relay is under development and all data may be deleted in the future".to_string(),
         ),
         supported_nips: Some(vec![1, 11, 29, 42, 70]),
         software: Some("groups_relay".to_string()),
