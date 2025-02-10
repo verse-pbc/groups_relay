@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use nostr_sdk::{
     ClientMessage, Event, Kind, PublicKey, RelayMessage, TagKind, TagStandard, Timestamp,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use websocket_builder::{ConnectionContext, InboundContext, Middleware, SendMessage};
 
 const MAX_AUTH_EVENT_AGE: u64 = 5000;

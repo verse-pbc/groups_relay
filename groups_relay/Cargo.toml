@@ -17,6 +17,7 @@ tracing-subscriber.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 rand.workspace = true
+thiserror = "1.0"
 
 tokio-util = { version = "0.7.1", features = ["rt"] }
 dashmap = "6.1.0"

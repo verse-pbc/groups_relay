@@ -1135,6 +1135,7 @@ dependencies = [
  "snafu",
  "strum",
  "tempfile",
+ "thiserror 1.0.69",
  "time",
  "tokio",
  "tokio-tungstenite 0.26.1",

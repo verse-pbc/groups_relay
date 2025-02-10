@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use websocket_builder::{
     ConnectionContext, DisconnectContext, InboundContext, MessageConverter, MessageSender,
     Middleware, OutboundContext, SendMessage,

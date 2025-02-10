@@ -3,9 +3,7 @@ use nostr_sdk::client::Error as NostrSdkError;
 use nostr_sdk::prelude::*;
 use nostr_sdk::{ClientMessage, RelayMessage};
 use snafu::{Backtrace, Snafu};
-use std::fmt::Display;
-use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 use websocket_builder::InboundContext;
 
 #[derive(Debug, Snafu)]
@@ -44,9 +42,10 @@ pub enum Error {
 
 impl Error {
     pub fn notice(message: impl Into<String>) -> Self {
-        info!("Notice: {}", message.into());
+        let msg = message.into();
+        info!("Notice: {}", msg);
         Error::Notice {
-            message: message.into(),
+            message: msg,
             backtrace: Backtrace::capture(),
         }
     }
@@ -59,17 +58,19 @@ impl Error {
     }
 
     pub fn auth_required(message: impl Into<String>) -> Self {
-        info!("Auth required: {}", message.into());
+        let msg = message.into();
+        info!("Auth required: {}", msg);
         Error::AuthRequired {
-            message: message.into(),
+            message: msg,
             backtrace: Backtrace::capture(),
         }
     }
 
     pub fn restricted(message: impl Into<String>) -> Self {
-        warn!("Restricted: {}", message.into());
+        let msg = message.into();
+        warn!("Restricted: {}", msg);
         Error::Restricted {
-            message: message.into(),
+            message: msg,
             backtrace: Backtrace::capture(),
         }
     }
