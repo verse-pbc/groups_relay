@@ -647,8 +647,8 @@ async fn message_loop<
                         debug!("[{}] Finished processing text message", connection_id);
                     }
                     Some(Ok(Message::Binary(_))) => {
-                        debug!("[{}] Received binary message (not implemented)", connection_id);
-                        todo!("handle binary message")
+                        error!("[{}] Protocol violation: received binary message - terminating connection as binary messages are not supported", connection_id);
+                        return Err(WebsocketError::UnsupportedBinaryMessage(state));
                     }
                     Some(Ok(Message::Ping(payload))) => {
                         debug!("[{}] Received ping, sending pong", connection_id);
@@ -733,6 +733,9 @@ pub enum WebsocketError<TapState: Send + Sync + 'static> {
 
     #[error("Maximum concurrent connections limit reached")]
     MaxConnectionsExceeded(TapState),
+
+    #[error("Binary messages are not supported by this server")]
+    UnsupportedBinaryMessage(TapState),
 }
 
 impl<TapState: Send + Sync + 'static> WebsocketError<TapState> {
@@ -748,6 +751,7 @@ impl<TapState: Send + Sync + 'static> WebsocketError<TapState> {
             Self::MissingMiddleware(state) => state,
             Self::InvalidTargetUrl(state) => state,
             Self::MaxConnectionsExceeded(state) => state,
+            Self::UnsupportedBinaryMessage(state) => state,
             Self::InboundMessageConversionError(_, state)
             | Self::OutboundMessageConversionError(_, state) => state,
         }
