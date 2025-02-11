@@ -56,8 +56,8 @@ impl Groups {
                 Some(id) => id,
                 None => {
                     return Err(Error::notice(format!(
-                        "Group ID not found in event: {}",
-                        event.as_json()
+                        "Group ID not found in event: {:?}",
+                        event
                     )))
                 }
             };
@@ -90,7 +90,10 @@ impl Groups {
                     KIND_GROUP_USER_JOIN_REQUEST_9021, // 9021
                     KIND_GROUP_CREATE_INVITE_9009,     // 9009
                 ])
-                .custom_tag(SingleLetterTag::lowercase(Alphabet::H), vec![group_id])
+                .custom_tag(
+                    SingleLetterTag::lowercase(Alphabet::H),
+                    group_id.to_string(),
+                )
                 .since(Timestamp::from(0))];
 
             let Ok(historical_events) = database.query(historical_filter).await else {
@@ -186,7 +189,7 @@ impl Groups {
                 .kinds(vec![KIND_GROUP_DELETE_9008])
                 .custom_tag(
                     SingleLetterTag::lowercase(Alphabet::H),
-                    vec![group_id],
+                    group_id.to_string(),
                 )])
             .await
         {
@@ -206,7 +209,7 @@ impl Groups {
     pub fn handle_set_roles(&self, event: &Event) -> Result<(), Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
-            .ok_or(Error::notice("Group not found"))?;
+            .ok_or(Error::notice("[SetRoles] Group not found"))?;
 
         group.set_roles(event, &self.relay_pubkey)
     }
@@ -214,7 +217,7 @@ impl Groups {
     pub fn handle_put_user(&self, event: &Event) -> Result<bool, Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
-            .ok_or(Error::notice("Group not found"))?;
+            .ok_or(Error::notice("[PutUser] Group not found"))?;
 
         group.add_members_from_event(event, &self.relay_pubkey)
     }
@@ -222,7 +225,7 @@ impl Groups {
     pub fn handle_remove_user(&self, event: &Event) -> Result<bool, Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
-            .ok_or(Error::notice("Group not found"))?;
+            .ok_or(Error::notice("[RemoveUser] Group not found"))?;
 
         group.remove_members(event, &self.relay_pubkey)
     }
@@ -230,7 +233,7 @@ impl Groups {
     pub fn handle_edit_metadata(&self, event: &Event) -> Result<(), Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
-            .ok_or(Error::notice("Group not found"))?;
+            .ok_or(Error::notice("[EditMetadata] Group not found"))?;
 
         group.set_metadata(event, &self.relay_pubkey)
     }
@@ -238,7 +241,7 @@ impl Groups {
     pub fn handle_create_invite(&self, event: &Event) -> Result<(), Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
-            .ok_or(Error::notice("Group not found"))?;
+            .ok_or(Error::notice("[CreateInvite] Group not found"))?;
 
         group.create_invite(event, &self.relay_pubkey)?;
         Ok(())
@@ -247,7 +250,7 @@ impl Groups {
     pub fn handle_join_request(&self, event: &Event) -> Result<bool, Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
-            .ok_or(Error::notice("Group not found"))?;
+            .ok_or(Error::notice("[JoinRequest] Group not found"))?;
 
         group.join_request(event)
     }
@@ -255,7 +258,7 @@ impl Groups {
     pub fn handle_leave_request(&self, event: &Event) -> Result<bool, Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
-            .ok_or(Error::notice("Group not found"))?;
+            .ok_or(Error::notice("[LeaveRequest] Group not found"))?;
 
         group.leave_request(event)
     }
@@ -305,7 +308,7 @@ impl Groups {
                 .query(vec![Filter::new()
                     .custom_tag(
                         SingleLetterTag::lowercase(Alphabet::H),
-                        vec![group.id.as_str()],
+                        group.id.to_string(),
                     )
                     .limit(1)])
                 .await
@@ -617,13 +620,14 @@ mod tests {
             KIND_GROUP_REMOVE_USER_9001,
             vec![
                 Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
-                Tag::public_key(member_keys.public_key()),
+                Tag::custom(TagKind::p(), [member_keys.public_key().to_string()]),
             ],
         )
         .await;
 
-        let result = groups.handle_remove_user(&remove_event).unwrap();
-        assert!(result);
+        let result = groups.handle_remove_user(&remove_event);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), false);
 
         let group = groups.get_group(TEST_GROUP_ID).unwrap();
         assert!(!group.members.contains_key(&member_keys.public_key()));

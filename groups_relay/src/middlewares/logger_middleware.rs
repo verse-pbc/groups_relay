@@ -3,7 +3,7 @@ use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::{ClientMessage, JsonUtil, RelayMessage};
-use tracing::info;
+use tracing::{debug, info};
 use websocket_builder::{
     ConnectionContext, DisconnectContext, InboundContext, Middleware, OutboundContext,
 };
@@ -11,15 +11,9 @@ use websocket_builder::{
 #[derive(Debug)]
 pub struct LoggerMiddleware;
 
-impl LoggerMiddleware {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl Default for LoggerMiddleware {
     fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 
@@ -32,105 +26,43 @@ impl Middleware for LoggerMiddleware {
     async fn process_inbound(
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<()> {
+    ) -> Result<(), anyhow::Error> {
         match &ctx.message {
             ClientMessage::Event(event) => {
-                info!(
-                    "[{}] > event kind {}: {}",
-                    ctx.connection_id.as_str(),
-                    event.kind,
-                    event.as_json()
-                );
+                info!("> event kind {}: {}", event.kind, event.as_json());
             }
             ClientMessage::Req {
+                filter,
                 subscription_id,
-                filters,
             } => {
-                info!(
-                    "[{}] > request {}: {}",
-                    ctx.connection_id.as_str(),
-                    subscription_id,
-                    filters
-                        .iter()
-                        .map(|f| f.as_json())
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                );
-            }
-            ClientMessage::Auth(event) => {
-                info!("[{}] > auth: {}", ctx.connection_id.as_str(), event.id);
+                info!("> REQ {}: {}", subscription_id, filter.as_json());
             }
             ClientMessage::Close(subscription_id) => {
-                info!(
-                    "[{}] > close: {}",
-                    ctx.connection_id.as_str(),
-                    subscription_id
-                );
+                info!("> CLOSE {}", subscription_id);
             }
-            _ => {
-                info!(
-                    "[{}] > {}",
-                    ctx.connection_id.as_str(),
-                    ctx.message.as_json()
-                );
+            ClientMessage::Auth(event) => {
+                info!("> AUTH {}", event.as_json());
             }
+            _ => debug!("> {:?}", ctx.message),
         }
-        Ok(())
+        ctx.next().await
     }
 
     async fn process_outbound(
         &self,
         ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<()> {
-        let Some(outbound_message) = &ctx.message else {
-            return Ok(());
-        };
-
-        match outbound_message {
-            RelayMessage::Event {
-                subscription_id,
-                event,
-            } => {
-                info!(
-                    "[{}] < event for sub {}: kind {}, id: {}, pubkey: {}",
-                    ctx.connection_id.as_str(),
-                    subscription_id,
-                    event.kind,
-                    event.id,
-                    event.pubkey
-                );
-            }
-            RelayMessage::Auth { challenge } => {
-                info!("[{}] < auth: {}", ctx.connection_id.as_str(), challenge);
-            }
-            RelayMessage::Ok {
-                event_id,
-                status: _,
-                message,
-            } => {
-                info!(
-                    "[{}] < ok: {}, {}",
-                    ctx.connection_id.as_str(),
-                    event_id,
-                    message
-                );
-            }
-            _ => {
-                info!(
-                    "[{}] < {}",
-                    ctx.connection_id.as_str(),
-                    outbound_message.as_json()
-                );
-            }
+    ) -> Result<(), anyhow::Error> {
+        if let Some(msg) = &ctx.message {
+            info!("< {}", msg.as_json());
         }
-        Ok(())
+        ctx.next().await
     }
 
     async fn on_connect(
         &self,
         ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        info!("[{}] Connected to relay", ctx.connection_id.as_str());
+        info!("Connected to relay");
         metrics::active_connections().increment(1.0);
         ctx.next().await
     }
@@ -139,7 +71,7 @@ impl Middleware for LoggerMiddleware {
         &'a self,
         ctx: &mut DisconnectContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        info!("[{}] Disconnected from relay", ctx.connection_id.as_str());
+        info!("Disconnected from relay");
         metrics::active_connections().decrement(1.0);
         ctx.next().await
     }
@@ -152,21 +84,24 @@ mod tests {
     use std::sync::Arc;
 
     fn create_test_state() -> NostrConnectionState {
-        NostrConnectionState::new("wss://test.relay".to_string())
+        NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL")
+    }
+
+    fn create_middleware_chain() -> Vec<
+        Arc<
+            dyn Middleware<
+                State = NostrConnectionState,
+                IncomingMessage = ClientMessage,
+                OutgoingMessage = RelayMessage,
+            >,
+        >,
+    > {
+        vec![Arc::new(LoggerMiddleware)]
     }
 
     #[tokio::test]
     async fn test_inbound_message_logging() {
-        let middleware = LoggerMiddleware::new();
-        let chain: Vec<
-            Arc<
-                dyn Middleware<
-                    State = NostrConnectionState,
-                    IncomingMessage = ClientMessage,
-                    OutgoingMessage = RelayMessage,
-                >,
-            >,
-        > = vec![Arc::new(middleware)];
+        let chain = create_middleware_chain();
         let mut state = create_test_state();
 
         let mut ctx = InboundContext::new(
@@ -174,7 +109,7 @@ mod tests {
             ClientMessage::Close(SubscriptionId::new("test_sub")),
             None,
             &mut state,
-            &chain,
+            chain.as_slice(),
             0,
         );
 
@@ -184,26 +119,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_outbound_message_logging() {
-        let middleware = LoggerMiddleware::new();
-        let chain: Vec<
-            Arc<
-                dyn Middleware<
-                    State = NostrConnectionState,
-                    IncomingMessage = ClientMessage,
-                    OutgoingMessage = RelayMessage,
-                >,
-            >,
-        > = vec![Arc::new(middleware)];
+        let chain = create_middleware_chain();
         let mut state = create_test_state();
 
         let mut ctx = OutboundContext::new(
             "test_connection".to_string(),
-            RelayMessage::Notice {
-                message: "test notice".to_string(),
-            },
+            RelayMessage::Notice("test notice".to_string()),
             None,
             &mut state,
-            &chain,
+            chain.as_slice(),
             0,
         );
 

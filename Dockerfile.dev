@@ -15,6 +15,7 @@ RUN set -eux; \
 WORKDIR /usr/src/app
 
 # Copy workspace files
+COPY .cargo/config.toml .cargo/config.toml
 COPY Cargo.toml Cargo.lock ./
 COPY groups_relay ./groups_relay
 COPY websocket_builder ./websocket_builder

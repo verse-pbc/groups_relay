@@ -197,28 +197,27 @@ impl Middleware for Nip42Auth {
     async fn process_inbound(
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<(), Error> {
-        let connection_id = ctx.connection_id.as_str();
-        debug!("[{}] Processing inbound message", connection_id);
+    ) -> Result<(), anyhow::Error> {
+        debug!("Processing inbound message");
 
         match &ctx.message {
             ClientMessage::Auth(event) => {
                 info!(
-                    "[{}] Processing AUTH message. Event id: {}, pubkey: {}",
-                    connection_id, event.id, event.pubkey
+                    "Processing AUTH message. Event id: {}, pubkey: {}",
+                    event.id, event.pubkey
                 );
 
                 debug!(
-                    "[{}] Current connection state - Challenge: {:?}, Authed: {:?}",
-                    connection_id, ctx.state.challenge, ctx.state.authed_pubkey
+                    "Current connection state - Challenge: {:?}, Authed: {:?}",
+                    ctx.state.challenge, ctx.state.authed_pubkey
                 );
 
                 if let Some(failure_reason) =
                     self.get_auth_failure_reason(event, ctx.state.challenge.as_deref())
                 {
                     warn!(
-                        "[{}] Authentication failed for event id {}: {}",
-                        connection_id, event.id, failure_reason
+                        "Authentication failed for event id {}: {}",
+                        event.id, failure_reason
                     );
                     ctx.send_message(RelayMessage::Ok {
                         event_id: event.id,
@@ -231,10 +230,7 @@ impl Middleware for Nip42Auth {
 
                 // If we get here, authentication was successful
                 ctx.state.authed_pubkey = Some(event.pubkey);
-                info!(
-                    "[{}] Authentication successful for pubkey: {}",
-                    connection_id, event.pubkey
-                );
+                info!("Authentication successful for pubkey: {}", event.pubkey);
 
                 ctx.send_message(RelayMessage::Ok {
                     event_id: event.id,
@@ -245,7 +241,7 @@ impl Middleware for Nip42Auth {
                 ctx.next().await
             }
             _ => {
-                debug!("[{}] Non-AUTH message, passing through", connection_id);
+                debug!("Non-AUTH message, passing through");
                 ctx.next().await
             }
         }
@@ -255,16 +251,9 @@ impl Middleware for Nip42Auth {
         &self,
         ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), Error> {
-        debug!(
-            "[{}] New connection, generating challenge",
-            ctx.connection_id.as_str()
-        );
+        debug!("New connection, generating challenge");
         let challenge_event = ctx.state.get_challenge_event();
-        debug!(
-            "[{}] Generated challenge event: {:?}",
-            ctx.connection_id.as_str(),
-            challenge_event
-        );
+        debug!("Generated challenge event: {:?}", challenge_event);
         ctx.send_message(challenge_event).await?;
         ctx.next().await
     }

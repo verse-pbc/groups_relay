@@ -1,5 +1,6 @@
+use anyhow::Result;
 use config::{Config as ConfigTree, ConfigError, Environment, File};
-use nostr_sdk::{Keys, SecretKey};
+use nostr_sdk::{RelayUrl, SecretKey};
 use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
@@ -44,6 +45,14 @@ impl RelaySettings {
     pub fn relay_keys(&self) -> Result<Keys, anyhow::Error> {
         let secret_key = SecretKey::from_hex(&self.relay_secret_key)?;
         Ok(Keys::new(secret_key))
+    }
+
+    pub fn relay_url(&self) -> Result<RelayUrl, anyhow::Error> {
+        Ok(RelayUrl::parse(&self.relay_url)?)
+    }
+
+    pub fn auth_url(&self) -> Result<RelayUrl, anyhow::Error> {
+        Ok(RelayUrl::parse(&self.auth_url)?)
     }
 }
 
@@ -108,3 +117,14 @@ impl Config {
         Ok(settings)
     }
 }
+
+pub struct Settings {
+    pub relay_url: String,
+    pub local_addr: String,
+    pub auth_url: String,
+    pub admin_keys: Vec<String>,
+    pub websocket: WebSocketSettings,
+    pub db_path: String,
+}
+
+pub use nostr_sdk::Keys;

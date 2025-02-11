@@ -29,8 +29,9 @@ snafu = { version = "0.8.5", features = ["backtrace"] }
 console-subscriber = { version = "0.4.1", optional = true }
 tower-http = { version = "0.6.2", features = ["cors", "fs"] }
 tower = "0.5.2"
-nostr-database = "0.37.0"
-nostr-lmdb = "0.37.0"
+nostr = { workspace = true, features = ["std"] }
+nostr-database = "0.39.0"
+nostr-lmdb = "0.39.0"
 time = { version = "0.3.37", features = ["local-offset", "macros"] }
 humantime-serde = "1.1.1"
 

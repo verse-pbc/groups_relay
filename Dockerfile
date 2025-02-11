@@ -9,10 +9,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /usr/src/app
 
-# Copy workspace files
-COPY Cargo.toml Cargo.lock ./
-COPY groups_relay ./groups_relay
-COPY websocket_builder ./websocket_builder
+# Copy the entire workspace
+COPY . .
 
 # Build the relay binary
 RUN cargo build --release --package groups_relay

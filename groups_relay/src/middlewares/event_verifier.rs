@@ -77,7 +77,7 @@ mod tests {
     }
 
     fn create_test_state() -> NostrConnectionState {
-        NostrConnectionState::new("wss://test.relay".to_string())
+        NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL")
     }
 
     #[tokio::test]

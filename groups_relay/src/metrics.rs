@@ -1,6 +1,7 @@
 use anyhow::Result;
 use metrics::{describe_counter, describe_gauge, Counter, Gauge};
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use metrics_exporter_prometheus::PrometheusBuilder;
+pub use metrics_exporter_prometheus::PrometheusHandle;
 
 /// Active WebSocket connections gauge
 pub fn active_connections() -> Gauge {
@@ -39,7 +40,7 @@ pub fn active_groups() -> Gauge {
 
 /// Sets up the Prometheus recorder and returns a handle that can be used
 /// to expose the /metrics endpoint.
-pub fn setup_metrics() -> Result<PrometheusHandle> {
+pub fn setup_metrics() -> Result<PrometheusHandle, anyhow::Error> {
     // Describe metrics
     describe_counter!("groups_created", "Total number of groups created");
     describe_gauge!(

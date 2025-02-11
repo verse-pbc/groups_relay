@@ -3,18 +3,20 @@ name = "load_tester"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+
 [dependencies]
 groups_relay = { path = "../groups_relay" }
-tokio.workspace = true
-anyhow.workspace = true
-async-trait.workspace = true
-tracing.workspace = true
-serde.workspace = true
-futures.workspace = true
-clap.workspace = true
-nostr-sdk.workspace = true
-tracing-subscriber.workspace = true
-metrics.workspace = true
-metrics-exporter-prometheus.workspace = true
-rand.workspace = true
-tokio-tungstenite.workspace = true
+tokio = { version = "1.38.1", features = ["full", "tracing"] }
+anyhow = { version = "1.0.89", features = ["backtrace"] }
+async-trait = "0.1.82"
+tracing = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+futures = "0.3.31"
+clap = { version = "4.5.17", features = ["derive"] }
+nostr-sdk = { version = "0.39.0", features = ["all-nips"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
+metrics = "0.24.1"
+metrics-exporter-prometheus = "0.16.2"
+rand = "0.8.5"
+tokio-tungstenite = "0.26.1"

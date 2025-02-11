@@ -1,4 +1,6 @@
 use anyhow::Result;
+use nostr_database::nostr::{Event, Filter};
+use nostr_database::{Events, NostrEventsDatabase};
 use nostr_lmdb::NostrLMDB;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
@@ -30,7 +32,7 @@ impl NostrDatabase {
 
     async fn save(&self, event: &Event) -> Result<()> {
         debug!("Saving event to database: {}", event.as_json());
-        match self.inner.save_event(event).await {
+        match NostrEventsDatabase::save_event(&*self.inner, event).await {
             Ok(_) => {
                 debug!("Event saved successfully, event: {}", event.as_json());
                 Ok(())
@@ -44,16 +46,26 @@ impl NostrDatabase {
 
     pub async fn query(&self, filters: Vec<Filter>) -> Result<Events> {
         debug!("Fetching events with filters: {:?}", filters);
-        match self.inner.query(filters).await {
-            Ok(events) => {
-                debug!("Fetched {} events", events.len());
-                Ok(events)
-            }
-            Err(e) => {
-                error!("Error fetching events: {:?}", e);
-                Err(e.into())
+
+        // Create an empty events collection with a default filter
+        let mut all_events = Events::new(&Filter::new());
+
+        // Handle each filter individually and combine results
+        for filter in filters {
+            match NostrEventsDatabase::query(&*self.inner, filter).await {
+                Ok(events) => {
+                    debug!("Fetched {} events for filter", events.len());
+                    all_events.extend(events);
+                }
+                Err(e) => {
+                    error!("Error fetching events: {:?}", e);
+                    return Err(e.into());
+                }
             }
         }
+
+        debug!("Fetched {} total events", all_events.len());
+        Ok(all_events)
     }
 
     pub async fn save_signed_event(&self, event: &Event) -> Result<()> {
@@ -78,7 +90,7 @@ impl NostrDatabase {
 
     pub async fn delete(&self, filter: Filter) -> Result<()> {
         debug!("Deleting events with filter: {:?}", filter);
-        match self.inner.delete(filter).await {
+        match NostrEventsDatabase::delete(&*self.inner, filter).await {
             Ok(_) => {
                 debug!("Deleted events");
                 Ok(())

@@ -3,6 +3,7 @@ use nostr_sdk::client::Error as NostrSdkError;
 use nostr_sdk::prelude::*;
 use nostr_sdk::{ClientMessage, RelayMessage};
 use snafu::{Backtrace, Snafu};
+use std::borrow::Cow;
 use tracing::{error, info, warn};
 use websocket_builder::InboundContext;
 
@@ -41,7 +42,7 @@ pub enum Error {
 }
 
 impl Error {
-    pub fn notice(message: impl Into<String>) -> Self {
+    pub fn notice<S: Into<String>>(message: S) -> Self {
         let msg = message.into();
         info!("Notice: {}", msg);
         Error::Notice {
@@ -57,16 +58,16 @@ impl Error {
         }
     }
 
-    pub fn auth_required(message: impl Into<String>) -> Self {
+    pub fn auth_required<S: Into<String>>(message: S) -> Self {
         let msg = message.into();
-        info!("Auth required: {}", msg);
+        warn!("Auth required: {}", msg);
         Error::AuthRequired {
             message: msg,
             backtrace: Backtrace::capture(),
         }
     }
 
-    pub fn restricted(message: impl Into<String>) -> Self {
+    pub fn restricted<S: Into<String>>(message: S) -> Self {
         let msg = message.into();
         warn!("Restricted: {}", msg);
         Error::Restricted {
@@ -88,24 +89,18 @@ impl From<NostrSdkError> for Error {
             }
             NostrSdkError::DMsRelaysNotFound => Error::nostr_sdk("DMs relays not found"),
             NostrSdkError::MetadataNotFound => Error::nostr_sdk("Metadata not found"),
-            NostrSdkError::SignerNotConfigured => Error::nostr_sdk("Signer not configured"),
-            NostrSdkError::ZapperNotConfigured => Error::nostr_sdk("Zapper not configured"),
             NostrSdkError::Relay(relay_error) => Error::nostr_sdk(relay_error.to_string()),
             NostrSdkError::Database(database_error) => Error::nostr_sdk(database_error.to_string()),
-            NostrSdkError::NIP57(nip57_error) => Error::nostr_sdk(nip57_error.to_string()),
             NostrSdkError::NIP59(nip59_error) => Error::nostr_sdk(nip59_error.to_string()),
             NostrSdkError::RelayPool(relay_pool_error) => {
                 Error::nostr_sdk(relay_pool_error.to_string())
             }
             NostrSdkError::Signer(signer_error) => Error::nostr_sdk(signer_error.to_string()),
-            NostrSdkError::Zapper(zapper_error) => Error::nostr_sdk(zapper_error.to_string()),
-            NostrSdkError::LnUrlPay(lnurl_pay_error) => {
-                Error::nostr_sdk(lnurl_pay_error.to_string())
-            }
             NostrSdkError::EventBuilder(event_builder_error) => {
                 Error::nostr_sdk(event_builder_error.to_string())
             }
-            NostrSdkError::Metadata(metadata_error) => Error::nostr_sdk(metadata_error.to_string()),
+            NostrSdkError::Json(json_error) => Error::nostr_sdk(json_error.to_string()),
+            NostrSdkError::SharedState(state_error) => Error::nostr_sdk(state_error.to_string()),
         }
     }
 }
@@ -119,27 +114,39 @@ impl Error {
         match self {
             Error::Notice { message, .. } => {
                 warn!("Notice: {}", message);
-                vec![RelayMessage::closed(subscription_id, message)]
+                vec![RelayMessage::closed(
+                    subscription_id,
+                    Cow::Borrowed(message.as_str()),
+                )]
             }
             Error::AuthRequired { message, .. } => {
                 warn!("Auth required: {}", message);
                 let challenge_event = state.get_challenge_event();
                 vec![
                     challenge_event,
-                    RelayMessage::closed(subscription_id, message),
+                    RelayMessage::closed(subscription_id, Cow::Borrowed(message.as_str())),
                 ]
             }
             Error::Restricted { message, .. } => {
                 warn!("Restricted: {}", message);
-                vec![RelayMessage::closed(subscription_id, message)]
+                vec![RelayMessage::closed(
+                    subscription_id,
+                    Cow::Borrowed(message.as_str()),
+                )]
             }
             Error::Internal { message, .. } => {
                 error!("Internal error: {}", message);
-                vec![RelayMessage::closed(subscription_id, "Internal error")]
+                vec![RelayMessage::closed(
+                    subscription_id,
+                    Cow::Borrowed("Internal error"),
+                )]
             }
             Error::NostrSdk { message, .. } => {
                 error!("Nostr SDK error: {}", message);
-                vec![RelayMessage::closed(subscription_id, "Nostr SDK error")]
+                vec![RelayMessage::closed(
+                    subscription_id,
+                    Cow::Borrowed("Nostr SDK error"),
+                )]
             }
         }
     }
@@ -151,30 +158,39 @@ impl Error {
     ) -> Vec<RelayMessage> {
         match self {
             Error::Notice { message, .. } => {
-                vec![RelayMessage::ok(event_id, false, message)]
-            }
-            Error::AuthRequired { message, .. } => {
-                let challenge_event = state.get_challenge_event();
-
-                vec![
-                    challenge_event,
-                    RelayMessage::ok(event_id, false, format!("auth-required: {}", message)),
-                ]
-            }
-            Error::Restricted { message, .. } => {
                 vec![RelayMessage::ok(
                     event_id,
                     false,
-                    format!("restricted: {}", message),
+                    Cow::Borrowed(message.as_str()),
                 )]
+            }
+            Error::AuthRequired { message, .. } => {
+                let challenge_event = state.get_challenge_event();
+                let msg = format!("auth-required: {}", message);
+                vec![
+                    challenge_event,
+                    RelayMessage::ok(event_id, false, Cow::Owned(msg)),
+                ]
+            }
+            Error::Restricted { message, .. } => {
+                let msg = format!("restricted: {}", message);
+                vec![RelayMessage::ok(event_id, false, Cow::Owned(msg))]
             }
             Error::Internal { message, .. } => {
                 error!("Internal error: {}", message);
-                vec![RelayMessage::ok(event_id, false, "error: Internal error")]
+                vec![RelayMessage::ok(
+                    event_id,
+                    false,
+                    Cow::Borrowed("error: Internal error"),
+                )]
             }
             Error::NostrSdk { message, .. } => {
                 error!("Nostr SDK error: {}", message);
-                vec![RelayMessage::ok(event_id, false, "error: Internal error")]
+                vec![RelayMessage::ok(
+                    event_id,
+                    false,
+                    Cow::Borrowed("error: Internal error"),
+                )]
             }
         }
     }

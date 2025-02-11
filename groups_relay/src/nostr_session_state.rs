@@ -9,7 +9,7 @@ const DEFAULT_RELAY_URL: &str = "wss://default.relay";
 
 #[derive(Debug, Clone)]
 pub struct NostrConnectionState {
-    pub relay_url: String,
+    pub relay_url: RelayUrl,
     pub challenge: Option<String>,
     pub authed_pubkey: Option<PublicKey>,
     pub relay_connection: Option<EventStoreConnection>,
@@ -19,7 +19,7 @@ pub struct NostrConnectionState {
 impl Default for NostrConnectionState {
     fn default() -> Self {
         Self {
-            relay_url: DEFAULT_RELAY_URL.to_string(),
+            relay_url: RelayUrl::parse(DEFAULT_RELAY_URL).expect("Invalid default relay URL"),
             challenge: None,
             authed_pubkey: None,
             relay_connection: None,
@@ -29,14 +29,19 @@ impl Default for NostrConnectionState {
 }
 
 impl NostrConnectionState {
-    pub fn new(relay_url: String) -> Self {
-        Self {
+    pub fn new(relay_url: String) -> Result<Self, Error> {
+        let relay_url = RelayUrl::parse(&relay_url).map_err(|e| Error::Internal {
+            message: format!("Invalid relay URL: {}", e),
+            backtrace: Backtrace::capture(),
+        })?;
+
+        Ok(Self {
             relay_url,
             challenge: None,
             authed_pubkey: None,
             relay_connection: None,
             connection_token: CancellationToken::new(),
-        }
+        })
     }
 
     pub fn is_authenticated(&self) -> bool {
@@ -73,14 +78,19 @@ impl NostrConnectionState {
 
 #[derive(Clone)]
 pub struct NostrConnectionFactory {
-    relay_url: String,
+    relay_url: RelayUrl,
 }
 
 impl NostrConnectionFactory {
-    pub fn new(relay_url: String) -> Self {
-        Self { relay_url }
+    pub fn new(relay_url: String) -> Result<Self, Error> {
+        let relay_url = RelayUrl::parse(&relay_url).map_err(|e| Error::Internal {
+            message: format!("Invalid relay URL: {}", e),
+            backtrace: Backtrace::capture(),
+        })?;
+        Ok(Self { relay_url })
     }
 }
+
 impl StateFactory<NostrConnectionState> for NostrConnectionFactory {
     fn create_state(&self, token: CancellationToken) -> NostrConnectionState {
         NostrConnectionState {

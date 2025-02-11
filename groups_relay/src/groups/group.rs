@@ -1,20 +1,16 @@
 use crate::error::Error;
 use crate::StoreCommand;
-use anyhow::Result;
-use nostr_sdk::prelude::*;
+use nostr::prelude::*;
+use nostr::{Tag, TagKind};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
-use std::{collections::HashMap, collections::HashSet};
-use strum::Display;
-use strum::EnumIter;
-use strum::IntoEnumIterator;
+use strum::{Display, EnumIter, IntoEnumIterator};
 use tracing::{debug, error, info, warn};
 
-// Group Creation and Management
+// Custom event kinds for groups
 pub const KIND_GROUP_CREATE_9007: Kind = Kind::Custom(9007); // Admin/Relay -> Relay: Create a new group
 pub const KIND_GROUP_DELETE_9008: Kind = Kind::Custom(9008); // Admin/Relay -> Relay: Delete an existing group
-
-// Admin/Moderation Actions (9000-9005)
 pub const KIND_GROUP_ADD_USER_9000: Kind = Kind::Custom(9000); // Admin/Relay -> Relay: Add user to group
 pub const KIND_GROUP_REMOVE_USER_9001: Kind = Kind::Custom(9001); // Admin/Relay -> Relay: Remove user from group
 pub const KIND_GROUP_EDIT_METADATA_9002: Kind = Kind::Custom(9002); // Admin/Relay -> Relay: Edit group metadata
@@ -22,17 +18,14 @@ pub const KIND_GROUP_DELETE_EVENT_9005: Kind = Kind::Custom(9005); // Admin/Rela
 pub const KIND_GROUP_SET_ROLES_9006: Kind = Kind::Custom(9006); // Admin/Relay -> Relay: Set roles for group. This was removed but at least 0xchat uses it
 pub const KIND_GROUP_CREATE_INVITE_9009: Kind = Kind::Custom(9009); // Admin/Relay -> Relay: Create invite for closed group
 
-// User Actions (9021-9022)
 pub const KIND_GROUP_USER_JOIN_REQUEST_9021: Kind = Kind::Custom(9021); // User -> Relay: Request to join group
 pub const KIND_GROUP_USER_LEAVE_REQUEST_9022: Kind = Kind::Custom(9022); // User -> Relay: Request to leave group
 
-// Relay-Generated Events (39000-39003)
 pub const KIND_GROUP_METADATA_39000: Kind = Kind::Custom(39000); // Relay -> All: Group metadata
 pub const KIND_GROUP_ADMINS_39001: Kind = Kind::Custom(39001); // Relay -> All: List of group admins
 pub const KIND_GROUP_MEMBERS_39002: Kind = Kind::Custom(39002); // Relay -> All: List of group members
 pub const KIND_GROUP_ROLES_39003: Kind = Kind::Custom(39003); // Relay -> All: Supported roles in group
 
-// Non Group Content Kinds
 pub const KIND_SIMPLE_LIST_10009: Kind = Kind::Custom(10009); // Simple Groups (NIP-51): List of groups a user wants to remember being in
 pub const KIND_CLAIM_28934: Kind = Kind::Custom(28934); // Claim (NIP-43): Claim auth
 
@@ -55,7 +48,7 @@ pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 10] = [
     KIND_GROUP_CREATE_INVITE_9009,
     KIND_GROUP_USER_JOIN_REQUEST_9021,
     KIND_GROUP_USER_LEAVE_REQUEST_9022,
-    KIND_SIMPLE_LIST_10009,
+    KIND_CLAIM_28934,
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -373,15 +366,11 @@ impl Group {
         }
 
         // Delete all group kinds possible except this delete request (kind 9008)
-        let non_addressable_filter = Filter::new().custom_tag(
-            SingleLetterTag::lowercase(Alphabet::H),
-            &[self.id.to_string()],
-        );
+        let non_addressable_filter =
+            Filter::new().custom_tag(SingleLetterTag::lowercase(Alphabet::H), self.id.to_string());
 
-        let addressable_filter = Filter::new().custom_tag(
-            SingleLetterTag::lowercase(Alphabet::D),
-            &[self.id.to_string()],
-        );
+        let addressable_filter =
+            Filter::new().custom_tag(SingleLetterTag::lowercase(Alphabet::D), self.id.to_string());
 
         Ok(vec![
             StoreCommand::DeleteEvents(non_addressable_filter),
@@ -400,11 +389,15 @@ impl Group {
             return Err(Error::notice("Invalid event kind for delete event"));
         }
 
+        // Get the event IDs from the tags
+        let event_ids: Vec<_> = delete_request_event.tags.event_ids().copied().collect();
+        if event_ids.is_empty() {
+            return Err(Error::notice("No event IDs found in delete request"));
+        }
+
         if !self.can_delete_event(authed_pubkey, relay_pubkey, delete_request_event)? {
             return Err(Error::notice("User is not authorized to delete this event"));
         }
-
-        let event_ids: Vec<_> = delete_request_event.tags.event_ids().copied().collect();
 
         // We may be deleting invites, remove them from memory too.
         let codes_to_remove: Vec<_> = self
@@ -496,69 +489,67 @@ impl Group {
         }
 
         let admins = self.admin_pubkeys();
+        let mut removed_admins = false;
 
+        // Process each p tag to get members to remove
         for tag in members_event.tags.filter(TagKind::p()) {
-            let Some(removed_pubkey) = tag.content().and_then(|s| PublicKey::parse(s).ok()) else {
-                return Err(Error::notice("Invalid tag format"));
-            };
+            let member = GroupMember::try_from(tag)?;
+            let removed_pubkey = member.pubkey;
 
+            // Check if we're trying to remove the last admin
             if admins.len() == 1 && admins.contains(&removed_pubkey) {
                 return Err(Error::notice("Cannot remove last admin"));
             }
 
-            self.members.remove(&removed_pubkey);
+            // Remove the member and track if they were an admin
+            if self.members.remove(&removed_pubkey).is_some() {
+                self.join_requests.remove(&removed_pubkey);
+                if self.is_admin(&removed_pubkey) {
+                    removed_admins = true;
+                }
+            }
         }
 
         self.update_roles();
         self.update_state();
-        Ok(true)
+        Ok(removed_admins)
     }
 
     pub fn set_metadata(&mut self, event: &Event, relay_pubkey: &PublicKey) -> Result<(), Error> {
-        if event.kind != KIND_GROUP_METADATA_39000
-            && event.kind != KIND_GROUP_CREATE_9007
-            && event.kind != KIND_GROUP_EDIT_METADATA_9002
-        {
-            return Err(Error::notice(format!(
-                "Invalid event kind for group metadata {}",
-                event.kind
-            )));
-        }
-
         if !self.can_edit_metadata(&event.pubkey, relay_pubkey) {
-            return Err(Error::notice("User is not authorized to edit metadata"));
+            return Err(Error::notice("User cannot edit metadata"));
         }
 
-        if event.tags.find(TagKind::custom("private")).is_some() {
-            self.metadata.private = true;
-        } else if event.tags.find(TagKind::custom("public")).is_some() {
-            self.metadata.private = false;
-        }
-
-        if event.tags.find(TagKind::custom("closed")).is_some() {
-            self.metadata.closed = true;
-        } else if event.tags.find(TagKind::custom("open")).is_some() {
-            self.metadata.closed = false;
-        }
-
-        if let Some(name_tag) = event.tags.find(TagKind::Name).and_then(|t| t.content()) {
-            self.metadata.name = name_tag.to_string();
-        }
-
-        if let Some(about_tag) = event
-            .tags
-            .find(TagKind::custom("about"))
-            .and_then(|t| t.content())
-        {
-            self.metadata.about = Some(about_tag.to_string());
-        }
-
-        if let Some(picture_tag) = event
-            .tags
-            .find(TagKind::custom("picture"))
-            .and_then(|t| t.content())
-        {
-            self.metadata.picture = Some(picture_tag.to_string());
+        for tag in event.tags.iter() {
+            match tag.kind() {
+                TagKind::Name => {
+                    if let Some(name) = tag.content() {
+                        self.metadata.name = name.to_string();
+                    }
+                }
+                TagKind::Custom(kind) => match kind.as_ref() {
+                    "about" => {
+                        self.metadata.about = tag.content().map(|s| s.to_string());
+                    }
+                    "picture" => {
+                        self.metadata.picture = tag.content().map(|s| s.to_string());
+                    }
+                    "public" => {
+                        self.metadata.private = false;
+                    }
+                    "private" => {
+                        self.metadata.private = true;
+                    }
+                    "open" => {
+                        self.metadata.closed = false;
+                    }
+                    "closed" => {
+                        self.metadata.closed = true;
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
         }
 
         self.update_state();
@@ -690,11 +681,12 @@ impl Group {
             return Err(Error::notice("User is not authorized to create invites"));
         }
 
+        info!("Creating invite with code: {:?}", invite_event.tags);
         let invite_code = invite_event
             .tags
             .find(TagKind::custom("code"))
             .and_then(|t| t.content())
-            .ok_or(Error::notice("Invite code not found"))?;
+            .ok_or_else(|| Error::notice("Invite code not found in tag"))?;
 
         // Check for duplicate invite code
         if self.invites.contains_key(invite_code) {
@@ -838,9 +830,7 @@ impl Group {
 
     pub fn extract_group_id(event: &Event) -> Option<&str> {
         match event.kind {
-            Kind::ParameterizedReplaceable(_) => {
-                event.tags.find(TagKind::d()).and_then(|t| t.content())
-            }
+            k if k.is_addressable() => event.tags.find(TagKind::d()).and_then(|t| t.content()),
             _ => event.tags.find(TagKind::h()).and_then(|t| t.content()),
         }
     }
@@ -973,17 +963,20 @@ impl Group {
 // Authorization checks
 impl Group {
     pub fn can_edit_members(&self, pubkey: &PublicKey, relay_pubkey: &PublicKey) -> bool {
-        if self.is_admin(pubkey) {
+        if pubkey == relay_pubkey {
             return true;
         }
 
-        // Relay pubkey can see all events
-        if relay_pubkey == pubkey {
-            debug!("Relay pubkey {} can edit members", relay_pubkey);
-            return true;
+        if !self.is_admin(pubkey) {
+            return false;
         }
 
-        false
+        // If the user is an admin, check if they are the last admin
+        if self.admin_pubkeys().len() == 1 && self.admin_pubkeys().contains(pubkey) {
+            return false;
+        }
+
+        true
     }
 
     pub fn can_edit_metadata(&self, pubkey: &PublicKey, relay_pubkey: &PublicKey) -> bool {
@@ -1046,10 +1039,19 @@ impl Group {
             return Ok(true);
         }
 
-        if self.is_admin(&event.pubkey) {
+        // Only admins can delete events
+        if self.is_admin(authed_pubkey) {
+            debug!(
+                "Admin {} can delete event {}, kind {}",
+                authed_pubkey, event.id, event.kind
+            );
             return Ok(true);
         }
 
+        warn!(
+            "User {} is not authorized to delete event {}, kind {}",
+            authed_pubkey, event.id, event.kind
+        );
         Ok(false)
     }
 
@@ -1124,39 +1126,15 @@ impl Group {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn create_test_keys() -> (Keys, Keys, Keys) {
-        let admin_keys = Keys::generate();
-        let member_keys = Keys::generate();
-        let non_member_keys = Keys::generate();
-        (admin_keys, member_keys, non_member_keys)
-    }
-
-    async fn create_test_event(keys: &Keys, kind: Kind, tags: Vec<Tag>) -> Event {
-        let mut builder = EventBuilder::new(kind, "");
-        for tag in tags {
-            builder = builder.tag(tag);
-        }
-
-        builder
-            .custom_created_at(Timestamp::now())
-            .sign(keys)
-            .await
-            .unwrap()
-    }
-
-    async fn create_test_group(admin_keys: &Keys) -> (Group, String) {
-        let group_id = "test_group_123".to_string();
-        let tags = vec![Tag::custom(TagKind::h(), [group_id.clone()])];
-        let event = create_test_event(admin_keys, KIND_GROUP_CREATE_9007, tags).await;
-
-        let group = Group::new(&event).unwrap();
-        (group, group_id)
-    }
+    use crate::test_utils::{
+        add_member_to_group, create_test_delete_event, create_test_event, create_test_group,
+        create_test_invite_event, create_test_keys, create_test_metadata_event,
+        create_test_role_event, remove_member_from_group,
+    };
 
     #[tokio::test]
     async fn test_group_creation() {
-        let (admin_keys, _, _) = create_test_keys();
+        let (admin_keys, _, _) = create_test_keys().await;
         let (group, group_id) = create_test_group(&admin_keys).await;
 
         assert_eq!(group.id, group_id);
@@ -1167,50 +1145,68 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_members() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
-        let tags = vec![Tag::public_key(member_keys.public_key())];
-        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, tags).await;
+        add_member_to_group(&mut group, &admin_keys, &member_keys, &group_id).await;
 
-        assert!(group
-            .add_members_from_event(&add_event, &admin_keys.public_key())
-            .is_ok());
         assert!(group.is_member(&member_keys.public_key()));
         assert!(!group.is_admin(&member_keys.public_key()));
     }
 
     #[tokio::test]
     async fn test_remove_members() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
         // First add a member
-        let add_tags = vec![Tag::public_key(member_keys.public_key())];
-        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
-        group
-            .add_members_from_event(&add_event, &admin_keys.public_key())
-            .unwrap();
+        add_member_to_group(&mut group, &admin_keys, &member_keys, &group_id).await;
+        assert!(group.is_member(&member_keys.public_key()));
 
         // Then remove them
-        let remove_tags = vec![Tag::public_key(member_keys.public_key())];
-        let remove_event =
-            create_test_event(&admin_keys, KIND_GROUP_REMOVE_USER_9001, remove_tags).await;
-
-        assert!(group
-            .remove_members(&remove_event, &admin_keys.public_key())
-            .is_ok());
+        remove_member_from_group(&mut group, &admin_keys, &member_keys, &group_id).await;
         assert!(!group.is_member(&member_keys.public_key()));
     }
 
     #[tokio::test]
-    async fn test_metadata_management_can_set_name() {
-        let (admin_keys, _, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+    async fn test_metadata_management() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
-        let tags = vec![Tag::custom(TagKind::Name, ["New Group Name"])];
-        let metadata_event =
-            create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
+        let event = create_test_metadata_event(
+            &admin_keys,
+            &group_id,
+            Some("test_name"),
+            Some("test_about"),
+            Some("test_picture"),
+            true,
+            true,
+        )
+        .await;
+
+        assert!(group.set_metadata(&event, &admin_keys.public_key()).is_ok());
+        assert_eq!(group.metadata.name, "test_name");
+        assert_eq!(group.metadata.about, Some("test_about".to_string()));
+        assert_eq!(group.metadata.picture, Some("test_picture".to_string()));
+        assert!(group.metadata.private);
+        assert!(group.metadata.closed);
+    }
+
+    #[tokio::test]
+    async fn test_metadata_management_can_set_name() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+
+        let metadata_event = create_test_metadata_event(
+            &admin_keys,
+            &group_id,
+            Some("New Group Name"),
+            None,
+            None,
+            true,
+            true,
+        )
+        .await;
 
         assert!(group
             .set_metadata(&metadata_event, &admin_keys.public_key())
@@ -1220,12 +1216,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_metadata_management_can_set_about() {
-        let (admin_keys, _, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
-        let tags = vec![Tag::custom(TagKind::custom("about"), ["About text"])];
-        let metadata_event =
-            create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
+        let metadata_event = create_test_metadata_event(
+            &admin_keys,
+            &group_id,
+            None,
+            Some("About text"),
+            None,
+            true,
+            true,
+        )
+        .await;
 
         assert!(group
             .set_metadata(&metadata_event, &admin_keys.public_key())
@@ -1235,12 +1238,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_metadata_management_can_set_picture() {
-        let (admin_keys, _, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
-        let tags = vec![Tag::custom(TagKind::custom("picture"), ["picture_url"])];
-        let metadata_event =
-            create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
+        let metadata_event = create_test_metadata_event(
+            &admin_keys,
+            &group_id,
+            None,
+            None,
+            Some("picture_url"),
+            true,
+            true,
+        )
+        .await;
 
         assert!(group
             .set_metadata(&metadata_event, &admin_keys.public_key())
@@ -1250,13 +1260,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_metadata_management_can_set_visibility() {
-        let (admin_keys, _, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
         // Test setting to public
-        let public_tags = vec![Tag::custom(TagKind::custom("public"), &[] as &[String])];
         let public_event =
-            create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, public_tags).await;
+            create_test_metadata_event(&admin_keys, &group_id, None, None, None, false, true).await;
 
         assert!(group
             .set_metadata(&public_event, &admin_keys.public_key())
@@ -1264,9 +1273,8 @@ mod tests {
         assert!(!group.metadata.private);
 
         // Test setting back to private
-        let private_tags = vec![Tag::custom(TagKind::custom("private"), &[] as &[String])];
         let private_event =
-            create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, private_tags).await;
+            create_test_metadata_event(&admin_keys, &group_id, None, None, None, true, true).await;
 
         assert!(group
             .set_metadata(&private_event, &admin_keys.public_key())
@@ -1276,17 +1284,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_metadata_management_can_set_multiple_fields() {
-        let (admin_keys, _, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
-        let tags = vec![
-            Tag::custom(TagKind::Name, ["New Group Name"]),
-            Tag::custom(TagKind::custom("about"), ["About text"]),
-            Tag::custom(TagKind::custom("picture"), ["picture_url"]),
-            Tag::custom(TagKind::custom("public"), &[] as &[String]),
-        ];
-        let metadata_event =
-            create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
+        let metadata_event = create_test_metadata_event(
+            &admin_keys,
+            &group_id,
+            Some("New Group Name"),
+            Some("About text"),
+            Some("picture_url"),
+            false,
+            true,
+        )
+        .await;
 
         assert!(group
             .set_metadata(&metadata_event, &admin_keys.public_key())
@@ -1298,14 +1308,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_invite_system() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+
+        let event = create_test_invite_event(&admin_keys, &group_id, "test_invite_123").await;
+
+        assert!(group
+            .create_invite(&event, &admin_keys.public_key())
+            .is_ok());
+        assert_eq!(group.invites.len(), 1);
+    }
+
+    #[tokio::test]
     async fn test_invite_system_admin_can_create_invite() {
-        let (admin_keys, _, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
         let invite_code = "test_invite_123";
-        let create_tags = vec![Tag::custom(TagKind::custom("code"), [invite_code])];
         let create_invite_event =
-            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, create_tags).await;
+            create_test_invite_event(&admin_keys, &group_id, invite_code).await;
 
         assert!(group
             .create_invite(&create_invite_event, &admin_keys.public_key())
@@ -1315,34 +1337,47 @@ mod tests {
 
     #[tokio::test]
     async fn test_invite_system_user_can_join_with_valid_invite() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
         // Create invite
         let invite_code = "test_invite_123";
-        let create_tags = vec![Tag::custom(TagKind::custom("code"), [invite_code])];
         let create_invite_event =
-            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, create_tags).await;
+            create_test_invite_event(&admin_keys, &group_id, invite_code).await;
         group
             .create_invite(&create_invite_event, &admin_keys.public_key())
             .unwrap();
 
         // Use invite
-        let join_tags = vec![Tag::custom(TagKind::custom("code"), [invite_code])];
-        let join_event =
-            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
+        let join_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Custom("code".into()), [invite_code]),
+        ];
+        let join_event = create_test_event(&member_keys, 9021, join_tags).await;
 
         assert!(group.join_request(&join_event).unwrap());
         assert!(group.is_member(&member_keys.public_key()));
     }
 
     #[tokio::test]
-    async fn test_join_request_adds_to_join_requests() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+    async fn test_join_request() {
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
-        let join_event =
-            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, vec![]).await;
+        let tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let event = create_test_event(&member_keys, 9021, tags).await;
+
+        assert!(group.join_request(&event).is_ok());
+        assert_eq!(group.join_requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_join_request_adds_to_join_requests() {
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+
+        let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let join_event = create_test_event(&member_keys, 9021, join_tags).await;
 
         assert!(!group.join_request(&join_event).unwrap());
         assert!(group.join_requests.contains(&member_keys.public_key()));
@@ -1350,8 +1385,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_join_request_from_existing_member() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
         // First add the member
         group.members.insert(
@@ -1361,8 +1396,8 @@ mod tests {
         let initial_member_count = group.members.len();
 
         // Try to join again
-        let join_event =
-            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, vec![]).await;
+        let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let join_event = create_test_event(&member_keys, 9021, join_tags).await;
 
         // Should return Ok(false) without changing membership
         assert!(!group.join_request(&join_event).unwrap());
@@ -1375,31 +1410,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_leave_request() {
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+
+        let tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let event = create_test_event(&member_keys, 9022, tags).await;
+
+        assert!(group.leave_request(&event).is_ok());
+    }
+
+    #[tokio::test]
     async fn test_leave_request_removes_member() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
         // Add member manually
-        let add_tags = vec![Tag::public_key(member_keys.public_key())];
-        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
-        group
-            .add_members_from_event(&add_event, &admin_keys.public_key())
-            .unwrap();
+        add_member_to_group(&mut group, &admin_keys, &member_keys, &group_id).await;
+        assert!(group.is_member(&member_keys.public_key()));
 
         // Test leave request
-        let leave_event =
-            create_test_event(&member_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, vec![]).await;
+        let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let leave_event = create_test_event(&member_keys, 9022, leave_tags).await;
 
         assert!(group.leave_request(&leave_event).unwrap());
         assert!(!group.is_member(&member_keys.public_key()));
     }
 
     #[tokio::test]
-    async fn test_event_visibility_admin_can_see_events() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (group, _) = create_test_group(&admin_keys).await;
+    async fn test_event_visibility() {
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (group, group_id) = create_test_group(&admin_keys).await;
 
-        let test_event = create_test_event(&member_keys, Kind::Custom(9), vec![]).await;
+        let tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let event = create_test_event(&member_keys, 11, tags).await;
+
+        assert!(group
+            .can_see_event(
+                &Some(member_keys.public_key()),
+                &admin_keys.public_key(),
+                &event
+            )
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_event_visibility_admin_can_see_events() {
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (group, group_id) = create_test_group(&admin_keys).await;
+
+        let test_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let test_event = create_test_event(&member_keys, 9, test_tags).await;
 
         assert!(group
             .can_see_event(
@@ -1412,17 +1473,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_event_visibility_member_can_see_events() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
         // Add a member
-        let add_tags = vec![Tag::public_key(member_keys.public_key())];
-        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
+        let add_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::public_key(member_keys.public_key()),
+        ];
+        let add_event = create_test_event(&admin_keys, 9000, add_tags).await;
         group
             .add_members_from_event(&add_event, &admin_keys.public_key())
             .unwrap();
 
-        let test_event = create_test_event(&member_keys, Kind::Custom(9), vec![]).await;
+        let test_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let test_event = create_test_event(&member_keys, 9, test_tags).await;
 
         assert!(group
             .can_see_event(
@@ -1435,10 +1500,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_event_visibility_non_member_cannot_see_events() {
-        let (admin_keys, member_keys, non_member_keys) = create_test_keys();
-        let (group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
+        let (group, group_id) = create_test_group(&admin_keys).await;
 
-        let test_event = create_test_event(&member_keys, Kind::Custom(9), vec![]).await;
+        let test_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let test_event = create_test_event(&member_keys, 9, test_tags).await;
 
         assert!(!group
             .can_see_event(
@@ -1450,105 +1516,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_event_visibility_unauthenticated_user_cannot_see_events() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (group, _) = create_test_group(&admin_keys).await;
-
-        let test_event = create_test_event(&member_keys, Kind::Custom(9), vec![]).await;
-
-        assert!(group
-            .can_see_event(&None, &admin_keys.public_key(), &test_event)
-            .is_err());
-    }
-
-    #[tokio::test]
-    async fn test_event_visibility_public_group_events_visible_to_all() {
-        let (admin_keys, member_keys, non_member_keys) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
-
-        // Make group public
-        let public_tags = vec![Tag::custom(TagKind::custom("public"), &[] as &[String])];
-        let public_event =
-            create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, public_tags).await;
-        group
-            .set_metadata(&public_event, &admin_keys.public_key())
-            .unwrap();
-
-        let test_event = create_test_event(&member_keys, Kind::Custom(9), vec![]).await;
-
-        assert!(group
-            .can_see_event(&None, &admin_keys.public_key(), &test_event)
-            .unwrap());
-        assert!(group
-            .can_see_event(
-                &Some(non_member_keys.public_key()),
-                &admin_keys.public_key(),
-                &test_event
-            )
-            .unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_role_management_can_add_member_with_admin_role() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
-
-        let add_tags = vec![Tag::custom(
-            TagKind::p(),
-            [member_keys.public_key().to_string(), "Admin".to_string()],
-        )];
-        let add_admin_event =
-            create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
-
-        group
-            .add_members_from_event(&add_admin_event, &admin_keys.public_key())
-            .unwrap();
-        assert!(group.is_admin(&member_keys.public_key()));
-    }
-
-    #[tokio::test]
-    async fn test_role_management_admin_can_edit_metadata() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
-
-        // Add member as admin
-        let add_tags = vec![Tag::custom(
-            TagKind::p(),
-            [member_keys.public_key().to_string(), "Admin".to_string()],
-        )];
-        let add_admin_event =
-            create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
-        group
-            .add_members_from_event(&add_admin_event, &admin_keys.public_key())
-            .unwrap();
-
-        // Test admin permissions
-        let metadata_tags = vec![Tag::custom(TagKind::Name, ["New Name"])];
-        let metadata_event =
-            create_test_event(&member_keys, KIND_GROUP_EDIT_METADATA_9002, metadata_tags).await;
-
-        assert!(group
-            .set_metadata(&metadata_event, &admin_keys.public_key())
-            .is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_delete_event_request_non_member_cannot_delete_events() {
-        let (admin_keys, member_keys, non_member_keys) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+    async fn test_delete_event_request_unauthenticated() {
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
         let relay_pubkey = admin_keys.public_key();
 
-        // Create a test event to delete
+        let event = create_test_event(
+            &member_keys,
+            11,
+            vec![Tag::custom(TagKind::h(), [&group_id])],
+        )
+        .await;
+        let delete_event = create_test_delete_event(&admin_keys, &group_id, &event).await;
+
+        let result = group.delete_event_request(&delete_event, &relay_pubkey, &None);
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Auth required: User is not authenticated"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_event_request_wrong_kind() {
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+        let relay_pubkey = admin_keys.public_key();
+
+        // Create a regular event to delete
         let event_to_delete = create_test_event(
             &member_keys,
-            Kind::Custom(9),
+            11, // Regular event
             vec![Tag::custom(TagKind::h(), [group.id.clone()])],
         )
         .await;
 
+        // Create delete request with wrong kind (9 instead of 9005)
         let delete_request = create_test_event(
-            &non_member_keys,
-            KIND_GROUP_DELETE_EVENT_9005,
+            &admin_keys,
+            9, // Wrong kind - should be 9005
             vec![
                 Tag::custom(TagKind::h(), [group.id.clone()]),
                 Tag::event(event_to_delete.id),
@@ -1558,228 +1565,62 @@ mod tests {
 
         let result = group.delete_event_request(
             &delete_request,
+            &relay_pubkey,
+            &Some(admin_keys.public_key()),
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid event kind for delete event"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_event_request_non_member() {
+        let (admin_keys, _, non_member_keys) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+        let relay_pubkey = admin_keys.public_key();
+
+        let event = create_test_event(
+            &admin_keys,
+            11,
+            vec![Tag::custom(TagKind::h(), [&group_id])],
+        )
+        .await;
+        let delete_event = create_test_delete_event(&non_member_keys, &group_id, &event).await;
+
+        let result = group.delete_event_request(
+            &delete_event,
             &relay_pubkey,
             &Some(non_member_keys.public_key()),
         );
+
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_delete_event_request_member_cannot_delete_events() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
-        let relay_pubkey = admin_keys.public_key();
-
-        // Create a test event to delete
-        let event_to_delete = create_test_event(
-            &member_keys,
-            Kind::Custom(9),
-            vec![Tag::custom(TagKind::h(), [group.id.clone()])],
-        )
-        .await;
-
-        let delete_request = create_test_event(
-            &member_keys,
-            KIND_GROUP_DELETE_EVENT_9005,
-            vec![
-                Tag::custom(TagKind::h(), [group.id.clone()]),
-                Tag::event(event_to_delete.id),
-            ],
-        )
-        .await;
-
-        let result = group.delete_event_request(
-            &delete_request,
-            &relay_pubkey,
-            &Some(member_keys.public_key()),
-        );
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_delete_event_request_admin_can_delete_events() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
-        let relay_pubkey = admin_keys.public_key();
-
-        // Create a test event to delete
-        let event_to_delete = create_test_event(
-            &member_keys,
-            Kind::Custom(9),
-            vec![Tag::custom(TagKind::h(), [group.id.clone()])],
-        )
-        .await;
-
-        let delete_request = create_test_event(
-            &admin_keys,
-            KIND_GROUP_DELETE_EVENT_9005,
-            vec![
-                Tag::custom(TagKind::h(), [group.id.clone()]),
-                Tag::event(event_to_delete.id),
-            ],
-        )
-        .await;
-
-        let result = group.delete_event_request(
-            &delete_request,
-            &relay_pubkey,
-            &Some(admin_keys.public_key()),
-        );
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_delete_event_request_relay_can_delete_events() {
-        let (admin_keys, member_keys, non_member_keys) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
-        let relay_pubkey = admin_keys.public_key();
-
-        // Create a test event to delete
-        let event_to_delete = create_test_event(
-            &member_keys,
-            Kind::Custom(9),
-            vec![Tag::custom(TagKind::h(), [group.id.clone()])],
-        )
-        .await;
-
-        let delete_request = create_test_event(
-            &non_member_keys,
-            KIND_GROUP_DELETE_EVENT_9005,
-            vec![
-                Tag::custom(TagKind::h(), [group.id.clone()]),
-                Tag::event(event_to_delete.id),
-            ],
-        )
-        .await;
-
-        let result =
-            group.delete_event_request(&delete_request, &relay_pubkey, &Some(relay_pubkey));
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_delete_event_request_wrong_event_kind_is_rejected() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
-        let relay_pubkey = admin_keys.public_key();
-
-        // Create a test event to delete
-        let event_to_delete = create_test_event(
-            &member_keys,
-            Kind::Custom(9),
-            vec![Tag::custom(TagKind::h(), [group.id.clone()])],
-        )
-        .await;
-
-        let delete_request = create_test_event(
-            &admin_keys,
-            Kind::Custom(9),
-            vec![
-                Tag::custom(TagKind::h(), [group.id.clone()]),
-                Tag::event(event_to_delete.id),
-            ],
-        )
-        .await;
-
-        let result = group.delete_event_request(
-            &delete_request,
-            &relay_pubkey,
-            &Some(admin_keys.public_key()),
-        );
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_delete_event_request_unauthenticated_request_is_rejected() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
-        let relay_pubkey = admin_keys.public_key();
-
-        // Create a test event to delete
-        let event_to_delete = create_test_event(
-            &member_keys,
-            Kind::Custom(9),
-            vec![Tag::custom(TagKind::h(), [group.id.clone()])],
-        )
-        .await;
-
-        let delete_request = create_test_event(
-            &admin_keys,
-            KIND_GROUP_DELETE_EVENT_9005,
-            vec![
-                Tag::custom(TagKind::h(), [group.id.clone()]),
-                Tag::event(event_to_delete.id),
-            ],
-        )
-        .await;
-
-        let result = group.delete_event_request(&delete_request, &relay_pubkey, &None);
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_delete_event_request_deleting_invite_removes_it_from_invites_map() {
-        let (admin_keys, _, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
-        let relay_pubkey = admin_keys.public_key();
-
-        // Create an invite
-        let invite_code = "test_invite_123";
-        let create_invite_event = create_test_event(
-            &admin_keys,
-            KIND_GROUP_CREATE_INVITE_9009,
-            vec![Tag::custom(TagKind::custom("code"), [invite_code])],
-        )
-        .await;
-
-        // Add the invite to the group
-        group
-            .create_invite(&create_invite_event, &relay_pubkey)
-            .unwrap();
-        assert!(group.invites.contains_key(invite_code));
-
-        // Delete the invite event
-        let delete_invite_request = create_test_event(
-            &admin_keys,
-            KIND_GROUP_DELETE_EVENT_9005,
-            vec![
-                Tag::custom(TagKind::h(), [group.id.clone()]),
-                Tag::event(create_invite_event.id),
-            ],
-        )
-        .await;
-
-        let result = group.delete_event_request(
-            &delete_invite_request,
-            &relay_pubkey,
-            &Some(admin_keys.public_key()),
-        );
-        assert!(result.is_ok());
-        assert!(
-            !group.invites.contains_key(invite_code),
-            "Invite should be removed from the invites map after deletion"
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "User is not authorized to delete this event"
         );
     }
 
     #[tokio::test]
     async fn test_remove_members_cannot_remove_last_admin() {
-        let (admin_keys, _, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
-        // Attempt to remove the last admin
-        let remove_tags = vec![Tag::public_key(admin_keys.public_key())];
-        let remove_event =
-            create_test_event(&admin_keys, KIND_GROUP_REMOVE_USER_9001, remove_tags).await;
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::public_key(admin_keys.public_key()),
+        ];
+        let event = create_test_event(&admin_keys, 9001, tags).await;
 
-        // Should fail with "Cannot remove last admin" error
-        let result = group.remove_members(&remove_event, &admin_keys.public_key());
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "Cannot remove last admin");
+        assert!(group
+            .remove_members(&event, &admin_keys.public_key())
+            .is_err());
     }
 
     #[tokio::test]
     async fn test_group_creation_always_has_admin() {
-        let (admin_keys, _, _) = create_test_keys();
+        let (admin_keys, _, _) = create_test_keys().await;
         let (group, _) = create_test_group(&admin_keys).await;
 
         // Verify there is exactly one admin
@@ -1810,19 +1651,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_roles_cannot_change_last_admin() {
-        let (admin_keys, _, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
         // Attempt to change the last admin to a regular member
-        let set_roles_tags = vec![Tag::custom(
-            TagKind::p(),
-            [admin_keys.public_key().to_string(), "member".to_string()],
-        )];
-        let set_roles_event =
-            create_test_event(&admin_keys, KIND_GROUP_SET_ROLES_9006, set_roles_tags).await;
+        let event =
+            create_test_role_event(&admin_keys, &group_id, admin_keys.public_key(), "member").await;
 
         // Should fail with "Cannot remove last admin" error
-        let result = group.set_roles(&set_roles_event, &admin_keys.public_key());
+        let result = group.set_roles(&event, &admin_keys.public_key());
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().to_string(), "Cannot remove last admin");
 
@@ -1832,42 +1669,90 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_roles_can_change_admin_when_multiple_admins() {
-        let (admin_keys, member_keys, _) = create_test_keys();
-        let (mut group, _) = create_test_group(&admin_keys).await;
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
 
         // First add the user as a regular member
-        let add_member_tags = vec![Tag::public_key(member_keys.public_key())];
-        let add_member_event =
-            create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_member_tags).await;
-        group
-            .add_members_from_event(&add_member_event, &admin_keys.public_key())
-            .unwrap();
+        add_member_to_group(&mut group, &admin_keys, &member_keys, &group_id).await;
         assert!(group.is_member(&member_keys.public_key()));
 
         // Then make them an admin
-        let add_admin_tags = vec![Tag::custom(
-            TagKind::p(),
-            [member_keys.public_key().to_string(), "admin".to_string()],
-        )];
         let add_admin_event =
-            create_test_event(&admin_keys, KIND_GROUP_SET_ROLES_9006, add_admin_tags).await;
+            create_test_role_event(&admin_keys, &group_id, member_keys.public_key(), "admin").await;
         group
             .set_roles(&add_admin_event, &admin_keys.public_key())
             .unwrap();
         assert!(group.is_admin(&member_keys.public_key()));
 
         // Now we can change the original admin to a member since there's another admin
-        let change_role_tags = vec![Tag::custom(
-            TagKind::p(),
-            [admin_keys.public_key().to_string(), "member".to_string()],
-        )];
-        let change_role_event =
-            create_test_event(&admin_keys, KIND_GROUP_SET_ROLES_9006, change_role_tags).await;
+        let event =
+            create_test_role_event(&admin_keys, &group_id, admin_keys.public_key(), "member").await;
 
         // Should succeed
-        let result = group.set_roles(&change_role_event, &admin_keys.public_key());
+        let result = group.set_roles(&event, &admin_keys.public_key());
         assert!(result.is_ok());
         assert!(!group.is_admin(&admin_keys.public_key()));
         assert!(group.is_admin(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_delete_event_request_deleting_invite() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+        let relay_pubkey = admin_keys.public_key();
+
+        // Create an invite
+        let invite_code = "test_invite_123";
+        let create_invite_event =
+            create_test_invite_event(&admin_keys, &group_id, invite_code).await;
+        group
+            .create_invite(&create_invite_event, &relay_pubkey)
+            .unwrap();
+        assert!(group.invites.contains_key(invite_code));
+
+        // Delete the invite event
+        let delete_event =
+            create_test_delete_event(&admin_keys, &group_id, &create_invite_event).await;
+        let result = group.delete_event_request(
+            &delete_event,
+            &relay_pubkey,
+            &Some(admin_keys.public_key()),
+        );
+        assert!(result.is_ok());
+        assert!(
+            !group.invites.contains_key(invite_code),
+            "Invite should be removed from the invites map after deletion"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_remove_user_admin_removes_member() {
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+        let relay_pubkey = admin_keys.public_key();
+
+        // First add a member
+        let add_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::public_key(member_keys.public_key()),
+        ];
+        let add_event = create_test_event(&admin_keys, 9000, add_tags).await;
+        group
+            .add_members_from_event(&add_event, &relay_pubkey)
+            .unwrap();
+        assert!(group.is_member(&member_keys.public_key()));
+
+        // Then remove them
+        let remove_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::public_key(member_keys.public_key()),
+        ];
+        let remove_event = create_test_event(&admin_keys, 9001, remove_tags).await;
+
+        let result = group.remove_members(&remove_event, &relay_pubkey);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), false);
+        assert!(!group.is_member(&member_keys.public_key()));
     }
 }

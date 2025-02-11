@@ -3,6 +3,7 @@
 !/.gitignore  # except `gitignore` :)
 !db/.gitkeep
 /target
+/load_tester/target
 db/*
 frontend/node_modules/*
 frontend/dist/*

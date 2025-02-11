@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "groups_relay",
+    "websocket_builder"
+]

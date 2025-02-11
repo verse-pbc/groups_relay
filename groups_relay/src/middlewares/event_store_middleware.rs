@@ -140,11 +140,99 @@ impl Middleware for EventStoreMiddleware {
         match &ctx.message {
             ClientMessage::Req {
                 subscription_id,
-                filters,
+                filter,
             } => {
                 info!(
                     target: "event_store",
                     "[{}] Processing REQ message for subscription {}",
+                    connection_id,
+                    subscription_id
+                );
+
+                let connection = ctx.state.relay_connection.as_ref();
+                if let Some(connection) = connection {
+                    debug!(
+                        target: "event_store",
+                        "[{}] Adding subscription {} with filter: {:?}",
+                        connection_id,
+                        subscription_id,
+                        filter
+                    );
+
+                    if let Err(e) = connection
+                        .handle_subscription(subscription_id.clone(), vec![(**filter).clone()])
+                        .await
+                    {
+                        error!(
+                            target: "event_store",
+                            "[{}] Failed to add subscription {}: {}",
+                            connection_id,
+                            subscription_id,
+                            e
+                        );
+                        return Err(e.into());
+                    }
+
+                    debug!(
+                        target: "event_store",
+                        "[{}] Successfully added subscription {}",
+                        connection_id,
+                        subscription_id
+                    );
+
+                    // Fetch and send historical events before EOSE
+                    if let Some(sender) = &mut ctx.sender {
+                        debug!(
+                            target: "event_store",
+                            "[{}] Fetching historical events for subscription {}",
+                            connection_id,
+                            subscription_id
+                        );
+
+                        if let Err(e) = self
+                            .fetch_historical_events(
+                                connection,
+                                subscription_id,
+                                &[(**filter).clone()],
+                                sender.clone(),
+                            )
+                            .await
+                        {
+                            error!(
+                                target: "event_store",
+                                "[{}] Failed to fetch historical events for subscription {}: {}",
+                                connection_id,
+                                subscription_id,
+                                e
+                            );
+                            return Err(e.into());
+                        }
+
+                        debug!(
+                            target: "event_store",
+                            "[{}] Successfully sent historical events for subscription {}",
+                            connection_id,
+                            subscription_id
+                        );
+                    }
+                } else {
+                    error!(
+                        target: "event_store",
+                        "[{}] No connection available for subscription {}",
+                        connection_id,
+                        subscription_id
+                    );
+                }
+
+                ctx.next().await
+            }
+            ClientMessage::ReqMultiFilter {
+                subscription_id,
+                filters,
+            } => {
+                info!(
+                    target: "event_store",
+                    "[{}] Processing REQ message for subscription {} with multiple filters",
                     connection_id,
                     subscription_id
                 );
@@ -321,22 +409,10 @@ impl Middleware for EventStoreMiddleware {
         &self,
         ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        debug!(
-            target: "event_store",
-            "[{}] Processing outbound message: {:?}",
-            ctx.connection_id,
-            ctx.message
-        );
-        let result = ctx.next().await;
-        if let Err(ref e) = result {
-            error!(
-                target: "event_store",
-                "[{}] Error processing outbound message: {}",
-                ctx.connection_id,
-                e
-            );
+        if let Some(msg) = &ctx.message {
+            debug!("Converting outbound message to string: {:?}", msg);
         }
-        result
+        ctx.next().await
     }
 
     async fn on_connect(
@@ -434,7 +510,7 @@ mod tests {
     impl StateFactory<NostrConnectionState> for TestStateFactory {
         fn create_state(&self, token: CancellationToken) -> NostrConnectionState {
             NostrConnectionState {
-                relay_url: "ws://test.relay".to_string(),
+                relay_url: RelayUrl::parse("ws://test.relay").expect("Invalid test relay URL"),
                 challenge: None,
                 authed_pubkey: None,
                 relay_connection: None,
@@ -688,11 +764,10 @@ mod tests {
 
         // Subscribe with empty filter
         let subscription_id = SubscriptionId::new("text_note_events");
-        let empty_filter = vec![Filter::new()];
         client
-            .send_message(&ClientMessage::Req {
+            .send_message(&ClientMessage::ReqMultiFilter {
                 subscription_id: subscription_id.clone(),
-                filters: empty_filter,
+                filters: vec![Filter::new()],
             })
             .await;
 
@@ -730,11 +805,11 @@ mod tests {
 
         // Set up subscription
         let subscription_id = SubscriptionId::new("test_sub");
-        let filters = vec![Filter::new().kinds(vec![Kind::TextNote]).limit(5)];
+        let filter = Filter::new().kinds(vec![Kind::TextNote]).limit(5);
         subscriber
             .send_message(&ClientMessage::Req {
                 subscription_id: subscription_id.clone(),
-                filters,
+                filter: Box::new(filter),
             })
             .await;
 
@@ -765,11 +840,11 @@ mod tests {
 
         // Set up subscription
         let subscription_id = SubscriptionId::new("test_sub");
-        let filters = vec![Filter::new().kinds(vec![Kind::TextNote]).limit(5)];
+        let filter = Filter::new().kinds(vec![Kind::TextNote]).limit(5);
         subscriber
             .send_message(&ClientMessage::Req {
                 subscription_id: subscription_id.clone(),
-                filters,
+                filter: Box::new(filter),
             })
             .await;
 
@@ -814,11 +889,11 @@ mod tests {
 
         // Set up subscription
         let subscription_id = SubscriptionId::new("test_sub");
-        let filters = vec![Filter::new().kinds(vec![Kind::TextNote]).limit(5)];
+        let filter = Filter::new().kinds(vec![Kind::TextNote]).limit(5);
         subscriber
             .send_message(&ClientMessage::Req {
                 subscription_id: subscription_id.clone(),
-                filters,
+                filter: Box::new(filter),
             })
             .await;
 
@@ -879,11 +954,10 @@ mod tests {
 
         // Subscribe with empty filter
         let subscription_id = SubscriptionId::new("all_events");
-        let empty_filter = vec![Filter::new()];
         client
-            .send_message(&ClientMessage::Req {
+            .send_message(&ClientMessage::ReqMultiFilter {
                 subscription_id: subscription_id.clone(),
-                filters: empty_filter,
+                filters: vec![Filter::new()],
             })
             .await;
 
@@ -936,11 +1010,11 @@ mod tests {
 
         // Subscribe with limit filter
         let subscription_id = SubscriptionId::new("limited_events");
-        let limit_filter = vec![Filter::new().limit(3)]; // Only get last 3 events
+        let filter = Filter::new().limit(3); // Only get last 3 events
         client
             .send_message(&ClientMessage::Req {
                 subscription_id: subscription_id.clone(),
-                filters: limit_filter,
+                filter: Box::new(filter),
             })
             .await;
 
@@ -997,11 +1071,10 @@ mod tests {
 
         // Subscribe with empty filter
         let subscription_id = SubscriptionId::new("metadata_events");
-        let empty_filter = vec![Filter::new()];
         client
-            .send_message(&ClientMessage::Req {
+            .send_message(&ClientMessage::ReqMultiFilter {
                 subscription_id: subscription_id.clone(),
-                filters: empty_filter,
+                filters: vec![Filter::new()],
             })
             .await;
 
@@ -1039,11 +1112,10 @@ mod tests {
 
         // Subscribe with empty filter
         let subscription_id = SubscriptionId::new("contact_list_events");
-        let empty_filter = vec![Filter::new()];
         client
-            .send_message(&ClientMessage::Req {
+            .send_message(&ClientMessage::ReqMultiFilter {
                 subscription_id: subscription_id.clone(),
-                filters: empty_filter,
+                filters: vec![Filter::new()],
             })
             .await;
 
@@ -1086,11 +1158,10 @@ mod tests {
 
         // Subscribe with empty filter
         let subscription_id = SubscriptionId::new("multi_author_events");
-        let empty_filter = vec![Filter::new()];
         client
-            .send_message(&ClientMessage::Req {
+            .send_message(&ClientMessage::ReqMultiFilter {
                 subscription_id: subscription_id.clone(),
-                filters: empty_filter,
+                filters: vec![Filter::new()],
             })
             .await;
 
