@@ -151,7 +151,7 @@ export class CreateGroupForm extends Component<CreateGroupFormProps, CreateGroup
                 type="url"
                 value={this.state.picture}
                 onInput={(e) => this.setState({ picture: (e.target as HTMLInputElement).value })}
-                placeholder="Enter dick picture URL"
+                placeholder="Enter picture URL"
                 class="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
                        text-sm rounded-lg text-[var(--color-text-primary)]
                        placeholder-[var(--color-text-tertiary)]

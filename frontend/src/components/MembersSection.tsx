@@ -146,38 +146,40 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
                 ))}
               </div>
 
-              {showConfirmRemove === member.pubkey ? (
-                <div class="flex items-center gap-1 shrink-0">
+              {group.members.length > 1 && (
+                showConfirmRemove === member.pubkey ? (
+                  <div class="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => this.handleRemoveMember(member.pubkey)}
+                      class="px-2 py-1 text-xs text-red-400 hover:text-red-300 transition-colors"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      onClick={() => this.setState({ showConfirmRemove: null })}
+                      class="px-2 py-1 text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
                   <button
-                    onClick={() => this.handleRemoveMember(member.pubkey)}
-                    class="px-2 py-1 text-xs text-red-400 hover:text-red-300 transition-colors"
+                    onClick={() => this.setState({ showConfirmRemove: member.pubkey })}
+                    disabled={removingMembers.has(member.pubkey)}
+                    class="opacity-0 group-hover:opacity-100 shrink-0 px-2 py-1 text-xs text-[var(--color-text-tertiary)]
+                           hover:text-red-400 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed
+                           flex items-center gap-1"
                   >
-                    Confirm
+                    {removingMembers.has(member.pubkey) ? (
+                      <>
+                        <span class="animate-spin">⚡</span>
+                        Remove
+                      </>
+                    ) : (
+                      'Remove'
+                    )}
                   </button>
-                  <button
-                    onClick={() => this.setState({ showConfirmRemove: null })}
-                    class="px-2 py-1 text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => this.setState({ showConfirmRemove: member.pubkey })}
-                  disabled={removingMembers.has(member.pubkey)}
-                  class="opacity-0 group-hover:opacity-100 shrink-0 px-2 py-1 text-xs text-[var(--color-text-tertiary)]
-                         hover:text-red-400 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed
-                         flex items-center gap-1"
-                >
-                  {removingMembers.has(member.pubkey) ? (
-                    <>
-                      <span class="animate-spin">⚡</span>
-                      Remove
-                    </>
-                  ) : (
-                    'Remove'
-                  )}
-                </button>
+                )
               )}
             </div>
           ))}
