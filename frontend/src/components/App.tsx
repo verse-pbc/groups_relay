@@ -8,6 +8,8 @@ import type {
 import { CreateGroupForm } from "./CreateGroupForm";
 import { GroupCard } from "./GroupCard";
 import { FlashMessage } from "./FlashMessage";
+import { GroupSidebar } from "./GroupSidebar";
+import { BurgerButton } from "./BurgerButton";
 
 // Define NDKKind type since we can't import it
 type NDKKind = number;
@@ -29,6 +31,7 @@ interface AppState {
   flashMessage: FlashMessageData | null;
   groupsMap: Map<string, Group>;
   selectedGroup: Group | null;
+  isMobileMenuOpen: boolean;
 }
 
 export class App extends Component<AppProps, AppState> {
@@ -41,6 +44,7 @@ export class App extends Component<AppProps, AppState> {
       flashMessage: null,
       groupsMap: new Map(),
       selectedGroup: null,
+      isMobileMenuOpen: false,
     };
   }
 
@@ -273,9 +277,13 @@ export class App extends Component<AppProps, AppState> {
             (a, b) => b.created_at - a.created_at
           );
 
+          // Auto-select the only group if there's exactly one
+          const newSelectedGroup = sortedGroups.length === 1 ? sortedGroups[0] : this.state.selectedGroup;
+
           this.setState({
             groupsMap: newGroupsMap,
-            groups: sortedGroups
+            groups: sortedGroups,
+            selectedGroup: newSelectedGroup
           });
         });
 
@@ -325,9 +333,13 @@ export class App extends Component<AppProps, AppState> {
         (a, b) => b.created_at - a.created_at
       );
 
+      // Auto-select the only group if there's exactly one
+      const newSelectedGroup = sortedGroups.length === 1 ? sortedGroups[0] : prevState.selectedGroup;
+
       return {
         groupsMap: newGroupsMap,
         groups: sortedGroups,
+        selectedGroup: newSelectedGroup,
       };
     });
   };
@@ -361,8 +373,15 @@ export class App extends Component<AppProps, AppState> {
     });
   };
 
+  toggleMobileMenu = () => {
+    this.setState(state => ({ isMobileMenuOpen: !state.isMobileMenuOpen }));
+  };
+
   handleGroupSelect = (group: Group) => {
-    this.setState({ selectedGroup: group });
+    this.setState({ 
+      selectedGroup: group,
+      isMobileMenuOpen: false // Close mobile menu when selecting a group
+    });
   };
 
   showMessage = (
@@ -379,47 +398,80 @@ export class App extends Component<AppProps, AppState> {
   };
 
   render() {
-    const { groups, flashMessage } = this.state;
+    const { client, onLogout } = this.props;
+    const { flashMessage, groupsMap, selectedGroup, isMobileMenuOpen } = this.state;
+    const groups = Array.from(groupsMap.values()).sort((a, b) => b.updated_at - a.updated_at);
 
     return (
       <div class="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
-        <header class="p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
-          <div class="max-w-7xl mx-auto">
-            <h1 class="text-2xl font-bold">Nostr Groups</h1>
-          </div>
-        </header>
+        <BurgerButton 
+          isOpen={isMobileMenuOpen} 
+          onClick={this.toggleMobileMenu} 
+        />
 
-        <main class="max-w-7xl mx-auto p-4">
-          <div class="flex flex-col lg:flex-row gap-4">
-            <div class="lg:w-[240px] flex-shrink-0">
+        {flashMessage && (
+          <FlashMessage
+            message={flashMessage.message}
+            type={flashMessage.type}
+            onDismiss={this.dismissMessage}
+          />
+        )}
+        
+        <div class="container mx-auto px-4 py-8 lg:py-8 pt-16 lg:pt-8">
+          <h1 class="text-2xl font-bold mb-8 text-center lg:text-left">Nostr Groups</h1>
+          
+          <div class="flex flex-col lg:flex-row gap-8">
+            {/* Left Sidebar */}
+            <div 
+              class={`
+                fixed lg:relative inset-0 z-40 
+                lg:w-80 lg:flex-shrink-0
+                transform transition-transform duration-300 ease-in-out
+                ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+                bg-[var(--color-bg-primary)] lg:bg-transparent
+                p-4 lg:p-0
+                overflow-y-auto
+              `}
+            >
               <CreateGroupForm
-                client={this.props.client}
+                client={client}
                 updateGroupsMap={this.updateGroupsMap}
                 showMessage={this.showMessage}
-                onLogout={this.props.onLogout}
+                onLogout={onLogout}
+              />
+              <GroupSidebar
+                groups={groups}
+                selectedGroupId={selectedGroup?.id}
+                onSelectGroup={this.handleGroupSelect}
               />
             </div>
 
-            <div class="flex-1 space-y-4">
-              {groups.map((group) => (
+            {/* Overlay for mobile */}
+            {isMobileMenuOpen && (
+              <div 
+                class="fixed inset-0 z-30 bg-black bg-opacity-50 lg:hidden"
+                onClick={this.toggleMobileMenu}
+              />
+            )}
+
+            {/* Main Content */}
+            <div class="flex-grow">
+              {selectedGroup ? (
                 <GroupCard
-                  key={group.id}
-                  group={group}
-                  client={this.props.client}
+                  group={selectedGroup}
+                  client={client}
+                  updateGroupsMap={this.updateGroupsMap}
                   showMessage={this.showMessage}
                   onDelete={this.handleGroupDelete}
-                  updateGroupsMap={this.updateGroupsMap}
                 />
-              ))}
+              ) : (
+                <div class="text-center text-[var(--color-text-secondary)] mt-8">
+                  <p>Select a group from the sidebar or create a new one to get started</p>
+                </div>
+              )}
             </div>
           </div>
-        </main>
-
-        <FlashMessage
-          message={flashMessage?.message || null}
-          type={flashMessage?.type}
-          onDismiss={this.dismissMessage}
-        />
+        </div>
       </div>
     );
   }
