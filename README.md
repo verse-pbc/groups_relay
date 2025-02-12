@@ -91,4 +91,4 @@ Project structure:
 
 ## License
 
-MIT
+AGPL
