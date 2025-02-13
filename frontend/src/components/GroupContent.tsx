@@ -19,8 +19,8 @@ interface GroupContentState {
 }
 
 export class GroupContent extends Component<GroupContentProps, GroupContentState> {
-  state = {
-    activeTab: 'content' as const
+  state: GroupContentState = {
+    activeTab: 'content'
   }
 
   handleTabChange = (tab: 'content' | 'members' | 'invites' | 'requests') => {
@@ -73,4 +73,4 @@ export class GroupContent extends Component<GroupContentProps, GroupContentState
       </div>
     )
   }
-} 
+}

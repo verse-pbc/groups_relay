@@ -1,19 +1,69 @@
 import { Component } from 'preact'
 import type { Group } from '../types'
+import { NostrClient } from '../api/nostr_client'
 
 interface GroupInfoProps {
   group: Group
-  isEditingAbout: boolean
-  newAbout: string
-  onAboutEdit: () => void
-  onAboutSave: () => void
-  onAboutChange: (about: string) => void
-  onMetadataChange: (changes: Partial<Group>) => void
+  client: NostrClient
+  showMessage: (message: string, type: 'success' | 'error' | 'info') => void
 }
 
 export class GroupInfo extends Component<GroupInfoProps> {
+  state = {
+    isEditingAbout: false,
+    newAbout: ''
+  }
+
+  componentDidMount() {
+    this.setState({ newAbout: this.props.group.about || '' })
+  }
+
+  handleAboutEdit = () => {
+    this.setState({
+      isEditingAbout: true,
+      newAbout: this.props.group.about || ''
+    })
+  }
+
+  handleAboutSave = async () => {
+    try {
+      await this.props.client.updateGroupMetadata({
+        ...this.props.group,
+        about: this.state.newAbout
+      })
+      this.props.group.about = this.state.newAbout
+      this.setState({ isEditingAbout: false })
+      this.props.showMessage('Group description updated successfully!', 'success')
+    } catch (error) {
+      console.error('Failed to update group description:', error)
+      this.props.showMessage('Failed to update group description: ' + error, 'error')
+    }
+  }
+
+  handleMetadataChange = async (changes: Partial<Group>) => {
+    try {
+      const updatedGroup = {
+        ...this.props.group,
+        ...changes
+      }
+      await this.props.client.updateGroupMetadata(updatedGroup)
+
+      if ('private' in changes && changes.private !== undefined) {
+        this.props.group.private = changes.private
+        this.props.showMessage('Group privacy updated successfully!', 'success')
+      } else if ('closed' in changes && changes.closed !== undefined) {
+        this.props.group.closed = changes.closed
+        this.props.showMessage('Group membership setting updated successfully!', 'success')
+      }
+    } catch (error) {
+      console.error('Failed to update group settings:', error)
+      this.props.showMessage('Failed to update group settings: ' + error, 'error')
+    }
+  }
+
   render() {
-    const { group, isEditingAbout, newAbout, onAboutEdit, onAboutSave, onAboutChange } = this.props
+    const { group } = this.props
+    const { isEditingAbout, newAbout } = this.state
 
     return (
       <div class="space-y-6">
@@ -38,7 +88,7 @@ export class GroupInfo extends Component<GroupInfoProps> {
               </div>
               <button
                 type="button"
-                onClick={() => this.props.onMetadataChange({ private: !group.private })}
+                onClick={() => this.handleMetadataChange({ private: !group.private })}
                 class={`${
                   group.private ? 'bg-[var(--color-accent)]' : 'bg-[#2A2B2E]'
                 } relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-2`}
@@ -66,7 +116,7 @@ export class GroupInfo extends Component<GroupInfoProps> {
               </div>
               <button
                 type="button"
-                onClick={() => this.props.onMetadataChange({ closed: !group.closed })}
+                onClick={() => this.handleMetadataChange({ closed: !group.closed })}
                 class={`${
                   group.closed ? 'bg-[var(--color-accent)]' : 'bg-[#2A2B2E]'
                 } relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-2`}
@@ -94,7 +144,7 @@ export class GroupInfo extends Component<GroupInfoProps> {
             </h3>
             {!isEditingAbout && (
               <button
-                onClick={onAboutEdit}
+                onClick={this.handleAboutEdit}
                 class="text-sm font-medium text-[var(--color-accent)] hover:text-[var(--color-accent)]/90 transition-colors"
               >
                 Edit
@@ -107,7 +157,7 @@ export class GroupInfo extends Component<GroupInfoProps> {
               <div class="space-y-3">
                 <textarea
                   value={newAbout}
-                  onInput={(e) => onAboutChange((e.target as HTMLTextAreaElement).value)}
+                  onInput={(e) => this.setState({ newAbout: (e.target as HTMLTextAreaElement).value })}
                   class="w-full h-24 px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)]
                          rounded-lg text-sm text-[var(--color-text-primary)]
                          placeholder-[var(--color-text-tertiary)]
@@ -117,13 +167,13 @@ export class GroupInfo extends Component<GroupInfoProps> {
                 />
                 <div class="flex justify-end gap-2">
                   <button
-                    onClick={() => onAboutChange(group.about || '')}
+                    onClick={() => this.setState({ isEditingAbout: false, newAbout: this.props.group.about || '' })}
                     class="px-3 py-1.5 text-sm font-medium text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
                   >
                     Cancel
                   </button>
                   <button
-                    onClick={onAboutSave}
+                    onClick={this.handleAboutSave}
                     class="px-3 py-1.5 text-sm font-medium text-[var(--color-accent)] hover:text-[var(--color-accent)]/90 transition-colors"
                   >
                     Save
