@@ -23,15 +23,26 @@ export function GroupSidebar({ groups, selectedGroupId, onSelectGroup }: GroupSi
               }`}
           >
             <div class="flex items-center gap-2">
-              {group.picture && (
+              {group.picture ? (
                 <img
                   src={group.picture}
                   alt=""
-                  class="w-6 h-6 rounded-full object-cover"
+                  class="w-6 h-6 rounded-full object-cover border border-[var(--color-border)]"
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = 'none';
+                    const parent = e.currentTarget.parentElement;
+                    if (parent) {
+                      const fallback = document.createElement('div');
+                      fallback.className = 'w-6 h-6 rounded-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] flex items-center justify-center text-sm font-medium';
+                      fallback.textContent = group.name?.charAt(0).toUpperCase() || 'G';
+                      parent.insertBefore(fallback, e.currentTarget);
+                    }
                   }}
                 />
+              ) : (
+                <div class="w-6 h-6 rounded-full bg-[var(--color-bg-primary)] border border-[var(--color-border)] flex items-center justify-center text-sm font-medium">
+                  {group.name?.charAt(0).toUpperCase() || 'G'}
+                </div>
               )}
               <span class="truncate">{group.name || group.id}</span>
             </div>
