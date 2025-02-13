@@ -91,4 +91,4 @@ Project structure:
 
 ## License
 
-AGPL
+[AGPL](LICENSE)
