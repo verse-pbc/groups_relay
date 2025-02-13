@@ -169,8 +169,20 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
           <div class="w-full lg:w-[300px] flex-shrink-0">
             <div class="flex items-center justify-between p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
               <div class="flex items-center gap-3">
-                <div class="w-10 h-10 bg-[var(--color-bg-primary)] rounded-lg flex items-center justify-center text-lg">
-                  G
+                <div class="w-10 h-10 bg-[var(--color-bg-primary)] rounded-lg flex items-center justify-center text-lg overflow-hidden">
+                  {group.picture ? (
+                    <img 
+                      src={group.picture} 
+                      alt={group.name || 'Group'} 
+                      class="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                        e.currentTarget.parentElement!.textContent = group.name?.charAt(0).toUpperCase() || 'G';
+                      }}
+                    />
+                  ) : (
+                    group.name?.charAt(0).toUpperCase() || 'G'
+                  )}
                 </div>
                 <div>
                   {showEditName ? (
