@@ -417,7 +417,7 @@ export class App extends Component<AppProps, AppState> {
           />
         )}
         
-        <div class="container mx-auto px-4 py-8 lg:py-8 pt-16 lg:pt-8">
+        <div class="container mx-auto px-8 py-8 lg:py-8 pt-16 lg:pt-8">
           <h1 class="text-2xl font-bold mb-8 text-center lg:text-left">Nostr Groups</h1>
           
           <div class="flex flex-col lg:flex-row gap-8">
