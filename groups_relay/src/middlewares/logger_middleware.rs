@@ -2,7 +2,7 @@ use crate::metrics;
 use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
-use nostr_sdk::{ClientMessage, JsonUtil, RelayMessage};
+use nostr_sdk::prelude::*;
 use tracing::{debug, info};
 use websocket_builder::{
     ConnectionContext, DisconnectContext, InboundContext, Middleware, OutboundContext,
@@ -80,7 +80,6 @@ impl Middleware for LoggerMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr_sdk::SubscriptionId;
     use std::sync::Arc;
 
     fn create_test_state() -> NostrConnectionState {

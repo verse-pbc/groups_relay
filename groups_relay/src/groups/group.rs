@@ -585,7 +585,7 @@ impl Group {
                 && current_admins.contains(&member.pubkey)
                 && !member.roles.contains(&GroupRole::Admin)
             {
-                return Err(Error::notice("Cannot remove last admin"));
+                return Err(Error::notice("Cannot unset last admin role"));
             }
         }
 
@@ -971,11 +971,6 @@ impl Group {
             return false;
         }
 
-        // If the user is an admin, check if they are the last admin
-        if self.admin_pubkeys().len() == 1 && self.admin_pubkeys().contains(pubkey) {
-            return false;
-        }
-
         true
     }
 
@@ -1131,6 +1126,7 @@ mod tests {
         create_test_invite_event, create_test_keys, create_test_metadata_event,
         create_test_role_event, remove_member_from_group,
     };
+    use pretty_assertions::assert_eq;
 
     #[tokio::test]
     async fn test_group_creation() {
@@ -1541,7 +1537,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_event_request_wrong_kind() {
         let (admin_keys, member_keys, _) = create_test_keys().await;
-        let (mut group, group_id) = create_test_group(&admin_keys).await;
+        let (mut group, _group_id) = create_test_group(&admin_keys).await;
         let relay_pubkey = admin_keys.public_key();
 
         // Create a regular event to delete
@@ -1661,7 +1657,10 @@ mod tests {
         // Should fail with "Cannot remove last admin" error
         let result = group.set_roles(&event, &admin_keys.public_key());
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "Cannot remove last admin");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Cannot unset last admin role"
+        );
 
         // Verify the admin still has admin role
         assert!(group.is_admin(&admin_keys.public_key()));

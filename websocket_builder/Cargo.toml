@@ -20,9 +20,10 @@ tracing = "0.1"
 tokio = { version = "1.38.1", features = ["full", "tracing"] }
 
 [dev-dependencies]
-futures-util = "0.3.31"
-tokio = { version = "1.38.1", features = ["full"] }
-tokio-tungstenite = "0.24.0"
+futures-util = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+tokio-tungstenite = { workspace = true }
+pretty_assertions = "1.4.1"
 
 [[test]]
 name = "integration_test"

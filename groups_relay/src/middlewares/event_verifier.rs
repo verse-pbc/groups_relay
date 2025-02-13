@@ -1,7 +1,7 @@
 use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
-use nostr_sdk::{ClientMessage, RelayMessage};
+use nostr_sdk::prelude::*;
 use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage};
 
 #[derive(Debug)]
@@ -54,7 +54,6 @@ impl Middleware for EventVerifierMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr_sdk::{Event, EventBuilder, Keys, NostrSigner, SubscriptionId};
     use std::sync::Arc;
 
     fn create_middleware_chain() -> Vec<

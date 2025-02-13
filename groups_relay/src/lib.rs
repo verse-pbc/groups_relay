@@ -20,5 +20,5 @@ pub use app_state::HttpServerState;
 pub use error::Error;
 pub use event_store_connection::{EventStoreConnection, StoreCommand};
 pub use groups::{Group, Groups, KIND_GROUP_USER_JOIN_REQUEST_9021};
-pub use nostr_database::NostrDatabase;
+pub use nostr_database::RelayDatabase;
 pub use server::ServerState;

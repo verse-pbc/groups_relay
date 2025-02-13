@@ -4,13 +4,13 @@ use crate::{
     groups::Groups,
     handler, metrics,
     middlewares::NostrMessageConverter,
-    nostr_database::NostrDatabase,
+    nostr_database::RelayDatabase,
     nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
     websocket_server,
 };
 use anyhow::Result;
 use axum::{routing::get, Router};
-use nostr_sdk::{ClientMessage, RelayMessage};
+use nostr_sdk::prelude::*;
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
@@ -40,7 +40,7 @@ pub struct ServerState {
 pub async fn run_server(
     settings: config::Settings,
     relay_keys: config::Keys,
-    database: Arc<NostrDatabase>,
+    database: Arc<RelayDatabase>,
     groups: Arc<Groups>,
 ) -> Result<()> {
     // Setup metrics

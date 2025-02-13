@@ -1,10 +1,9 @@
 use crate::nostr_session_state::NostrConnectionState;
 use nostr_sdk::client::Error as NostrSdkError;
 use nostr_sdk::prelude::*;
-use nostr_sdk::{ClientMessage, RelayMessage};
 use snafu::{Backtrace, Snafu};
 use std::borrow::Cow;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 use websocket_builder::InboundContext;
 
 #[derive(Debug, Snafu)]
@@ -43,10 +42,8 @@ pub enum Error {
 
 impl Error {
     pub fn notice<S: Into<String>>(message: S) -> Self {
-        let msg = message.into();
-        info!("Notice: {}", msg);
         Error::Notice {
-            message: msg,
+            message: message.into(),
             backtrace: Backtrace::capture(),
         }
     }
@@ -59,19 +56,15 @@ impl Error {
     }
 
     pub fn auth_required<S: Into<String>>(message: S) -> Self {
-        let msg = message.into();
-        warn!("Auth required: {}", msg);
         Error::AuthRequired {
-            message: msg,
+            message: message.into(),
             backtrace: Backtrace::capture(),
         }
     }
 
     pub fn restricted<S: Into<String>>(message: S) -> Self {
-        let msg = message.into();
-        warn!("Restricted: {}", msg);
         Error::Restricted {
-            message: msg,
+            message: message.into(),
             backtrace: Backtrace::capture(),
         }
     }

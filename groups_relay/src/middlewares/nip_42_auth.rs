@@ -1,9 +1,7 @@
 use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Error;
 use async_trait::async_trait;
-use nostr_sdk::{
-    ClientMessage, Event, Kind, PublicKey, RelayMessage, TagKind, TagStandard, Timestamp,
-};
+use nostr_sdk::prelude::*;
 use tracing::{debug, info, warn};
 use websocket_builder::{ConnectionContext, InboundContext, Middleware, SendMessage};
 
@@ -262,7 +260,7 @@ impl Middleware for Nip42Auth {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr_sdk::{EventBuilder, Keys, NostrSigner, RelayUrl, Tag, TagStandard};
+    use pretty_assertions::assert_eq;
     use std::time::Instant;
 
     #[tokio::test]

@@ -1,7 +1,7 @@
 pub mod group;
 
 use crate::error::Error;
-use crate::nostr_database::NostrDatabase;
+use crate::nostr_database::RelayDatabase;
 use anyhow::Result;
 use dashmap::{
     mapref::one::{Ref, RefMut},
@@ -23,14 +23,14 @@ use tracing::info;
 
 #[derive(Debug)]
 pub struct Groups {
-    db: Arc<NostrDatabase>,
+    db: Arc<RelayDatabase>,
     groups: DashMap<String, Group>,
     pub relay_pubkey: PublicKey,
 }
 
 impl Groups {
     pub async fn load_groups(
-        database: Arc<NostrDatabase>,
+        database: Arc<RelayDatabase>,
         relay_pubkey: PublicKey,
     ) -> Result<Self, Error> {
         let mut groups = HashMap::new();
@@ -361,8 +361,7 @@ impl DerefMut for Groups {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::NostrDatabase;
-    use nostr_sdk::{EventBuilder, Keys, NostrSigner};
+    use crate::nostr_database::RelayDatabase;
     use std::time::Instant;
     use tempfile::TempDir;
 
@@ -382,7 +381,7 @@ mod tests {
     async fn create_test_groups_with_db(admin_keys: &Keys) -> Groups {
         let temp_dir = TempDir::new().unwrap();
         let db = Arc::new(
-            NostrDatabase::new(
+            RelayDatabase::new(
                 temp_dir
                     .path()
                     .join("test.db")

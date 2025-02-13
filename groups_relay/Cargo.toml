@@ -40,5 +40,6 @@ console = ["dep:console-subscriber"]
 
 [dev-dependencies]
 futures-util = "0.3.31"
+pretty_assertions = "1.4.1"
 tempfile = "3.14.0"
 tokio-tungstenite.workspace = true

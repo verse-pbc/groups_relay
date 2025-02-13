@@ -132,17 +132,8 @@ impl Middleware for ValidationMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr_sdk::{Event, EventBuilder, Keys, Kind, Tag, TagKind};
-    use std::sync::Arc;
 
-    fn create_test_event(keys: &Keys, group_id: &str, role: &str) -> Event {
-        let mut tags = vec![Tag::custom(TagKind::Custom("d".into()), [group_id])];
-        tags.push(Tag::custom(TagKind::Custom("role".into()), [role]));
-        EventBuilder::new(Kind::Custom(30000), "")
-            .tags(tags)
-            .sign_with_keys(keys)
-            .unwrap()
-    }
+    use std::sync::Arc;
 
     fn create_test_chain(
         middleware: ValidationMiddleware,

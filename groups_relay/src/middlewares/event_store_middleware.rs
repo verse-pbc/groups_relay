@@ -1,7 +1,7 @@
 use crate::error::Error;
 use crate::event_store_connection::EventStoreConnection;
 use crate::metrics;
-use crate::nostr_database::NostrDatabase;
+use crate::nostr_database::RelayDatabase;
 use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -39,12 +39,12 @@ impl MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
 
 #[derive(Debug)]
 pub struct EventStoreMiddleware {
-    database: Arc<NostrDatabase>,
+    database: Arc<RelayDatabase>,
     _token: CancellationToken,
 }
 
 impl EventStoreMiddleware {
-    pub fn new(database: Arc<NostrDatabase>) -> Self {
+    pub fn new(database: Arc<RelayDatabase>) -> Self {
         let token = CancellationToken::new();
         Self {
             database,
@@ -484,7 +484,7 @@ mod tests {
         Router,
     };
     use futures_util::{SinkExt, StreamExt};
-    use nostr_sdk::{EventBuilder, Keys};
+    use pretty_assertions::assert_eq;
     use std::time::Instant;
     use std::{net::SocketAddr, time::Duration};
     use tempfile::TempDir;
@@ -544,17 +544,17 @@ mod tests {
         })
     }
 
-    async fn setup_test() -> (TempDir, Arc<NostrDatabase>) {
+    async fn setup_test() -> (TempDir, Arc<RelayDatabase>) {
         let tmp_dir = TempDir::new().unwrap();
         let db_path = tmp_dir.path().join("test.db");
         let keys = Keys::generate();
         let database =
-            Arc::new(NostrDatabase::new(db_path.to_str().unwrap().to_string(), keys).unwrap());
+            Arc::new(RelayDatabase::new(db_path.to_str().unwrap().to_string(), keys).unwrap());
 
         (tmp_dir, database)
     }
 
-    async fn start_test_server(database: Arc<NostrDatabase>) -> (SocketAddr, CancellationToken) {
+    async fn start_test_server(database: Arc<RelayDatabase>) -> (SocketAddr, CancellationToken) {
         let addr = SocketAddr::from(([127, 0, 0, 1], 0));
         let cancellation_token = CancellationToken::new();
         let token = cancellation_token.clone();
@@ -609,7 +609,7 @@ mod tests {
         }
 
         async fn send_message(&mut self, msg: &ClientMessage) {
-            let message = Message::Text(msg.as_json().into());
+            let message = Message::Text(msg.as_json());
             debug!(target: "test_client", "Sending message: {:?}", message);
             self.write.send(message).await.unwrap();
         }

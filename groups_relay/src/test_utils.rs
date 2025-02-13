@@ -4,18 +4,16 @@ use std::time::Instant;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
-use crate::groups::group::{
-    Group, KIND_GROUP_ADD_USER_9000, KIND_GROUP_CREATE_9007, KIND_GROUP_REMOVE_USER_9001,
-};
-use crate::nostr_database::NostrDatabase;
+use crate::groups::group::Group;
+use crate::nostr_database::RelayDatabase;
 use crate::nostr_session_state::NostrConnectionState;
 
-pub async fn setup_test() -> (TempDir, Arc<NostrDatabase>, Keys) {
+pub async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let db_path = tmp_dir.path().join("test.db");
     let keys = Keys::generate();
     let database =
-        Arc::new(NostrDatabase::new(db_path.to_str().unwrap().to_string(), keys.clone()).unwrap());
+        Arc::new(RelayDatabase::new(db_path.to_str().unwrap().to_string(), keys.clone()).unwrap());
     (tmp_dir, database, keys)
 }
 

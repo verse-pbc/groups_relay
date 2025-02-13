@@ -1,6 +1,6 @@
 use anyhow::Result;
 use config::{Config as ConfigTree, ConfigError, Environment, File};
-use nostr_sdk::{RelayUrl, SecretKey};
+use nostr_sdk::prelude::*;
 use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;

@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::nostr_database::NostrDatabase;
+use crate::nostr_database::RelayDatabase;
 use anyhow::Result;
 use nostr_sdk::prelude::*;
 use snafu::Backtrace;
@@ -25,7 +25,7 @@ enum SubscriptionMessage {
 #[derive(Debug, Clone)]
 pub struct EventStoreConnection {
     id: String,
-    database: Arc<NostrDatabase>,
+    database: Arc<RelayDatabase>,
     db_connection: String,
     connection_token: CancellationToken,
     subscription_sender: mpsc::UnboundedSender<SubscriptionMessage>,
@@ -36,7 +36,7 @@ pub struct EventStoreConnection {
 impl EventStoreConnection {
     pub async fn new(
         id: String,
-        database: Arc<NostrDatabase>,
+        database: Arc<RelayDatabase>,
         db_connection: String,
         cancellation_token: CancellationToken,
         outgoing_sender: MessageSender<RelayMessage>,

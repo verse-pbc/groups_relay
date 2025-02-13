@@ -8,13 +8,13 @@ use tokio::sync::broadcast;
 use tracing::{debug, error};
 
 #[derive(Debug, Clone)]
-pub struct NostrDatabase {
+pub struct RelayDatabase {
     inner: Arc<NostrLMDB>,
     event_sender: broadcast::Sender<Event>,
     keys: Keys,
 }
 
-impl NostrDatabase {
+impl RelayDatabase {
     pub fn new(path: String, keys: Keys) -> Result<Self> {
         let database = NostrLMDB::open(path)?;
         let (event_sender, _) = broadcast::channel(1024);
@@ -103,13 +103,13 @@ impl NostrDatabase {
     }
 }
 
-impl AsRef<NostrLMDB> for NostrDatabase {
+impl AsRef<NostrLMDB> for RelayDatabase {
     fn as_ref(&self) -> &NostrLMDB {
         &self.inner
     }
 }
 
-impl From<Arc<NostrLMDB>> for NostrDatabase {
+impl From<Arc<NostrLMDB>> for RelayDatabase {
     fn from(database: Arc<NostrLMDB>) -> Self {
         let (event_sender, _) = broadcast::channel(1024);
         Self {
@@ -120,8 +120,8 @@ impl From<Arc<NostrLMDB>> for NostrDatabase {
     }
 }
 
-impl From<NostrDatabase> for Arc<NostrLMDB> {
-    fn from(database: NostrDatabase) -> Self {
+impl From<RelayDatabase> for Arc<NostrLMDB> {
+    fn from(database: RelayDatabase) -> Self {
         database.inner
     }
 }

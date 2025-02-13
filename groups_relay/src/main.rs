@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use groups_relay::{config, groups::Groups, nostr_database::NostrDatabase, server};
+use groups_relay::{config, groups::Groups, nostr_database::RelayDatabase, server};
 use nostr_sdk::RelayUrl;
 use std::sync::Arc;
 
@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
     let _auth_url = RelayUrl::parse(&settings.auth_url)?;
 
     let relay_keys = relay_settings.relay_keys()?;
-    let database = Arc::new(NostrDatabase::new(
+    let database = Arc::new(RelayDatabase::new(
         settings.db_path.clone(),
         relay_keys.clone(),
     )?);

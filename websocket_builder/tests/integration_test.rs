@@ -9,6 +9,7 @@ use axum::{
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
+use pretty_assertions::assert_eq;
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;

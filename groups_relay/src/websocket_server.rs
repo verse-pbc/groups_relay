@@ -5,11 +5,11 @@ use crate::{
         EventStoreMiddleware, EventVerifierMiddleware, LoggerMiddleware, Nip29Middleware,
         Nip42Middleware, Nip70Middleware, NostrMessageConverter, ValidationMiddleware,
     },
-    nostr_database::NostrDatabase,
+    nostr_database::RelayDatabase,
     nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
 };
 use anyhow::Result;
-use nostr_sdk::{ClientMessage, RelayMessage};
+use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use websocket_builder::WebSocketBuilder;
 pub use websocket_builder::WebSocketHandler;
@@ -19,7 +19,7 @@ pub fn build_websocket_handler(
     auth_url: String,
     groups: Arc<Groups>,
     relay_keys: &config::Keys,
-    database: Arc<NostrDatabase>,
+    database: Arc<RelayDatabase>,
     websocket_settings: &config::WebSocketSettings,
 ) -> Result<
     WebSocketHandler<
