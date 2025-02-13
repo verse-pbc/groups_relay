@@ -152,8 +152,8 @@ export class ContentSection extends Component<ContentSectionProps, ContentSectio
             {content.length === 0 && (
               <div class="text-center py-12">
                 <div class="mb-3 text-2xl">💭</div>
-                <p class="text-sm text-[var(--color-text-tertiary)]">No activity yet</p>
-                <p class="text-xs text-[var(--color-text-tertiary)] mt-1">
+                <p class="text-sm text-[#8484ac]">No activity yet</p>
+                <p class="text-xs text-[#8484ac] mt-1">
                   Messages will appear here when members start posting
                 </p>
               </div>

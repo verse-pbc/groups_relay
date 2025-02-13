@@ -318,8 +318,8 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
                 onClick={() => this.setState({ activeTab: 'content' })}
                 class={`shrink-0 text-sm font-medium px-3 py-1.5 rounded-full transition-all ${
                   activeTab === 'content'
-                    ? 'text-[var(--color-accent)] bg-[var(--color-accent)]/10'
-                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
+                    ? 'text-white bg-[var(--color-accent)]/10'
+                    : 'text-[#8484ac] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
                 }`}
               >
                 Content {group.content?.length ? `(${group.content.length})` : ''}
@@ -328,8 +328,8 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
                 onClick={() => this.setState({ activeTab: 'members' })}
                 class={`shrink-0 text-sm font-medium px-3 py-1.5 rounded-full transition-all ${
                   activeTab === 'members'
-                    ? 'text-[var(--color-accent)] bg-[var(--color-accent)]/10'
-                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
+                    ? 'text-white bg-[var(--color-accent)]/10'
+                    : 'text-[#8484ac] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
                 }`}
               >
                 Members {group.members?.length ? `(${group.members.length})` : ''}
@@ -338,8 +338,8 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
                 onClick={() => this.setState({ activeTab: 'invites' })}
                 class={`shrink-0 text-sm font-medium px-3 py-1.5 rounded-full transition-all ${
                   activeTab === 'invites'
-                    ? 'text-[var(--color-accent)] bg-[var(--color-accent)]/10'
-                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
+                    ? 'text-white bg-[var(--color-accent)]/10'
+                    : 'text-[#8484ac] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
                 }`}
               >
                 Invites {group.invites ? `(${Object.keys(group.invites).length})` : ''}
@@ -348,8 +348,8 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
                 onClick={() => this.setState({ activeTab: 'requests' })}
                 class={`shrink-0 text-sm font-medium px-3 py-1.5 rounded-full transition-all ${
                   activeTab === 'requests'
-                    ? 'text-[var(--color-accent)] bg-[var(--color-accent)]/10'
-                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
+                    ? 'text-white bg-[var(--color-accent)]/10'
+                    : 'text-[#8484ac] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
                 }`}
               >
                 Requests {group.joinRequests?.length ? `(${group.joinRequests.length})` : ''}
