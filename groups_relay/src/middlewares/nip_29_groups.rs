@@ -327,18 +327,13 @@ impl Middleware for Nip29Middleware {
                 match self.handle_event(event, &ctx.state.authed_pubkey).await {
                     Ok(Some(events_to_save)) => {
                         let event_id = event.id;
-                        if let Err(e) = ctx.state.save_events(events_to_save).await {
-                            if let Err(e) = e.handle_inbound_error(ctx).await {
-                                error!("Failed to handle inbound error: {}", e);
-                            }
-                            return Ok(());
-                        }
+                        ctx.state.save_events(events_to_save).await?;
                         Some(RelayMessage::ok(event_id, true, ""))
                     }
                     Ok(None) => return Ok(()),
                     Err(e) => {
-                        if let Err(e) = e.handle_inbound_error(ctx).await {
-                            error!("Failed to handle inbound error: {}", e);
+                        if let Err(err) = e.handle_inbound_error(ctx).await {
+                            error!("Failed to handle inbound error: {}", err);
                         }
                         return Ok(());
                     }

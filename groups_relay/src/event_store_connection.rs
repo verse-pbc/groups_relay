@@ -265,6 +265,7 @@ impl EventStoreConnection {
         match store_command {
             // These events are signed by the relay key
             StoreCommand::SaveUnsignedEvent(event) => {
+                println!("Saving unsigned event: {:?}", event);
                 match self.database.save_unsigned_event(event).await {
                     Ok(event) => {
                         info!(
@@ -281,17 +282,19 @@ impl EventStoreConnection {
                             self.id,
                             e
                         );
+                        return Err(Error::Internal {
+                            message: format!("Error saving unsigned event: {:?}", e),
+                            backtrace: Backtrace::capture(),
+                        });
                     }
                 }
             }
             StoreCommand::SaveSignedEvent(event) => {
                 if let Err(e) = self.database.save_signed_event(&event).await {
-                    error!(
-                        target: "event_store",
-                        "[{}] Error saving signed event: {:?}",
-                        self.id,
-                        e
-                    );
+                    return Err(Error::Internal {
+                        message: format!("Error saving signed event: {:?}", e),
+                        backtrace: Backtrace::capture(),
+                    });
                 }
                 info!(
                     target: "event_store",
@@ -304,12 +307,10 @@ impl EventStoreConnection {
             StoreCommand::DeleteEvents(filter) => {
                 let filter_string = format!("{:?}", filter);
                 if let Err(e) = self.database.delete(filter).await {
-                    error!(
-                        target: "event_store",
-                        "[{}] Error deleting events: {:?}",
-                        self.id,
-                        e
-                    );
+                    return Err(Error::Internal {
+                        message: format!("Error deleting events: {:?}", e),
+                        backtrace: Backtrace::capture(),
+                    });
                 }
                 info!(
                     target: "event_store",
