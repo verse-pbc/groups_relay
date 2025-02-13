@@ -25,9 +25,16 @@ export interface NostrClientConfig {
 }
 
 export class NostrGroupError extends Error {
-  constructor(message: string) {
-    super(message);
+  readonly rawMessage: string;
+
+  constructor(message: string, context?: string) {
+    super(context ? `${context}: ${message}` : message);
     this.name = "NostrGroupError";
+    this.rawMessage = message;
+  }
+
+  get displayMessage(): string {
+    return this.rawMessage;
   }
 }
 
@@ -53,7 +60,10 @@ export class NostrClient {
         relay.authPolicy = NDKRelayAuthPolicies.signIn({ ndk: this.ndk });
       });
     } catch (error) {
-      throw new NostrGroupError(`Failed to initialize NostrClient: ${error}`);
+      throw new NostrGroupError(
+        error instanceof Error ? error.message : String(error),
+        "Failed to initialize NostrClient"
+      );
     }
   }
 
@@ -163,7 +173,8 @@ export class NostrClient {
 
       if (readyRelays.length === 0) {
         throw new NostrGroupError(
-          "No ready relays available. Please ensure you are authenticated."
+          "Please ensure you are authenticated.",
+          "No ready relays available"
         );
       }
 
@@ -182,11 +193,14 @@ export class NostrClient {
       // If it's a NDKPublishError, we can get specific relay errors
       if (error instanceof NDKPublishError) {
         for (const [relay, err] of error.errors) {
-          throw new NostrGroupError(`${relay.url}: ${err.message}`);
+          throw new NostrGroupError(err.message, relay.url);
         }
       }
 
-      throw new NostrGroupError(`Failed to publish event: ${error}`);
+      throw new NostrGroupError(
+        error instanceof Error ? error.message : String(error),
+        "Failed to publish event"
+      );
     }
   }
 

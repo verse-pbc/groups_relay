@@ -356,6 +356,7 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
                 <MembersSection
                   group={group}
                   client={client}
+                  showMessage={this.props.showMessage}
                 />
               )}
               {activeTab === 'invites' && (
@@ -363,12 +364,14 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
                   group={group}
                   client={client}
                   updateGroupsMap={this.props.updateGroupsMap}
+                  showMessage={this.props.showMessage}
                 />
               )}
               {activeTab === 'requests' && (
                 <JoinRequestSection
                   group={group}
                   client={client}
+                  showMessage={this.props.showMessage}
                 />
               )}
             </div>

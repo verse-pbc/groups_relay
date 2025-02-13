@@ -1,11 +1,12 @@
 import { Component } from 'preact'
-import { NostrClient } from '../api/nostr_client'
+import { NostrClient, NostrGroupError } from '../api/nostr_client'
 import type { Group } from '../types'
 import { PubkeyDisplay } from './PubkeyDisplay'
 
 interface MembersSectionProps {
   group: Group
   client: NostrClient
+  showMessage: (message: string, type: 'success' | 'error' | 'info') => void
 }
 
 interface MembersSectionState {
@@ -23,6 +24,12 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
     showConfirmRemove: null
   }
 
+  private showError = (prefix: string, error: unknown) => {
+    console.error(prefix, error)
+    const message = error instanceof NostrGroupError ? error.displayMessage : String(error)
+    this.props.showMessage(`${prefix}: ${message}`, 'error')
+  }
+
   handleAddMember = async (e: Event) => {
     e.preventDefault()
     if (!this.state.newMemberPubkey.trim()) return
@@ -31,8 +38,9 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
     try {
       await this.props.client.addMember(this.props.group.id, this.state.newMemberPubkey)
       this.setState({ newMemberPubkey: '' })
+      this.props.showMessage('Member added successfully!', 'success')
     } catch (error) {
-      console.error('Failed to add member:', error)
+      this.showError('Failed to add member', error)
     } finally {
       this.setState({ isAddingMember: false })
     }
@@ -46,8 +54,9 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
 
     try {
       await this.props.client.removeMember(this.props.group.id, pubkey)
+      this.props.showMessage('Member removed successfully', 'success')
     } catch (error) {
-      console.error('Failed to remove member:', error)
+      this.showError('Failed to remove member', error)
     } finally {
       this.setState(prev => {
         const newSet = new Set(prev.removingMembers)
@@ -111,7 +120,10 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
                 <div class="flex items-center gap-2">
                   <PubkeyDisplay pubkey={member.pubkey} showCopy={false} />
                   <button
-                    onClick={() => navigator.clipboard.writeText(member.pubkey)}
+                    onClick={() => {
+                      navigator.clipboard.writeText(member.pubkey)
+                      this.props.showMessage('Pubkey copied to clipboard', 'success')
+                    }}
                     class="opacity-0 group-hover:opacity-100 text-xs text-[var(--color-text-tertiary)]
                            hover:text-[var(--color-text-secondary)] transition-all"
                     title="Copy pubkey"

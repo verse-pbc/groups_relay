@@ -1,11 +1,12 @@
 import { Component } from 'preact'
-import { NostrClient } from '../api/nostr_client'
+import { NostrClient, NostrGroupError } from '../api/nostr_client'
 import type { Group } from '../types'
 
 interface InviteSectionProps {
   group: Group
   client: NostrClient
   updateGroupsMap: (updater: (map: Map<string, Group>) => void) => void
+  showMessage: (message: string, type: 'success' | 'error' | 'info') => void
 }
 
 interface InviteSectionState {
@@ -32,6 +33,12 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
     }
   }
 
+  private showError = (prefix: string, error: unknown) => {
+    console.error(prefix, error)
+    const message = error instanceof NostrGroupError ? error.displayMessage : String(error)
+    this.props.showMessage(`${prefix}: ${message}`, 'error')
+  }
+
   componentWillUnmount() {
     if (this.copyTimeout) {
       window.clearTimeout(this.copyTimeout)
@@ -42,13 +49,13 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
     e.preventDefault()
     if (!this.state.inviteCode.trim()) return
 
-    this.setState({ error: '', isCreatingInvite: true })
+    this.setState({ isCreatingInvite: true })
     try {
       await this.props.client.createInvite(this.props.group.id, this.state.inviteCode)
       this.setState({ inviteCode: '' })
+      this.props.showMessage('Invite created successfully', 'success')
     } catch (error) {
-      console.error('Failed to create invite:', error)
-      this.setState({ error: 'Failed to create invite. Please try again.' })
+      this.showError('Failed to create invite', error)
     } finally {
       this.setState({ isCreatingInvite: false })
     }
@@ -80,7 +87,6 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
     if (!invite?.id) return
 
     this.setState({ inviteAction: { type: 'delete', code } })
-
     try {
       await this.props.client.deleteEvent(this.props.group.id, invite.id)
       this.props.updateGroupsMap(groupsMap => {
@@ -89,11 +95,17 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
           delete group.invites[code]
         }
       })
+      this.props.showMessage('Invite deleted successfully', 'success')
     } catch (error) {
-      console.error('Failed to delete invite:', error)
+      this.showError('Failed to delete invite', error)
     } finally {
       this.setState({ inviteAction: null })
     }
+  }
+
+  handleCopyInviteCode = (code: string) => {
+    navigator.clipboard.writeText(code)
+    this.props.showMessage('Invite code copied to clipboard', 'success')
   }
 
   render() {

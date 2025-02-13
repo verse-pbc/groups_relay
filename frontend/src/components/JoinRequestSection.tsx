@@ -1,5 +1,5 @@
 import { Component } from 'preact'
-import { NostrClient } from '../api/nostr_client'
+import { NostrClient, NostrGroupError } from '../api/nostr_client'
 import type { Group } from '../types'
 import { JoinRequestForm } from './JoinRequestForm'
 import { PubkeyDisplay } from './PubkeyDisplay'
@@ -7,25 +7,59 @@ import { PubkeyDisplay } from './PubkeyDisplay'
 interface JoinRequestSectionProps {
   group: Group
   client: NostrClient
+  showMessage: (message: string, type: 'success' | 'error' | 'info') => void
 }
 
 interface JoinRequestSectionState {
   showJoinForm: boolean
+  inviteCode: string
+  isSubmitting: boolean
 }
 
 export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinRequestSectionState> {
-  constructor(props: JoinRequestSectionProps) {
-    super(props)
-    this.state = {
-      showJoinForm: true,
-    }
+  state = {
+    showJoinForm: false,
+    inviteCode: '',
+    isSubmitting: false
+  }
+
+  private showError = (prefix: string, error: unknown) => {
+    console.error(prefix, error)
+    const message = error instanceof NostrGroupError ? error.displayMessage : String(error)
+    this.props.showMessage(`${prefix}: ${message}`, 'error')
   }
 
   handleAcceptRequest = async (pubkey: string) => {
     try {
       await this.props.client.acceptJoinRequest(this.props.group.id, pubkey)
+      this.props.showMessage('Join request accepted successfully', 'success')
     } catch (error) {
-      console.error('Failed to accept join request:', error)
+      this.showError('Failed to accept join request', error)
+    }
+  }
+
+  handleRejectRequest = async (pubkey: string) => {
+    try {
+      await this.props.client.deleteEvent(this.props.group.id, pubkey)
+      this.props.showMessage('Join request rejected successfully', 'success')
+    } catch (error) {
+      this.showError('Failed to reject join request', error)
+    }
+  }
+
+  handleSubmitJoinRequest = async (e: Event) => {
+    e.preventDefault()
+    if (!this.state.inviteCode.trim()) return
+
+    this.setState({ isSubmitting: true })
+    try {
+      await this.props.client.sendJoinRequest(this.props.group.id, this.state.inviteCode)
+      this.setState({ inviteCode: '', showJoinForm: false })
+      this.props.showMessage('Join request submitted successfully', 'success')
+    } catch (error) {
+      this.showError('Failed to submit join request', error)
+    } finally {
+      this.setState({ isSubmitting: false })
     }
   }
 
