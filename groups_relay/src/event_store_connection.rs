@@ -261,8 +261,8 @@ impl EventStoreConnection {
         Ok(())
     }
 
-    pub async fn save_event(&self, event_builder: StoreCommand) -> Result<(), Error> {
-        match event_builder {
+    pub async fn save_event(&self, store_command: StoreCommand) -> Result<(), Error> {
+        match store_command {
             // These events are signed by the relay key
             StoreCommand::SaveUnsignedEvent(event) => {
                 match self.database.save_unsigned_event(event).await {

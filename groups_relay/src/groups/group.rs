@@ -874,19 +874,26 @@ impl Group {
 
 // Event generation based on current state
 impl Group {
-    pub fn generate_put_user_event(&self, pubkey: &PublicKey) -> EventBuilder {
-        EventBuilder::new(KIND_GROUP_ADD_USER_9000, "")
-            .tag(Tag::custom(
-                TagKind::p(),
-                [
-                    pubkey.to_string(),
-                    GroupRole::Member.as_tuple().0.to_string(),
-                ],
-            ))
-            .tag(Tag::custom(TagKind::h(), [self.id.clone()]))
+    pub fn generate_put_user_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
+        UnsignedEvent::new(
+            *pubkey,
+            Timestamp::now_with_supplier(&Instant::now()),
+            KIND_GROUP_ADD_USER_9000,
+            vec![
+                Tag::custom(
+                    TagKind::p(),
+                    vec![
+                        pubkey.to_string(),
+                        GroupRole::Member.as_tuple().0.to_string(),
+                    ],
+                ),
+                Tag::custom(TagKind::h(), [self.id.clone()]),
+            ],
+            "".to_string(),
+        )
     }
 
-    pub fn generate_metadata_event(&self) -> EventBuilder {
+    pub fn generate_metadata_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
         // Private = needs authentication to read
         let access = if self.metadata.private {
             "private"
@@ -901,26 +908,31 @@ impl Group {
             "open"
         };
 
-        let mut metadata_event = EventBuilder::new(KIND_GROUP_METADATA_39000, "")
-            .tag(Tag::identifier(self.id.clone()))
-            .tag(Tag::custom(TagKind::Name, [self.metadata.name.clone()]))
-            .tag(Tag::custom(TagKind::custom(access), &[] as &[String]))
-            .tag(Tag::custom(TagKind::custom(visibility), &[] as &[String]));
+        let mut tags = vec![
+            Tag::identifier(self.id.clone()),
+            Tag::custom(TagKind::Name, [self.metadata.name.clone()]),
+            Tag::custom(TagKind::custom(access), &[] as &[String]),
+            Tag::custom(TagKind::custom(visibility), &[] as &[String]),
+        ];
 
         if let Some(about) = &self.metadata.about {
-            metadata_event =
-                metadata_event.tag(Tag::custom(TagKind::custom("about"), [about.clone()]));
+            tags.push(Tag::custom(TagKind::custom("about"), [about.clone()]));
         }
 
         if let Some(picture) = &self.metadata.picture {
-            metadata_event =
-                metadata_event.tag(Tag::custom(TagKind::custom("picture"), [picture.clone()]));
+            tags.push(Tag::custom(TagKind::custom("picture"), [picture.clone()]));
         }
 
-        metadata_event
+        UnsignedEvent::new(
+            *pubkey,
+            Timestamp::now_with_supplier(&Instant::now()),
+            KIND_GROUP_METADATA_39000,
+            tags,
+            "".to_string(),
+        )
     }
 
-    pub fn generate_admins_event(&self) -> EventBuilder {
+    pub fn generate_admins_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
         let admins = self.members.values().filter(|member| {
             member
                 .roles
@@ -939,10 +951,16 @@ impl Group {
             tags.push(tag);
         }
 
-        EventBuilder::new(KIND_GROUP_ADMINS_39001, "").tags(tags)
+        UnsignedEvent::new(
+            *pubkey,
+            Timestamp::now_with_supplier(&Instant::now()),
+            KIND_GROUP_ADMINS_39001,
+            tags,
+            "".to_string(),
+        )
     }
 
-    pub fn generate_members_event(&self) -> EventBuilder {
+    pub fn generate_members_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
         let members: Vec<&PublicKey> = self.members.keys().collect();
 
         let mut tags = Vec::new();
@@ -952,10 +970,16 @@ impl Group {
             tags.push(Tag::public_key(*pubkey));
         }
 
-        EventBuilder::new(KIND_GROUP_MEMBERS_39002, "").tags(tags)
+        UnsignedEvent::new(
+            *pubkey,
+            Timestamp::now_with_supplier(&Instant::now()),
+            KIND_GROUP_MEMBERS_39002,
+            tags,
+            "".to_string(),
+        )
     }
 
-    pub fn generate_roles_event(&self) -> EventBuilder {
+    pub fn generate_roles_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
         let supported_roles: Vec<(String, String)> = GroupRole::iter()
             .map(|role| {
                 let (name, description) = role.as_tuple();
@@ -973,9 +997,13 @@ impl Group {
             ));
         }
 
-        let content = "List of roles supported by this group".to_string();
-
-        EventBuilder::new(KIND_GROUP_ROLES_39003, &content).tags(tags)
+        UnsignedEvent::new(
+            *pubkey,
+            Timestamp::now_with_supplier(&Instant::now()),
+            KIND_GROUP_ROLES_39003,
+            tags,
+            "List of roles supported by this group".to_string(),
+        )
     }
 }
 

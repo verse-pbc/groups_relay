@@ -52,25 +52,6 @@ impl EventStoreMiddleware {
         }
     }
 
-    pub async fn add_connection(
-        &self,
-        connection_id: String,
-        relay_url: String,
-        sender: MessageSender<RelayMessage>,
-        cancellation_token: CancellationToken,
-    ) -> Result<EventStoreConnection> {
-        let connection = EventStoreConnection::new(
-            connection_id,
-            self.database.clone(),
-            relay_url,
-            cancellation_token,
-            sender,
-        )
-        .await?;
-
-        Ok(connection)
-    }
-
     async fn fetch_historical_events(
         &self,
         connection: &EventStoreConnection,

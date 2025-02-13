@@ -41,19 +41,19 @@ impl Nip29Middleware {
             // Increment the groups created counter
             metrics::groups_created().increment(1);
 
-            let metadata_event = group.generate_metadata_event();
-            let put_user_event = group.generate_put_user_event(&event.pubkey);
-            let admins_event = group.generate_admins_event();
-            let members_event = group.generate_members_event();
-            let roles_event = group.generate_roles_event();
+            let metadata_event = group.generate_metadata_event(&self.relay_pubkey);
+            let put_user_event = group.generate_put_user_event(&self.relay_pubkey);
+            let admins_event = group.generate_admins_event(&self.relay_pubkey);
+            let members_event = group.generate_members_event(&self.relay_pubkey);
+            let roles_event = group.generate_roles_event(&self.relay_pubkey);
 
             return Ok(Some(vec![
                 StoreCommand::SaveSignedEvent(event.clone()),
-                StoreCommand::SaveUnsignedEvent(metadata_event.build(self.relay_pubkey)),
-                StoreCommand::SaveUnsignedEvent(put_user_event.build(self.relay_pubkey)),
-                StoreCommand::SaveUnsignedEvent(admins_event.build(self.relay_pubkey)),
-                StoreCommand::SaveUnsignedEvent(members_event.build(self.relay_pubkey)),
-                StoreCommand::SaveUnsignedEvent(roles_event.build(self.relay_pubkey)),
+                StoreCommand::SaveUnsignedEvent(metadata_event),
+                StoreCommand::SaveUnsignedEvent(put_user_event),
+                StoreCommand::SaveUnsignedEvent(admins_event),
+                StoreCommand::SaveUnsignedEvent(members_event),
+                StoreCommand::SaveUnsignedEvent(roles_event),
             ]));
         }
 
@@ -63,10 +63,10 @@ impl Nip29Middleware {
                 let Some(group) = self.groups.find_group_from_event(event) else {
                     return Ok(None);
                 };
-                let metadata_event = group.generate_metadata_event();
+                let metadata_event = group.generate_metadata_event(&self.relay_pubkey);
                 vec![
                     StoreCommand::SaveSignedEvent(event.clone()),
-                    StoreCommand::SaveUnsignedEvent(metadata_event.build(self.relay_pubkey)),
+                    StoreCommand::SaveUnsignedEvent(metadata_event),
                 ]
             }
 
@@ -76,12 +76,12 @@ impl Nip29Middleware {
                     let Some(group) = self.groups.find_group_from_event(event) else {
                         return Err(Error::notice("[JoinRequest-AutoJoin] Group not found"));
                     };
-                    let put_user_event = group.generate_put_user_event(&event.pubkey);
-                    let members_event = group.generate_members_event();
+                    let put_user_event = group.generate_put_user_event(&self.relay_pubkey);
+                    let members_event = group.generate_members_event(&self.relay_pubkey);
                     vec![
                         StoreCommand::SaveSignedEvent(event.clone()),
-                        StoreCommand::SaveUnsignedEvent(put_user_event.build(self.relay_pubkey)),
-                        StoreCommand::SaveUnsignedEvent(members_event.build(self.relay_pubkey)),
+                        StoreCommand::SaveUnsignedEvent(put_user_event),
+                        StoreCommand::SaveUnsignedEvent(members_event),
                     ]
                 } else {
                     vec![StoreCommand::SaveSignedEvent(event.clone())]
@@ -93,10 +93,10 @@ impl Nip29Middleware {
                     let Some(group) = self.groups.find_group_from_event(event) else {
                         return Err(Error::notice("[LeaveRequest-MemberUpdate] Group not found"));
                     };
-                    let members_event = group.generate_members_event();
+                    let members_event = group.generate_members_event(&self.relay_pubkey);
                     vec![
                         StoreCommand::SaveSignedEvent(event.clone()),
-                        StoreCommand::SaveUnsignedEvent(members_event.build(self.relay_pubkey)),
+                        StoreCommand::SaveUnsignedEvent(members_event),
                     ]
                 } else {
                     vec![]
@@ -115,15 +115,11 @@ impl Nip29Middleware {
                 };
                 let mut events = vec![StoreCommand::SaveSignedEvent(event.clone())];
 
-                let admins_event = group.generate_admins_event();
-                events.push(StoreCommand::SaveUnsignedEvent(
-                    admins_event.build(self.relay_pubkey),
-                ));
+                let admins_event = group.generate_admins_event(&self.relay_pubkey);
+                events.push(StoreCommand::SaveUnsignedEvent(admins_event));
 
-                let members_event = group.generate_members_event();
-                events.push(StoreCommand::SaveUnsignedEvent(
-                    members_event.build(self.relay_pubkey),
-                ));
+                let members_event = group.generate_members_event(&self.relay_pubkey);
+                events.push(StoreCommand::SaveUnsignedEvent(members_event));
 
                 events
             }
@@ -135,15 +131,11 @@ impl Nip29Middleware {
                 };
                 let mut events = vec![StoreCommand::SaveSignedEvent(event.clone())];
                 if removed_admins {
-                    let admins_event = group.generate_admins_event();
-                    events.push(StoreCommand::SaveUnsignedEvent(
-                        admins_event.build(self.relay_pubkey),
-                    ));
+                    let admins_event = group.generate_admins_event(&self.relay_pubkey);
+                    events.push(StoreCommand::SaveUnsignedEvent(admins_event));
                 }
-                let members_event = group.generate_members_event();
-                events.push(StoreCommand::SaveUnsignedEvent(
-                    members_event.build(self.relay_pubkey),
-                ));
+                let members_event = group.generate_members_event(&self.relay_pubkey);
+                events.push(StoreCommand::SaveUnsignedEvent(members_event));
 
                 events
             }
@@ -196,15 +188,11 @@ impl Nip29Middleware {
                     if !is_member {
                         group.add_pubkey(event.pubkey);
 
-                        let put_user_event = group.generate_put_user_event(&event.pubkey);
-                        let members_event = group.generate_members_event();
+                        let put_user_event = group.generate_put_user_event(&self.relay_pubkey);
+                        let members_event = group.generate_members_event(&self.relay_pubkey);
 
-                        events_to_save.push(StoreCommand::SaveUnsignedEvent(
-                            put_user_event.build(self.relay_pubkey),
-                        ));
-                        events_to_save.push(StoreCommand::SaveUnsignedEvent(
-                            members_event.build(self.relay_pubkey),
-                        ));
+                        events_to_save.push(StoreCommand::SaveUnsignedEvent(put_user_event));
+                        events_to_save.push(StoreCommand::SaveUnsignedEvent(members_event));
                     }
                 } else if !is_member {
                     // For closed groups, non-members can't post
