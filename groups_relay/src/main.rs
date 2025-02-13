@@ -43,7 +43,6 @@ fn setup_tracing() {
         .with_file(false)
         .with_line_number(false)
         .with_level(true)
-        .with_span_events(fmt::format::FmtSpan::NEW | fmt::format::FmtSpan::CLOSE)
         .init();
 }
 
