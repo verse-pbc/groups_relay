@@ -26,6 +26,16 @@ pub const KIND_GROUP_ADMINS_39001: Kind = Kind::Custom(39001); // Relay -> All: 
 pub const KIND_GROUP_MEMBERS_39002: Kind = Kind::Custom(39002); // Relay -> All: List of group members
 pub const KIND_GROUP_ROLES_39003: Kind = Kind::Custom(39003); // Relay -> All: Supported roles in group
 
+// NIP-60 Cashu Wallet kinds
+pub const KIND_WALLET_17375: Kind = Kind::Custom(17375); // Replaceable wallet event
+pub const KIND_TOKEN_7375: Kind = Kind::Custom(7375); // Token event (unspent proofs)
+pub const KIND_SPENDING_HISTORY_7376: Kind = Kind::Custom(7376); // Spending history event
+pub const KIND_QUOTE_7374: Kind = Kind::Custom(7374); // Quote event (optional)
+
+// NIP-61 Nutzap kinds
+pub const KIND_NUTZAP_INFO_10019: Kind = Kind::Custom(10019); // Nutzap informational event
+pub const KIND_NUTZAP_9321: Kind = Kind::Custom(9321); // Nutzap event
+
 pub const KIND_SIMPLE_LIST_10009: Kind = Kind::Custom(10009); // Simple Groups (NIP-51): List of groups a user wants to remember being in
 pub const KIND_CLAIM_28934: Kind = Kind::Custom(28934); // Claim (NIP-43): Claim auth
 
@@ -36,7 +46,16 @@ pub const ADDRESSABLE_EVENT_KINDS: [Kind; 4] = [
     KIND_GROUP_ROLES_39003,
 ];
 
-pub const NON_GROUP_ALLOWED_KINDS: [Kind; 2] = [KIND_SIMPLE_LIST_10009, KIND_CLAIM_28934];
+pub const NON_GROUP_ALLOWED_KINDS: [Kind; 8] = [
+    KIND_SIMPLE_LIST_10009,
+    KIND_CLAIM_28934,
+    KIND_WALLET_17375,
+    KIND_TOKEN_7375,
+    KIND_SPENDING_HISTORY_7376,
+    KIND_QUOTE_7374,
+    KIND_NUTZAP_INFO_10019,
+    KIND_NUTZAP_9321,
+];
 
 pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 10] = [
     KIND_GROUP_CREATE_9007,
