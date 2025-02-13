@@ -626,7 +626,7 @@ mod tests {
 
         let result = groups.handle_remove_user(&remove_event);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
 
         let group = groups.get_group(TEST_GROUP_ID).unwrap();
         assert!(!group.members.contains_key(&member_keys.public_key()));
