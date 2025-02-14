@@ -6,7 +6,6 @@ interface CreateGroupFormProps {
   updateGroupsMap: (updater: (map: Map<string, Group>) => void) => void
   client: NostrClient
   showMessage: (message: string, type: 'success' | 'error' | 'info') => void
-  onLogout: () => void
   onGroupCreated?: (group: Group) => void
 }
 
@@ -105,7 +104,6 @@ export class CreateGroupForm extends BaseComponent<CreateGroupFormProps, CreateG
 
   render() {
     const { isSubmitting } = this.state
-    const { onLogout } = this.props
 
     return (
       <div class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] p-4">
@@ -186,19 +184,6 @@ export class CreateGroupForm extends BaseComponent<CreateGroupFormProps, CreateG
                     Create Group
                   </>
                 )}
-              </button>
-            </div>
-
-            <div class="pt-2">
-              <button
-                type="button"
-                onClick={onLogout}
-                class="w-full px-4 py-2 bg-[var(--color-bg-secondary)] text-[var(--color-text-tertiary)]
-                       rounded-lg text-sm hover:text-[var(--color-text-secondary)] transition-colors
-                       flex items-center justify-center gap-2"
-              >
-                <span>🚪</span>
-                Sign Out
               </button>
             </div>
           </div>

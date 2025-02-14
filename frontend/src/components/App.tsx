@@ -10,6 +10,7 @@ import { GroupCard } from "./GroupCard";
 import { FlashMessage } from "./FlashMessage";
 import { GroupSidebar } from "./GroupSidebar";
 import { BurgerButton } from "./BurgerButton";
+import { ProfileMenu } from "./ProfileMenu";
 
 // Define NDKKind type since we can't import it
 type NDKKind = number;
@@ -449,10 +450,25 @@ export class App extends Component<AppProps, AppState> {
 
     return (
       <div class="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
-        <BurgerButton
-          isOpen={isMobileMenuOpen}
-          onClick={this.toggleMobileMenu}
-        />
+        {/* Header */}
+        <header class="fixed top-0 left-0 right-0 z-50 h-16 bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)] px-4 lg:px-8">
+          <div class="h-full max-w-screen-2xl mx-auto flex items-center justify-between gap-4">
+            <div class="flex items-center gap-4">
+              <BurgerButton
+                isOpen={isMobileMenuOpen}
+                onClick={this.toggleMobileMenu}
+              />
+              <h1 class="text-xl font-bold">Nostr Groups</h1>
+            </div>
+
+            {/* Profile Menu */}
+            <ProfileMenu
+              client={client}
+              onLogout={onLogout}
+              showMessage={this.showMessage}
+            />
+          </div>
+        </header>
 
         {flashMessage && (
           <FlashMessage
@@ -462,9 +478,7 @@ export class App extends Component<AppProps, AppState> {
           />
         )}
 
-        <div class="container mx-auto px-8 py-8 lg:py-8 pt-16 lg:pt-8">
-          <h1 class="text-2xl font-bold mb-8 text-center lg:text-left">Nostr Groups</h1>
-
+        <div class="container mx-auto px-8 py-8 lg:py-8 pt-24 lg:pt-24">
           <div class="flex flex-col lg:flex-row gap-8">
             {/* Left Sidebar */}
             <div
@@ -482,13 +496,13 @@ export class App extends Component<AppProps, AppState> {
                 client={client}
                 updateGroupsMap={this.updateGroupsMap}
                 showMessage={this.showMessage}
-                onLogout={onLogout}
                 onGroupCreated={this.handleGroupSelect}
               />
               <GroupSidebar
                 groups={groups}
                 selectedGroupId={selectedGroup?.id}
                 onSelectGroup={this.handleGroupSelect}
+                client={client}
               />
             </div>
 

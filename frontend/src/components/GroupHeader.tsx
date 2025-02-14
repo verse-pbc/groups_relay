@@ -20,6 +20,7 @@ interface GroupHeaderState {
   showEditImage: boolean
   editingImage: string
   isUpdatingImage: boolean
+  isAdmin: boolean
 }
 
 export class GroupHeader extends BaseComponent<GroupHeaderProps, GroupHeaderState> {
@@ -33,7 +34,18 @@ export class GroupHeader extends BaseComponent<GroupHeaderProps, GroupHeaderStat
     copiedId: false,
     showEditImage: false,
     editingImage: '',
-    isUpdatingImage: false
+    isUpdatingImage: false,
+    isAdmin: false
+  }
+
+  async componentDidMount() {
+    const user = await this.props.client.ndkInstance.signer?.user();
+    if (user?.pubkey) {
+      const isAdmin = this.props.group.members.some(m =>
+        m.pubkey === user.pubkey && m.roles.includes('Admin')
+      );
+      this.setState({ isAdmin });
+    }
   }
 
   componentWillUnmount() {
@@ -144,7 +156,7 @@ export class GroupHeader extends BaseComponent<GroupHeaderProps, GroupHeaderStat
 
   render() {
     const { group } = this.props
-    const { showEditName, editingName, showConfirmDelete, isDeleting, copiedId, showEditImage, editingImage, isUpdatingImage } = this.state
+    const { showEditName, editingName, showConfirmDelete, isDeleting, copiedId, showEditImage, editingImage, isUpdatingImage, isAdmin } = this.state
 
     return (
       <div class="flex-shrink-0">
@@ -176,6 +188,14 @@ export class GroupHeader extends BaseComponent<GroupHeaderProps, GroupHeaderStat
                   </svg>
                 </div>
               </div>
+              {/* Admin badge */}
+              {isAdmin && (
+                <div class="absolute -bottom-1 -right-1 rounded-full bg-purple-500 p-1 shadow-lg border-2 border-[var(--color-bg-primary)]">
+                  <svg class="w-2.5 h-2.5 text-[var(--color-bg-primary)]" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" />
+                  </svg>
+                </div>
+              )}
             </div>
             <div>
               {showEditName ? (
@@ -205,7 +225,17 @@ export class GroupHeader extends BaseComponent<GroupHeaderProps, GroupHeaderStat
                 </form>
               ) : (
                 <div class="flex items-center gap-2">
-                  <h2 class="text-lg font-medium text-[var(--color-text-primary)]">{group.name}</h2>
+                  <div class="flex items-center gap-2">
+                    <h2 class="text-lg font-medium text-[var(--color-text-primary)]">{group.name}</h2>
+                    {isAdmin && (
+                      <span class="shrink-0 px-1.5 py-0.5 text-[10px] font-medium bg-purple-500/10 text-purple-400 rounded-full border border-purple-500/20 flex items-center gap-1">
+                        <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" />
+                        </svg>
+                        Admin
+                      </span>
+                    )}
+                  </div>
                   <button
                     onClick={() => this.setState({ showEditName: true, editingName: group.name })}
                     class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"

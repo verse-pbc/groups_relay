@@ -7,6 +7,7 @@ interface UserDisplayProps {
   client?: NostrClient
   size?: 'sm' | 'md' | 'lg'
   onCopy?: () => void
+  isRelayAdmin?: boolean
 }
 
 interface UserDisplayState {
@@ -104,13 +105,13 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
   }
 
   render() {
-    const { pubkey, showCopy = true } = this.props
+    const { pubkey, showCopy = true, isRelayAdmin = false } = this.props
     const { profilePicture, displayId, displayName, copied } = this.state
     const sizeClasses = this.getSizeClasses()
 
     return (
       <div class={`flex items-center ${sizeClasses.container}`}>
-        <div class={`shrink-0 ${sizeClasses.image} rounded-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] overflow-hidden`}>
+        <div class={`shrink-0 ${sizeClasses.image} rounded-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] overflow-hidden relative`}>
           {profilePicture ? (
             <img
               src={profilePicture}
@@ -135,6 +136,11 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
         </div>
         <div class={`truncate ${sizeClasses.text} text-[var(--color-text-primary)] flex items-center gap-1.5`}>
           <span title={displayId}>{displayName || this.truncateId(displayId)}</span>
+          {isRelayAdmin && (
+            <span class="shrink-0 px-1.5 py-0.5 text-[10px] font-medium bg-yellow-500/10 text-yellow-500 rounded-full border border-yellow-500/20">
+              Relay Admin
+            </span>
+          )}
           {showCopy && (
             <button
               onClick={this.handleCopy}
