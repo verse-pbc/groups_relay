@@ -91,9 +91,9 @@ export class GroupHeader extends Component<GroupHeaderProps, GroupHeaderState> {
           <div class="flex items-center gap-3">
             <div class="w-10 h-10 bg-[var(--color-bg-primary)] rounded-lg flex items-center justify-center text-lg overflow-hidden">
               {group.picture ? (
-                <img 
-                  src={group.picture} 
-                  alt={group.name || 'Group'} 
+                <img
+                  src={group.picture}
+                  alt={group.name || 'Group'}
                   class="w-full h-full object-cover"
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = 'none';
@@ -146,18 +146,17 @@ export class GroupHeader extends Component<GroupHeaderProps, GroupHeaderState> {
 
           {!showEditName && (
             showConfirmDelete ? (
-              <div class="flex items-center gap-2 text-xs">
+              <div class="flex items-center gap-1">
                 <button
                   onClick={this.handleDeleteGroup}
-                  disabled={isDeleting}
-                  class="text-red-400 hover:text-red-300 transition-colors"
+                  class="text-xs text-red-400 hover:text-red-300 transition-colors"
                 >
-                  {isDeleting ? <span class="animate-spin">⚡</span> : 'Delete'}
+                  Confirm
                 </button>
                 <span class="text-[var(--color-text-tertiary)]">·</span>
                 <button
                   onClick={() => this.setState({ showConfirmDelete: false })}
-                  class="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                  class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
                 >
                   Cancel
                 </button>
@@ -165,9 +164,24 @@ export class GroupHeader extends Component<GroupHeaderProps, GroupHeaderState> {
             ) : (
               <button
                 onClick={() => this.setState({ showConfirmDelete: true })}
-                class="text-xs text-[var(--color-text-tertiary)] hover:text-red-400 transition-colors"
+                disabled={isDeleting}
+                class="text-xs text-[var(--color-text-tertiary)] hover:text-red-400 transition-colors
+                       flex items-center gap-1.5"
+                title="Delete group"
               >
-                Delete Group
+                {isDeleting ? (
+                  <>
+                    <span class="animate-spin">⚡</span>
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </>
+                )}
               </button>
             )
           )}
