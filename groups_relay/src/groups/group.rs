@@ -748,7 +748,10 @@ impl Group {
 
     // State loading methods - used during startup to rebuild state from stored events
     pub fn load_metadata_from_event(&mut self, event: &Event) -> Result<(), Error> {
-        let name = event.tags.find(TagKind::Name).and_then(|t| t.content());
+        let name = event
+            .tags
+            .find(TagKind::custom("name"))
+            .and_then(|t| t.content());
         let about = event
             .tags
             .find(TagKind::custom("about"))
@@ -768,7 +771,7 @@ impl Group {
             closed,
         };
 
-        self.updated_at = event.created_at;
+        self.update_timestamps(event);
         Ok(())
     }
 
@@ -802,14 +805,14 @@ impl Group {
         }
 
         self.update_roles();
-        self.updated_at = event.created_at;
+        self.update_timestamps(event);
         Ok(())
     }
 
     pub fn load_join_request_from_event(&mut self, event: &Event) -> Result<(), Error> {
         if !self.members.contains_key(&event.pubkey) {
             self.join_requests.insert(event.pubkey);
-            self.updated_at = event.created_at;
+            self.update_timestamps(event);
         }
         Ok(())
     }
@@ -831,7 +834,7 @@ impl Group {
             let invite = Invite::new(event.id, roles);
 
             self.invites.insert(code.to_string(), invite);
-            self.updated_at = event.created_at;
+            self.update_timestamps(event);
         }
         Ok(())
     }
@@ -869,6 +872,15 @@ impl Group {
             )));
         }
         Ok(())
+    }
+
+    pub fn update_timestamps(&mut self, event: &Event) {
+        // Only update created_at if this is a group creation event
+        if event.kind == KIND_GROUP_CREATE_9007 {
+            self.created_at = event.created_at;
+        }
+        // Always update updated_at to the latest timestamp
+        self.updated_at = std::cmp::max(self.updated_at, event.created_at);
     }
 }
 
