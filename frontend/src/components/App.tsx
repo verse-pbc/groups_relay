@@ -60,7 +60,7 @@ export class App extends Component<AppProps, AppState> {
         picture: "",
         private: false,
         closed: false,
-        created_at: createdAt,
+        created_at: 0,  // Initialize to 0, will be set when we process the creation event
         updated_at: createdAt,
         members: [],
         invites: {},
@@ -98,7 +98,10 @@ export class App extends Component<AppProps, AppState> {
 
     switch (event.kind) {
       case GroupEventKind.CreateGroup: {
-        updatedGroup = baseGroup;
+        updatedGroup = {
+          ...baseGroup,
+          created_at: event.created_at  // Set created_at only for creation events
+        };
         break;
       }
 

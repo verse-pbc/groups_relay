@@ -1,4 +1,3 @@
-import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
 import { UserDisplay } from './UserDisplay'

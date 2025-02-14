@@ -247,13 +247,19 @@ impl From<&Event> for Group {
             return Self::default();
         };
 
-        Self {
+        let mut group = Self {
             id: group_id.to_string(),
             metadata: GroupMetadata::new(group_id.to_string()),
-            created_at: event.created_at,
             updated_at: event.created_at,
             ..Default::default()
+        };
+
+        // Only set created_at for group creation events
+        if event.kind == KIND_GROUP_CREATE_9007 {
+            group.created_at = event.created_at;
         }
+
+        group
     }
 }
 
@@ -346,17 +352,14 @@ impl Group {
     }
 
     pub fn new(event: &Event) -> Result<Self, Error> {
-        let Some(group_id) = Self::extract_group_id(event) else {
-            return Err(Error::notice("Group ID not found"));
-        };
+        if event.kind != KIND_GROUP_CREATE_9007 {
+            return Err(Error::notice("Invalid event kind for group creation"));
+        }
 
-        let mut group = Self {
-            id: group_id.to_string(),
-            metadata: GroupMetadata::new(group_id.to_string()),
-            created_at: event.created_at,
-            updated_at: event.created_at,
-            ..Default::default()
-        };
+        let mut group = Self::from(event);
+        if group.id.is_empty() {
+            return Err(Error::notice("Group ID not found"));
+        }
 
         // Add the creator as an admin
         group.members.insert(

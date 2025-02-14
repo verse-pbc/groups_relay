@@ -63,7 +63,7 @@ export class NostrClient {
 
       // Separate NDK instance for profile fetching
       this.profileNdk = new NDK({
-        explicitRelayUrls: ["wss://relay.nos.social", "wss://purplepage.es"],
+        explicitRelayUrls: ["wss://relay.nos.social", "wss://purplepag.es"],
       });
 
       this.ndk.pool.on("relay:connect", (relay: NDKRelay) => {
