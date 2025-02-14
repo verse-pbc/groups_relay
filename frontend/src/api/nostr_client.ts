@@ -396,6 +396,44 @@ export class NostrClient {
       );
     }
   }
+
+  async checkIsRelayAdmin(): Promise<boolean> {
+    try {
+      const user = await this.ndkInstance.signer?.user();
+      if (!user?.pubkey) return false;
+
+      const httpUrl = this.config.relayUrl
+        .replace(/^wss?:\/\//, (match) =>
+          match === "ws://" ? "http://" : "https://"
+        )
+        .replace(/\/$/, "");
+
+      const response = await fetch(httpUrl, {
+        method: "GET",
+        mode: "cors",
+        credentials: "omit",
+        headers: {
+          Accept: "application/nostr+json",
+        },
+      });
+
+      const contentType = response.headers.get("content-type");
+      if (
+        response.ok &&
+        (contentType?.includes("application/json") ||
+          contentType?.includes("application/nostr+json"))
+      ) {
+        const relayInfo = await response.json();
+        return relayInfo.pubkey === user.pubkey;
+      }
+
+      console.warn("Unexpected response type:", contentType);
+      return false;
+    } catch (error) {
+      console.error("Failed to check relay admin status:", error);
+      return false;
+    }
+  }
 }
 
 export function hashGroup(group: Group): string {

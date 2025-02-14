@@ -32,22 +32,10 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
     if (user?.pubkey) {
       this.setState({ userPubkey: user.pubkey });
 
-      // Check if user is relay admin
       try {
-        const relayUrl = this.props.client.config.relayUrl;
-        const httpUrl = relayUrl.replace(/^ws/, 'http');
-
-        const response = await fetch(httpUrl, {
-          headers: {
-            'Accept': 'application/nostr+json'
-          }
-        });
-        if (response.ok) {
-          const relayInfo = await response.json();
-          const relayPubkey = relayInfo.pubkey;
-          if (relayPubkey === user.pubkey) {
-            this.setState({ isRelayAdmin: true });
-          }
+        const isAdmin = await this.props.client.checkIsRelayAdmin();
+        if (isAdmin) {
+          this.setState({ isRelayAdmin: true });
         }
       } catch (error) {
         console.error('Failed to check relay admin status:', error);

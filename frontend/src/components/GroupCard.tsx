@@ -23,23 +23,9 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
 
   async componentDidMount() {
     try {
-      const relayUrl = this.props.client.config.relayUrl;
-      // Convert ws:// or wss:// to http:// or https://
-      const httpUrl = relayUrl.replace(/^ws/, 'http');
-
-      const response = await fetch(httpUrl, {
-        headers: {
-          'Accept': 'application/nostr+json'
-        }
-      });
-      if (response.ok) {
-        const relayInfo = await response.json();
-        const relayPubkey = relayInfo.pubkey;
-        const userPubkey = await this.props.client.ndkInstance.signer?.user().then(u => u?.pubkey);
-
-        if (relayPubkey && userPubkey && relayPubkey === userPubkey) {
-          this.setState({ isRelayAdmin: true });
-        }
+      const isAdmin = await this.props.client.checkIsRelayAdmin();
+      if (isAdmin) {
+        this.setState({ isRelayAdmin: true });
       }
     } catch (error) {
       console.error('Failed to check relay admin status:', error);
