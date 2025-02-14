@@ -12,6 +12,7 @@ interface UserDisplayProps {
 interface UserDisplayState {
   profilePicture: string | null
   displayId: string
+  displayName: string | null
   copied: boolean
 }
 
@@ -21,6 +22,7 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
   state = {
     profilePicture: null,
     displayId: '',
+    displayName: null,
     copied: false
   }
 
@@ -42,8 +44,13 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       // If input is npub, convert to hex for profile fetch
       const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
       const profile = await client.fetchProfile(hexPubkey)
-      if (profile?.image) {
-        this.setState({ profilePicture: profile.image })
+      if (profile) {
+        if (profile.image) {
+          this.setState({ profilePicture: profile.image })
+        }
+        // Set display name in order of preference: NIP-05 > Name > null
+        const displayName = profile.nip05 || profile.name || profile.display_name || null
+        this.setState({ displayName })
       }
     }
   }
@@ -98,7 +105,7 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
 
   render() {
     const { pubkey, showCopy = true } = this.props
-    const { profilePicture, displayId, copied } = this.state
+    const { profilePicture, displayId, displayName, copied } = this.state
     const sizeClasses = this.getSizeClasses()
 
     return (
@@ -127,7 +134,7 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
           )}
         </div>
         <div class={`truncate ${sizeClasses.text} text-[var(--color-text-primary)] flex items-center gap-1.5`}>
-          <span>{this.truncateId(displayId)}</span>
+          <span title={displayId}>{displayName || this.truncateId(displayId)}</span>
           {showCopy && (
             <button
               onClick={this.handleCopy}
