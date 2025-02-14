@@ -292,7 +292,7 @@ export class App extends Component<AppProps, AppState> {
           const newSelectedGroup = pendingUpdate?.selectedGroup || (
             this.state.selectedGroup
               ? newGroupsMap.get(this.state.selectedGroup.id) || this.state.selectedGroup
-              : null
+              : sortedGroups.length === 1 ? sortedGroups[0] : null  // Auto-select first group if it's the only one
           );
 
           this.setState({
