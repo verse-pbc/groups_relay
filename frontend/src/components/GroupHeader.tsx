@@ -238,9 +238,13 @@ export class GroupHeader extends BaseComponent<GroupHeaderProps, GroupHeaderStat
                   </div>
                   <button
                     onClick={() => this.setState({ showEditName: true, editingName: group.name })}
-                    class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                    class="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
+                    title="Edit group name"
                   >
-                    Edit
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
                   </button>
                 </div>
               )}
@@ -268,7 +272,7 @@ export class GroupHeader extends BaseComponent<GroupHeaderProps, GroupHeaderStat
               <button
                 onClick={() => this.setState({ showConfirmDelete: true })}
                 disabled={isDeleting}
-                class="text-xs text-[var(--color-text-tertiary)] hover:text-red-400 transition-colors
+                class="text-xs text-red-400 hover:text-red-300 transition-colors
                        flex items-center gap-1.5"
                 title="Delete group"
               >
@@ -279,7 +283,7 @@ export class GroupHeader extends BaseComponent<GroupHeaderProps, GroupHeaderStat
                   </>
                 ) : (
                   <>
-                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <svg class="w-3.5 h-3.5 text-red-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                       <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                       <path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
@@ -302,9 +306,19 @@ export class GroupHeader extends BaseComponent<GroupHeaderProps, GroupHeaderStat
               </code>
               <button
                 onClick={this.copyGroupId}
-                class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                class="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
+                title={copiedId ? "Copied!" : "Copy group ID"}
               >
-                {copiedId ? 'Copied!' : 'Copy'}
+                {copiedId ? (
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M20 6L9 17L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                ) : (
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M8 4v12a2 2 0 002 2h8a2 2 0 002-2V7.242a2 2 0 00-.602-1.43L16.083 2.57A2 2 0 0014.685 2H10a2 2 0 00-2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M16 18v2a2 2 0 01-2 2H6a2 2 0 01-2-2V9a2 2 0 012-2h2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                )}
               </button>
             </div>
           </div>

@@ -77,7 +77,7 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
           <div class="border-b border-[var(--color-border)] pb-3">
             <h3 class="text-base font-semibold leading-6 text-[var(--color-text-primary)] flex items-center gap-2">
               <span class="text-[var(--color-text-secondary)]">⚙️</span>
-              Settings
+              Privacy & Access
             </h3>
           </div>
 
@@ -150,9 +150,13 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
             {!isEditingAbout && (
               <button
                 onClick={this.handleAboutEdit}
-                class="text-sm font-medium text-[var(--color-accent)] hover:text-[var(--color-accent)]/90 transition-colors"
+                class="text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
+                title="Edit description"
               >
-                Edit
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
               </button>
             )}
           </div>
