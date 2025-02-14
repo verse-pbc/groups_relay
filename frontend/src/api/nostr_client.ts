@@ -412,8 +412,11 @@ export class NostrClient {
         method: "GET",
         mode: "cors",
         credentials: "omit",
+        cache: "no-cache",
         headers: {
           Accept: "application/nostr+json",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
         },
       });
 
