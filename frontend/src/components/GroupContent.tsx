@@ -16,25 +16,43 @@ interface GroupContentProps {
 
 interface GroupContentState {
   activeTab: 'content' | 'members' | 'invites' | 'requests'
+  deletedInvites: Set<string>
 }
 
 export class GroupContent extends Component<GroupContentProps, GroupContentState> {
   state: GroupContentState = {
-    activeTab: 'content'
+    activeTab: 'content',
+    deletedInvites: new Set<string>()
   }
 
   handleTabChange = (tab: 'content' | 'members' | 'invites' | 'requests') => {
     this.setState({ activeTab: tab })
   }
 
+  handleInviteDelete = (code: string) => {
+    this.setState(prevState => ({
+      deletedInvites: new Set([...prevState.deletedInvites, code])
+    }))
+  }
+
   render() {
     const { group, client, showMessage, updateGroupsMap } = this.props
-    const { activeTab } = this.state
+    const { activeTab, deletedInvites } = this.state
+
+    // Filter invites for both the tabs and invite section
+    const filteredInvites = Object.entries(group.invites || {})
+      .filter(([code]) => !deletedInvites.has(code))
+      .reduce((acc, [code, invite]) => ({ ...acc, [code]: invite }), {})
+
+    const groupWithFilteredInvites = {
+      ...group,
+      invites: filteredInvites
+    }
 
     return (
       <div class="flex flex-col flex-1">
         <GroupTabs
-          group={group}
+          group={groupWithFilteredInvites}
           activeTab={activeTab}
           onTabChange={this.handleTabChange}
         />
@@ -56,10 +74,11 @@ export class GroupContent extends Component<GroupContentProps, GroupContentState
           )}
           {activeTab === 'invites' && (
             <InviteSection
-              group={group}
+              group={groupWithFilteredInvites}
               client={client}
               updateGroupsMap={updateGroupsMap}
               showMessage={showMessage}
+              onInviteDelete={this.handleInviteDelete}
             />
           )}
           {activeTab === 'requests' && (

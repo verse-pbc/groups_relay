@@ -131,6 +131,25 @@ export class App extends Component<AppProps, AppState> {
         break;
       }
 
+      case GroupEventKind.CreateInvite: {
+        const codeTag = event.tags.find((t: string[]) => t[0] === "code");
+        if (codeTag) {
+          const [_, code] = codeTag;
+          const invites = { ...baseGroup.invites };
+          invites[code] = {
+            code,
+            pubkey: event.pubkey,
+            roles: ["member"],
+            id: event.id
+          };
+          updatedGroup = {
+            ...baseGroup,
+            invites
+          };
+        }
+        break;
+      }
+
       case 39000: { // Group metadata
         const newMetadata: Partial<Group> = {};
         for (const [tag, value] of event.tags) {
@@ -190,7 +209,7 @@ export class App extends Component<AppProps, AppState> {
         break;
       }
 
-      case 39002: { // Group members
+      case 39002: { // Group members metadata
         const existingRoles = new Map(
           baseGroup.members.map(member => [member.pubkey, [...member.roles]])
         );
@@ -241,22 +260,30 @@ export class App extends Component<AppProps, AppState> {
         break;
       }
 
+      case GroupEventKind.JoinRequest: {
+        // Only add the join request if the user isn't already a member
+        // and if this event is newer than our last metadata update
+        if (!baseGroup.members.some(member => member.pubkey === event.pubkey)) {
+          const updatedJoinRequests = [...baseGroup.joinRequests];
+          if (!updatedJoinRequests.includes(event.pubkey)) {
+            updatedJoinRequests.push(event.pubkey);
+          }
+          updatedGroup = {
+            ...baseGroup,
+            joinRequests: updatedJoinRequests
+          };
+        }
+        break;
+      }
+
       default: {
         updatedGroup = baseGroup;
         break;
       }
     }
 
-
     if (updatedGroup) {
-      if (updatedGroup.members.length > 0 || !groupsMap.has(groupId)) {
-        groupsMap.set(groupId, updatedGroup);
-      } else {
-        groupsMap.set(groupId, {
-          ...updatedGroup,
-          members: group.members // Keep existing members if update would clear them
-        });
-      }
+      groupsMap.set(groupId, updatedGroup);
     }
 
     return groupsMap;
@@ -273,8 +300,6 @@ export class App extends Component<AppProps, AppState> {
               11,
               GroupEventKind.CreateGroup,
               GroupEventKind.CreateInvite,
-              GroupEventKind.PutUser,
-              GroupEventKind.RemoveUser,
               GroupEventKind.JoinRequest,
             ].map((k) => k as NDKKind),
           },
