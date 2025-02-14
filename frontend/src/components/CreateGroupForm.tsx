@@ -7,6 +7,7 @@ interface CreateGroupFormProps {
   client: NostrClient
   showMessage: (message: string, type: 'success' | 'error' | 'info') => void
   onLogout: () => void
+  onGroupCreated?: (group: Group) => void
 }
 
 interface CreateGroupFormState {
@@ -80,6 +81,11 @@ export class CreateGroupForm extends Component<CreateGroupFormProps, CreateGroup
 
         groupsMap.set(group.id, groupCopy);
       })
+
+      // Queue the group for selection
+      if (this.props.onGroupCreated) {
+        this.props.onGroupCreated(group);
+      }
 
       this.setState({
         groupId: generateGroupId(),

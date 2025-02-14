@@ -32,6 +32,7 @@ interface AppState {
   groupsMap: Map<string, Group>;
   selectedGroup: Group | null;
   isMobileMenuOpen: boolean;
+  pendingGroupSelection: string | null;  // Queue of one for simplicity
 }
 
 export class App extends Component<AppProps, AppState> {
@@ -45,6 +46,7 @@ export class App extends Component<AppProps, AppState> {
       groupsMap: new Map(),
       selectedGroup: null,
       isMobileMenuOpen: false,
+      pendingGroupSelection: null,
     };
   }
 
@@ -223,9 +225,14 @@ export class App extends Component<AppProps, AppState> {
           created_at: event.created_at,
         };
 
+        // Sort content by created_at in ascending order (oldest first)
+        const allContent = [...(baseGroup.content || []), content]
+          .sort((a, b) => a.created_at - b.created_at)
+          .slice(-50);  // Keep last 50 messages
+
         updatedGroup = {
           ...baseGroup,
-          content: [content, ...(baseGroup.content || [])].slice(0, 50)
+          content: allContent
         };
         break;
       }
@@ -235,6 +242,7 @@ export class App extends Component<AppProps, AppState> {
         break;
       }
     }
+
 
     if (updatedGroup) {
       if (updatedGroup.members.length > 0 || !groupsMap.has(groupId)) {
@@ -277,13 +285,21 @@ export class App extends Component<AppProps, AppState> {
             (a, b) => b.created_at - a.created_at
           );
 
-          // Auto-select the only group if there's exactly one
-          const newSelectedGroup = sortedGroups.length === 1 ? sortedGroups[0] : this.state.selectedGroup;
+          // Check if we can fulfill any pending selection
+          const pendingUpdate = this.checkPendingSelection(newGroupsMap);
+
+          // Only update the selected group reference if we have one selected
+          const newSelectedGroup = pendingUpdate?.selectedGroup || (
+            this.state.selectedGroup
+              ? newGroupsMap.get(this.state.selectedGroup.id) || this.state.selectedGroup
+              : null
+          );
 
           this.setState({
             groupsMap: newGroupsMap,
             groups: sortedGroups,
-            selectedGroup: newSelectedGroup
+            selectedGroup: newSelectedGroup,
+            ...(pendingUpdate || {})
           });
         });
 
@@ -378,10 +394,21 @@ export class App extends Component<AppProps, AppState> {
   };
 
   handleGroupSelect = (group: Group) => {
-    this.setState({ 
-      selectedGroup: group,
-      isMobileMenuOpen: false // Close mobile menu when selecting a group
-    });
+    // If the group exists in the map, select it immediately
+    const existingGroup = this.state.groupsMap.get(group.id);
+    if (existingGroup) {
+      this.setState({
+        selectedGroup: existingGroup,
+        isMobileMenuOpen: false,
+        pendingGroupSelection: null
+      });
+    } else {
+      // Otherwise, queue it for selection when it becomes available
+      this.setState({
+        pendingGroupSelection: group.id,
+        isMobileMenuOpen: false
+      });
+    }
   };
 
   showMessage = (
@@ -397,6 +424,21 @@ export class App extends Component<AppProps, AppState> {
     this.setState({ flashMessage: null });
   };
 
+  // Add method to check pending selections
+  private checkPendingSelection = (groupsMap: Map<string, Group>) => {
+    const { pendingGroupSelection } = this.state;
+    if (pendingGroupSelection) {
+      const group = groupsMap.get(pendingGroupSelection);
+      if (group) {
+        return {
+          selectedGroup: group,
+          pendingGroupSelection: null
+        };
+      }
+    }
+    return null;
+  }
+
   render() {
     const { client, onLogout } = this.props;
     const { flashMessage, groupsMap, selectedGroup, isMobileMenuOpen } = this.state;
@@ -404,9 +446,9 @@ export class App extends Component<AppProps, AppState> {
 
     return (
       <div class="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
-        <BurgerButton 
-          isOpen={isMobileMenuOpen} 
-          onClick={this.toggleMobileMenu} 
+        <BurgerButton
+          isOpen={isMobileMenuOpen}
+          onClick={this.toggleMobileMenu}
         />
 
         {flashMessage && (
@@ -416,15 +458,15 @@ export class App extends Component<AppProps, AppState> {
             onDismiss={this.dismissMessage}
           />
         )}
-        
+
         <div class="container mx-auto px-8 py-8 lg:py-8 pt-16 lg:pt-8">
           <h1 class="text-2xl font-bold mb-8 text-center lg:text-left">Nostr Groups</h1>
-          
+
           <div class="flex flex-col lg:flex-row gap-8">
             {/* Left Sidebar */}
-            <div 
+            <div
               class={`
-                fixed lg:relative inset-0 z-40 
+                fixed lg:relative inset-0 z-40
                 lg:w-80 lg:flex-shrink-0
                 transform transition-transform duration-300 ease-in-out
                 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
@@ -438,6 +480,7 @@ export class App extends Component<AppProps, AppState> {
                 updateGroupsMap={this.updateGroupsMap}
                 showMessage={this.showMessage}
                 onLogout={onLogout}
+                onGroupCreated={this.handleGroupSelect}
               />
               <GroupSidebar
                 groups={groups}
@@ -448,7 +491,7 @@ export class App extends Component<AppProps, AppState> {
 
             {/* Overlay for mobile */}
             {isMobileMenuOpen && (
-              <div 
+              <div
                 class="fixed inset-0 z-30 bg-black bg-opacity-50 lg:hidden"
                 onClick={this.toggleMobileMenu}
               />
