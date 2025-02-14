@@ -1,6 +1,6 @@
-import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import { Group } from '../types'
+import { BaseComponent } from './BaseComponent'
 
 interface CreateGroupFormProps {
   updateGroupsMap: (updater: (map: Map<string, Group>) => void) => void
@@ -26,7 +26,7 @@ function generateGroupId(): string {
   ).join('')
 }
 
-export class CreateGroupForm extends Component<CreateGroupFormProps, CreateGroupFormState> {
+export class CreateGroupForm extends BaseComponent<CreateGroupFormProps, CreateGroupFormState> {
   constructor(props: CreateGroupFormProps) {
     super(props)
     this.state = {
@@ -97,7 +97,7 @@ export class CreateGroupForm extends Component<CreateGroupFormProps, CreateGroup
       this.props.showMessage('Group created successfully!', 'success')
     } catch (error) {
       console.error('Failed to create group:', error)
-      this.props.showMessage('Failed to create group: ' + error, 'error')
+      this.showError('Failed to create group', error)
     } finally {
       this.setState({ isSubmitting: false })
     }

@@ -2,6 +2,7 @@ import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
 import { UserDisplay } from './UserDisplay'
+import { BaseComponent } from './BaseComponent'
 
 interface ContentSectionProps {
   group: Group
@@ -14,7 +15,7 @@ interface ContentSectionState {
   showConfirmDelete: string | null
 }
 
-export class ContentSection extends Component<ContentSectionProps, ContentSectionState> {
+export class ContentSection extends BaseComponent<ContentSectionProps, ContentSectionState> {
   state = {
     deletingEvents: new Set<string>(),
     showConfirmDelete: null
@@ -32,7 +33,7 @@ export class ContentSection extends Component<ContentSectionProps, ContentSectio
       this.props.showMessage('Event deleted successfully', 'success')
     } catch (error) {
       console.error('Failed to delete event:', error)
-      this.props.showMessage('Failed to delete event: ' + error, 'error')
+      this.showError('Failed to delete event', error)
     } finally {
       this.setState(prev => {
         const newSet = new Set(prev.deletingEvents)

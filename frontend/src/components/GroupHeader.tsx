@@ -1,8 +1,8 @@
-import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
 import { GroupInfo } from './GroupInfo'
 import { GroupTimestamps } from './GroupTimestamps'
+import { BaseComponent } from './BaseComponent'
 
 interface GroupHeaderProps {
   group: Group
@@ -17,9 +17,12 @@ interface GroupHeaderState {
   showConfirmDelete: boolean
   isDeleting: boolean
   copiedId: boolean
+  showEditImage: boolean
+  editingImage: string
+  isUpdatingImage: boolean
 }
 
-export class GroupHeader extends Component<GroupHeaderProps, GroupHeaderState> {
+export class GroupHeader extends BaseComponent<GroupHeaderProps, GroupHeaderState> {
   private copyTimeout: number | null = null;
 
   state = {
@@ -27,13 +30,46 @@ export class GroupHeader extends Component<GroupHeaderProps, GroupHeaderState> {
     editingName: '',
     showConfirmDelete: false,
     isDeleting: false,
-    copiedId: false
+    copiedId: false,
+    showEditImage: false,
+    editingImage: '',
+    isUpdatingImage: false
   }
 
   componentWillUnmount() {
     if (this.copyTimeout) {
       window.clearTimeout(this.copyTimeout)
     }
+    if (this.state.showEditImage) {
+      this.removeEscapeListener();
+    }
+  }
+
+  private handleEscapeKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      this.setState({ showEditImage: false });
+    }
+  }
+
+  private addEscapeListener = () => {
+    document.addEventListener('keydown', this.handleEscapeKey);
+  }
+
+  private removeEscapeListener = () => {
+    document.removeEventListener('keydown', this.handleEscapeKey);
+  }
+
+  private handleShowEditImage = () => {
+    this.setState({
+      showEditImage: true,
+      editingImage: this.props.group.picture || ''
+    });
+    this.addEscapeListener();
+  }
+
+  private handleHideEditImage = () => {
+    this.setState({ showEditImage: false });
+    this.removeEscapeListener();
   }
 
   copyGroupId = () => {
@@ -63,7 +99,7 @@ export class GroupHeader extends Component<GroupHeaderProps, GroupHeaderState> {
       this.props.showMessage('Group name updated successfully!', 'success')
     } catch (error) {
       console.error('Failed to update group name:', error)
-      this.props.showMessage('Failed to update group name: ' + error, 'error')
+      this.showError('Failed to update group name', error)
     }
   }
 
@@ -75,34 +111,71 @@ export class GroupHeader extends Component<GroupHeaderProps, GroupHeaderState> {
       this.props.onDelete?.(this.props.group.id)
     } catch (error) {
       console.error('Failed to delete group:', error)
-      this.props.showMessage('Failed to delete group: ' + error, 'error')
+      this.showError('Failed to delete group', error)
     } finally {
       this.setState({ isDeleting: false, showConfirmDelete: false })
     }
   }
 
+  handleImageSubmit = async (e: Event) => {
+    e.preventDefault();
+    if (!this.state.editingImage.trim() || this.state.editingImage === this.props.group.picture) {
+      this.handleHideEditImage();
+      return;
+    }
+
+    this.setState({ isUpdatingImage: true });
+    try {
+      await this.props.client.updateGroupMetadata({
+        ...this.props.group,
+        picture: this.state.editingImage
+      });
+      this.props.group.picture = this.state.editingImage;
+      this.handleHideEditImage();
+      this.props.showMessage('Group image updated successfully!', 'success');
+    } catch (error) {
+      console.error('Failed to update group image:', error);
+      this.showError('Failed to update group image', error);
+      this.handleHideEditImage();
+    } finally {
+      this.setState({ isUpdatingImage: false });
+    }
+  }
+
   render() {
     const { group } = this.props
-    const { showEditName, editingName, showConfirmDelete, isDeleting, copiedId } = this.state
+    const { showEditName, editingName, showConfirmDelete, isDeleting, copiedId, showEditImage, editingImage, isUpdatingImage } = this.state
 
     return (
       <div class="flex-shrink-0">
         <div class="flex items-center justify-between p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 bg-[var(--color-bg-primary)] rounded-lg flex items-center justify-center text-lg overflow-hidden">
-              {group.picture ? (
-                <img
-                  src={group.picture}
-                  alt={group.name || 'Group'}
-                  class="w-full h-full object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = 'none';
-                    e.currentTarget.parentElement!.textContent = group.name?.charAt(0).toUpperCase() || 'G';
-                  }}
-                />
-              ) : (
-                group.name?.charAt(0).toUpperCase() || 'G'
-              )}
+            <div class="relative group">
+              <div
+                class="w-10 h-10 bg-[var(--color-bg-primary)] rounded-lg flex items-center justify-center text-lg overflow-hidden cursor-pointer"
+                onClick={this.handleShowEditImage}
+              >
+                {group.picture ? (
+                  <img
+                    src={group.picture}
+                    alt={group.name || 'Group'}
+                    class="w-full h-full object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = 'none';
+                      e.currentTarget.parentElement!.textContent = group.name?.charAt(0).toUpperCase() || 'G';
+                    }}
+                  />
+                ) : (
+                  group.name?.charAt(0).toUpperCase() || 'G'
+                )}
+                {/* Hover overlay */}
+                <div class="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <svg class="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </div>
+              </div>
             </div>
             <div>
               {showEditName ? (
@@ -214,6 +287,76 @@ export class GroupHeader extends Component<GroupHeaderProps, GroupHeaderState> {
 
           <GroupTimestamps group={group} />
         </div>
+
+        {/* Image Edit Modal */}
+        {showEditImage && (
+          <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-[var(--color-bg-secondary)] rounded-lg shadow-xl max-w-md w-full p-4 space-y-4">
+              <h3 class="text-lg font-medium text-[var(--color-text-primary)]">Edit Group Image</h3>
+              <form onSubmit={this.handleImageSubmit} class="space-y-4">
+                <div class="space-y-2">
+                  <label class="block text-sm font-medium text-[var(--color-text-secondary)]">
+                    Image URL
+                  </label>
+                  <input
+                    type="url"
+                    value={editingImage}
+                    onInput={(e) => this.setState({ editingImage: (e.target as HTMLInputElement).value })}
+                    placeholder="Enter image URL"
+                    class="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)]
+                           text-sm rounded-lg text-[var(--color-text-primary)]
+                           placeholder-[var(--color-text-tertiary)]
+                           focus:outline-none focus:ring-1 focus:ring-accent
+                           hover:border-[var(--color-border-hover)] transition-colors"
+                    disabled={isUpdatingImage}
+                  />
+                </div>
+
+                {/* Preview */}
+                {editingImage && (
+                  <div class="relative w-20 h-20 mx-auto">
+                    <img
+                      src={editingImage}
+                      alt="Preview"
+                      class="w-full h-full object-cover rounded-lg"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                        e.currentTarget.parentElement!.textContent = 'Invalid URL';
+                      }}
+                    />
+                  </div>
+                )}
+
+                <div class="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={this.handleHideEditImage}
+                    class="px-4 py-2 text-sm text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                    disabled={isUpdatingImage}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!editingImage.trim() || isUpdatingImage}
+                    class="px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium
+                           hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed
+                           transition-colors flex items-center gap-2"
+                  >
+                    {isUpdatingImage ? (
+                      <>
+                        <span class="animate-spin">⚡</span>
+                        Updating...
+                      </>
+                    ) : (
+                      'Save'
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     )
   }

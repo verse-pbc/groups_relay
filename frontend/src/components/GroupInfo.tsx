@@ -1,6 +1,6 @@
-import { Component } from 'preact'
-import type { Group } from '../types'
 import { NostrClient } from '../api/nostr_client'
+import type { Group } from '../types'
+import { BaseComponent } from './BaseComponent'
 
 interface GroupInfoProps {
   group: Group
@@ -8,7 +8,12 @@ interface GroupInfoProps {
   showMessage: (message: string, type: 'success' | 'error' | 'info') => void
 }
 
-export class GroupInfo extends Component<GroupInfoProps> {
+interface GroupInfoState {
+  isEditingAbout: boolean
+  newAbout: string
+}
+
+export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
   state = {
     isEditingAbout: false,
     newAbout: ''
@@ -36,7 +41,7 @@ export class GroupInfo extends Component<GroupInfoProps> {
       this.props.showMessage('Group description updated successfully!', 'success')
     } catch (error) {
       console.error('Failed to update group description:', error)
-      this.props.showMessage('Failed to update group description: ' + error, 'error')
+      this.showError('Failed to update group description', error)
     }
   }
 
@@ -57,7 +62,7 @@ export class GroupInfo extends Component<GroupInfoProps> {
       }
     } catch (error) {
       console.error('Failed to update group settings:', error)
-      this.props.showMessage('Failed to update group settings: ' + error, 'error')
+      this.showError('Failed to update group settings', error)
     }
   }
 
