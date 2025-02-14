@@ -1,7 +1,7 @@
 import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
-import { PubkeyDisplay } from './PubkeyDisplay'
+import { UserDisplay } from './UserDisplay'
 
 interface ContentSectionProps {
   group: Group
@@ -104,7 +104,13 @@ export class ContentSection extends Component<ContentSectionProps, ContentSectio
                 <div class="flex items-start gap-1.5">
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center text-[11px] gap-1.5 text-[var(--color-text-tertiary)]">
-                      <PubkeyDisplay pubkey={item.pubkey} showCopy={false} />
+                      <UserDisplay
+                        pubkey={this.props.client.pubkeyToNpub(item.pubkey)}
+                        client={this.props.client}
+                        showCopy={true}
+                        size="sm"
+                        onCopy={() => this.props.showMessage('Npub copied to clipboard', 'success')}
+                      />
                       <span>·</span>
                       <span>
                         {this.formatTimestamp(item.created_at)}
