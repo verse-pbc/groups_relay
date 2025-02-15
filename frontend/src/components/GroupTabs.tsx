@@ -3,8 +3,8 @@ import type { Group } from '../types'
 
 interface GroupTabsProps {
   group: Group
-  activeTab: 'content' | 'members' | 'invites' | 'requests'
-  onTabChange: (tab: 'content' | 'members' | 'invites' | 'requests') => void
+  activeTab: 'content' | 'members' | 'invites' | 'requests' | 'info'
+  onTabChange: (tab: 'content' | 'members' | 'invites' | 'requests' | 'info') => void
 }
 
 export class GroupTabs extends Component<GroupTabsProps> {
@@ -21,7 +21,7 @@ export class GroupTabs extends Component<GroupTabsProps> {
               : 'text-[#8484ac] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
           }`}
         >
-          Content {group.content?.length ? `(${group.content.length})` : ''}
+          💬 Activity {group.content?.length ? `(${group.content.length})` : ''}
         </button>
         <button
           onClick={() => onTabChange('members')}
@@ -31,7 +31,7 @@ export class GroupTabs extends Component<GroupTabsProps> {
               : 'text-[#8484ac] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
           }`}
         >
-          Members {group.members?.length ? `(${group.members.length})` : ''}
+          👥 Members {group.members?.length ? `(${group.members.length})` : ''}
         </button>
         <button
           onClick={() => onTabChange('invites')}
@@ -41,7 +41,7 @@ export class GroupTabs extends Component<GroupTabsProps> {
               : 'text-[#8484ac] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
           }`}
         >
-          Invites {group.invites ? `(${Object.keys(group.invites).length})` : ''}
+          ✉️ Invites {group.invites ? `(${Object.keys(group.invites).length})` : ''}
         </button>
         <button
           onClick={() => onTabChange('requests')}
@@ -51,7 +51,17 @@ export class GroupTabs extends Component<GroupTabsProps> {
               : 'text-[#8484ac] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
           }`}
         >
-          Requests {group.joinRequests?.length ? `(${group.joinRequests.length})` : ''}
+          🔔 Requests {group.joinRequests?.length ? `(${group.joinRequests.length})` : ''}
+        </button>
+        <button
+          onClick={() => onTabChange('info')}
+          class={`shrink-0 text-sm font-medium px-3 py-1.5 rounded-full transition-all ${
+            activeTab === 'info'
+              ? 'text-white bg-[var(--color-accent)]/10'
+              : 'text-[#8484ac] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]'
+          }`}
+        >
+          ℹ️ Info
         </button>
       </div>
     )

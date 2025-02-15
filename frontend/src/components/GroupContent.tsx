@@ -5,6 +5,7 @@ import { ContentSection } from './ContentSection'
 import { MembersSection } from './MembersSection'
 import { InviteSection } from './InviteSection'
 import { JoinRequestSection } from './JoinRequestSection'
+import { InfoSection } from './InfoSection'
 import { GroupTabs } from './GroupTabs'
 
 interface GroupContentProps {
@@ -14,16 +15,18 @@ interface GroupContentProps {
   updateGroupsMap: (updater: (map: Map<string, Group>) => void) => void
 }
 
+type TabType = 'content' | 'members' | 'invites' | 'requests' | 'info'
+
 interface GroupContentState {
-  activeTab: 'content' | 'members' | 'invites' | 'requests'
+  activeTab: TabType
 }
 
 export class GroupContent extends Component<GroupContentProps, GroupContentState> {
   state = {
-    activeTab: 'content' as const
+    activeTab: 'content' as TabType
   }
 
-  handleTabChange = (tab: 'content' | 'members' | 'invites' | 'requests') => {
+  handleTabChange = (tab: TabType) => {
     this.setState({ activeTab: tab })
   }
 
@@ -39,7 +42,7 @@ export class GroupContent extends Component<GroupContentProps, GroupContentState
           onTabChange={this.handleTabChange}
         />
 
-        <div class="flex-grow">
+        <div class="flex-grow px-6 py-6">
           {activeTab === 'content' && (
             <ContentSection
               group={group}
@@ -66,6 +69,12 @@ export class GroupContent extends Component<GroupContentProps, GroupContentState
             <JoinRequestSection
               group={group}
               client={client}
+              showMessage={showMessage}
+            />
+          )}
+          {activeTab === 'info' && (
+            <InfoSection
+              group={group}
               showMessage={showMessage}
             />
           )}

@@ -17,7 +17,7 @@ export class GroupCard extends Component<GroupCardProps> {
     const { group, client, showMessage, onDelete, updateGroupsMap } = this.props
 
     return (
-      <article class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] overflow-hidden flex flex-col">
+      <article class="h-full bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] overflow-hidden flex flex-col">
         <GroupHeader
           group={group}
           client={client}

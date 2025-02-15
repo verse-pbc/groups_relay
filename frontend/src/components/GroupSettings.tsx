@@ -55,10 +55,10 @@ export class GroupSettings extends Component<GroupSettingsProps, GroupSettingsSt
     const { showConfirmDelete, isDeleting } = this.state
 
     return (
-      <div class="space-y-6">
+      <div class="max-w-lg space-y-6">
         {/* Settings */}
         <div>
-          <div class="border-b border-[var(--color-border)] pb-3">
+          <div>
             <h3 class="text-base font-semibold leading-6 text-[var(--color-text-primary)] flex items-center gap-2">
               <span class="text-[var(--color-text-secondary)]">⚙️</span>
               Settings

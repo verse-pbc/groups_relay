@@ -417,15 +417,15 @@ export class App extends Component<AppProps, AppState> {
           />
         )}
         
-        <div class="container mx-auto px-8 py-8 lg:py-8 pt-16 lg:pt-8">
+        <div class="container mx-auto max-w-5xl px-8 py-8 lg:py-8 pt-16 lg:pt-8 min-h-screen">
           <h1 class="text-2xl font-bold mb-8 text-center lg:text-left">Nostr Groups</h1>
           
-          <div class="flex flex-col lg:flex-row gap-8">
+          <div class="flex flex-col lg:flex-row gap-8 min-h-[calc(100vh-9rem)]">
             {/* Left Sidebar */}
             <div 
               class={`
                 fixed lg:relative inset-0 z-40 
-                lg:w-80 lg:flex-shrink-0
+                w-full lg:w-72 lg:flex-none
                 transform transition-transform duration-300 ease-in-out
                 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
                 bg-[var(--color-bg-primary)] lg:bg-transparent
@@ -455,7 +455,7 @@ export class App extends Component<AppProps, AppState> {
             )}
 
             {/* Main Content */}
-            <div class="flex-grow">
+            <div class="flex-grow lg:min-h-full">
               {selectedGroup ? (
                 <GroupCard
                   group={selectedGroup}

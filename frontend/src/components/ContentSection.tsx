@@ -86,14 +86,7 @@ export class ContentSection extends Component<ContentSectionProps, ContentSectio
 
     return (
       <div class="h-full flex flex-col overflow-hidden">
-        <div class="p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
-          <h3 class="text-sm font-medium text-[var(--color-text-primary)] flex items-center gap-2">
-            <span>💬</span>
-            Recent Activity
-          </h3>
-        </div>
-
-        <div class="flex-1 overflow-y-auto p-4">
+        <div class="flex-1 overflow-y-auto">
           <div class="space-y-3">
             {content.map((item) => (
               <div
