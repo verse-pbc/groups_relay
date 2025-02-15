@@ -7,6 +7,7 @@ interface InviteSectionProps {
   client: NostrClient
   updateGroupsMap: (updater: (map: Map<string, Group>) => void) => void
   showMessage: (message: string, type: 'success' | 'error' | 'info') => void
+  onInviteDelete: (code: string) => void
 }
 
 interface InviteSectionState {
@@ -91,10 +92,16 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
       await this.props.client.deleteEvent(this.props.group.id, invite.id)
       this.props.updateGroupsMap(groupsMap => {
         const group = groupsMap.get(this.props.group.id)
-        if (group?.invites) {
-          delete group.invites[code]
+        if (group) {
+          const updatedGroup = {
+            ...group,
+            invites: { ...group.invites }
+          }
+          delete updatedGroup.invites[code]
+          groupsMap.set(group.id, updatedGroup)
         }
       })
+      this.props.onInviteDelete(code)
       this.props.showMessage('Invite deleted successfully', 'success')
     } catch (error) {
       this.showError('Failed to delete invite', error)
@@ -172,49 +179,61 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
         <div class="space-y-2">
           {hasInvites ? (
             <ul class="space-y-2">
-              {Object.entries(invites).map(([code, invite]) => (
+              {Object.entries(invites).map(([code]) => (
                 <li key={code} class="group p-3 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]
                                    hover:border-[var(--color-border-hover)] transition-all duration-150">
-                  <div class="space-y-2">
-                    <div class="flex items-center justify-between gap-2">
-                      <div class="flex items-center gap-2">
-                        <span class="text-sm font-mono text-[var(--color-text-primary)]">
-                          {code}
-                        </span>
-                        {invite.pubkey && (
-                          <span class="text-xs text-[var(--color-text-tertiary)]">
-                            • Used
-                          </span>
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-mono text-[var(--color-text-primary)]">
+                        {code}
+                      </span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button
+                        onClick={() => this.copyInviteLink(code)}
+                        class="opacity-0 group-hover:opacity-100 text-[11px] text-[var(--color-text-tertiary)]
+                               hover:text-[var(--color-text-secondary)] transition-all duration-150 flex items-center gap-1"
+                      >
+                        {showCopied ? (
+                          <>
+                            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M20 6L9 17L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            Copied!
+                          </>
+                        ) : (
+                          <>
+                            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M8 4v12a2 2 0 002 2h8a2 2 0 002-2V7.242a2 2 0 00-.602-1.43L16.083 2.57A2 2 0 0014.685 2H10a2 2 0 00-2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                              <path d="M16 18v2a2 2 0 01-2 2H6a2 2 0 01-2-2V9a2 2 0 012-2h2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            Copy Join Link
+                          </>
                         )}
-                      </div>
-                      <div class="flex items-center gap-1">
-                        <button
-                          onClick={() => this.copyInviteLink(code)}
-                          class="opacity-0 group-hover:opacity-100 text-xs text-[var(--color-text-tertiary)]
-                                 hover:text-[var(--color-text-secondary)] transition-all"
-                        >
-                          {showCopied ? 'Copied!' : 'Copy Join Link'}
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (inviteAction?.type === 'delete' && inviteAction.code === code) {
-                              this.handleDeleteInvite(code)
-                            } else {
-                              this.setState({ inviteAction: { type: 'delete', code } })
-                            }
-                          }}
-                          class={`text-[11px] opacity-0 group-hover:opacity-100 transition-all duration-150
-                                 ${inviteAction?.type === 'delete' && inviteAction.code === code
-                                   ? 'text-red-400 hover:text-red-300'
-                                   : 'text-[var(--color-text-tertiary)] hover:text-red-400'}`}
-                        >
-                          {inviteAction?.type === 'delete' && inviteAction.code === code ? (
-                            'Delete?'
-                          ) : (
-                            '×'
-                          )}
-                        </button>
-                      </div>
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (inviteAction?.type === 'delete' && inviteAction.code === code) {
+                            this.handleDeleteInvite(code)
+                          } else {
+                            this.setState({ inviteAction: { type: 'delete', code } })
+                          }
+                        }}
+                        class={`opacity-0 group-hover:opacity-100 text-[11px] transition-all duration-150 flex items-center gap-1
+                               ${inviteAction?.type === 'delete' && inviteAction.code === code
+                                 ? 'text-red-400 hover:text-red-300'
+                                 : 'text-red-400 hover:text-red-300'}`}
+                        title="Delete invite"
+                      >
+                        {inviteAction?.type === 'delete' && inviteAction.code === code ? (
+                          'Confirm'
+                        ) : (
+                          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                          </svg>
+                        )}
+                      </button>
                     </div>
                   </div>
                 </li>

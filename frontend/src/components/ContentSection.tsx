@@ -1,7 +1,7 @@
-import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
-import { PubkeyDisplay } from './PubkeyDisplay'
+import { UserDisplay } from './UserDisplay'
+import { BaseComponent } from './BaseComponent'
 
 interface ContentSectionProps {
   group: Group
@@ -14,7 +14,7 @@ interface ContentSectionState {
   showConfirmDelete: string | null
 }
 
-export class ContentSection extends Component<ContentSectionProps, ContentSectionState> {
+export class ContentSection extends BaseComponent<ContentSectionProps, ContentSectionState> {
   state = {
     deletingEvents: new Set<string>(),
     showConfirmDelete: null
@@ -32,7 +32,7 @@ export class ContentSection extends Component<ContentSectionProps, ContentSectio
       this.props.showMessage('Event deleted successfully', 'success')
     } catch (error) {
       console.error('Failed to delete event:', error)
-      this.props.showMessage('Failed to delete event: ' + error, 'error')
+      this.showError('Failed to delete event', error)
     } finally {
       this.setState(prev => {
         const newSet = new Set(prev.deletingEvents)
@@ -97,7 +97,13 @@ export class ContentSection extends Component<ContentSectionProps, ContentSectio
                 <div class="flex items-start gap-1.5">
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center text-[11px] gap-1.5 text-[var(--color-text-tertiary)]">
-                      <PubkeyDisplay pubkey={item.pubkey} showCopy={false} />
+                      <UserDisplay
+                        pubkey={this.props.client.pubkeyToNpub(item.pubkey)}
+                        client={this.props.client}
+                        showCopy={true}
+                        size="sm"
+                        onCopy={() => this.props.showMessage('Npub copied to clipboard', 'success')}
+                      />
                       <span>·</span>
                       <span>
                         {this.formatTimestamp(item.created_at)}
@@ -128,13 +134,17 @@ export class ContentSection extends Component<ContentSectionProps, ContentSectio
                     <button
                       onClick={() => this.setState({ showConfirmDelete: item.id })}
                       disabled={deletingEvents.has(item.id)}
-                      class="text-[11px] opacity-0 group-hover:opacity-100 text-[var(--color-text-tertiary)]
-                             hover:text-red-400 transition-all duration-150 flex items-center"
+                      class="text-[11px] opacity-0 group-hover:opacity-100 text-red-400
+                             hover:text-red-300 transition-all duration-150 flex items-center"
+                      title="Delete message"
                     >
                       {deletingEvents.has(item.id) ? (
                         <span class="animate-spin">⚡</span>
                       ) : (
-                        '×'
+                        <svg class="w-3.5 h-3.5 text-red-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                          <path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
                       )}
                     </button>
                   )}

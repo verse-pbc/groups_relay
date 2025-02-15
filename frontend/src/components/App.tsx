@@ -10,6 +10,7 @@ import { GroupCard } from "./GroupCard";
 import { FlashMessage } from "./FlashMessage";
 import { GroupSidebar } from "./GroupSidebar";
 import { BurgerButton } from "./BurgerButton";
+import { ProfileMenu } from "./ProfileMenu";
 
 // Define NDKKind type since we can't import it
 type NDKKind = number;
@@ -32,6 +33,7 @@ interface AppState {
   groupsMap: Map<string, Group>;
   selectedGroup: Group | null;
   isMobileMenuOpen: boolean;
+  pendingGroupSelection: string | null;  // Queue of one for simplicity
 }
 
 export class App extends Component<AppProps, AppState> {
@@ -45,6 +47,7 @@ export class App extends Component<AppProps, AppState> {
       groupsMap: new Map(),
       selectedGroup: null,
       isMobileMenuOpen: false,
+      pendingGroupSelection: null,
     };
   }
 
@@ -58,7 +61,7 @@ export class App extends Component<AppProps, AppState> {
         picture: "",
         private: false,
         closed: false,
-        created_at: createdAt,
+        created_at: 0,  // Initialize to 0, will be set when we process the creation event
         updated_at: createdAt,
         members: [],
         invites: {},
@@ -96,7 +99,10 @@ export class App extends Component<AppProps, AppState> {
 
     switch (event.kind) {
       case GroupEventKind.CreateGroup: {
-        updatedGroup = baseGroup;
+        updatedGroup = {
+          ...baseGroup,
+          created_at: event.created_at  // Set created_at only for creation events
+        };
         break;
       }
 
@@ -120,6 +126,25 @@ export class App extends Component<AppProps, AppState> {
             ...baseGroup,
             members: updatedMembers,
             joinRequests: baseGroup.joinRequests.filter(p => p !== pubkey)
+          };
+        }
+        break;
+      }
+
+      case GroupEventKind.CreateInvite: {
+        const codeTag = event.tags.find((t: string[]) => t[0] === "code");
+        if (codeTag) {
+          const [_, code] = codeTag;
+          const invites = { ...baseGroup.invites };
+          invites[code] = {
+            code,
+            pubkey: event.pubkey,
+            roles: ["member"],
+            id: event.id
+          };
+          updatedGroup = {
+            ...baseGroup,
+            invites
           };
         }
         break;
@@ -184,7 +209,7 @@ export class App extends Component<AppProps, AppState> {
         break;
       }
 
-      case 39002: { // Group members
+      case 39002: { // Group members metadata
         const existingRoles = new Map(
           baseGroup.members.map(member => [member.pubkey, [...member.roles]])
         );
@@ -223,10 +248,31 @@ export class App extends Component<AppProps, AppState> {
           created_at: event.created_at,
         };
 
+        // Sort content by created_at in ascending order (oldest first)
+        const allContent = [...(baseGroup.content || []), content]
+          .sort((a, b) => a.created_at - b.created_at)
+          .slice(-50);  // Keep last 50 messages
+
         updatedGroup = {
           ...baseGroup,
-          content: [content, ...(baseGroup.content || [])].slice(0, 50)
+          content: allContent
         };
+        break;
+      }
+
+      case GroupEventKind.JoinRequest: {
+        // Only add the join request if the user isn't already a member
+        // and if this event is newer than our last metadata update
+        if (!baseGroup.members.some(member => member.pubkey === event.pubkey)) {
+          const updatedJoinRequests = [...baseGroup.joinRequests];
+          if (!updatedJoinRequests.includes(event.pubkey)) {
+            updatedJoinRequests.push(event.pubkey);
+          }
+          updatedGroup = {
+            ...baseGroup,
+            joinRequests: updatedJoinRequests
+          };
+        }
         break;
       }
 
@@ -237,14 +283,7 @@ export class App extends Component<AppProps, AppState> {
     }
 
     if (updatedGroup) {
-      if (updatedGroup.members.length > 0 || !groupsMap.has(groupId)) {
-        groupsMap.set(groupId, updatedGroup);
-      } else {
-        groupsMap.set(groupId, {
-          ...updatedGroup,
-          members: group.members // Keep existing members if update would clear them
-        });
-      }
+      groupsMap.set(groupId, updatedGroup);
     }
 
     return groupsMap;
@@ -261,8 +300,6 @@ export class App extends Component<AppProps, AppState> {
               11,
               GroupEventKind.CreateGroup,
               GroupEventKind.CreateInvite,
-              GroupEventKind.PutUser,
-              GroupEventKind.RemoveUser,
               GroupEventKind.JoinRequest,
             ].map((k) => k as NDKKind),
           },
@@ -277,13 +314,21 @@ export class App extends Component<AppProps, AppState> {
             (a, b) => b.created_at - a.created_at
           );
 
-          // Auto-select the only group if there's exactly one
-          const newSelectedGroup = sortedGroups.length === 1 ? sortedGroups[0] : this.state.selectedGroup;
+          // Check if we can fulfill any pending selection
+          const pendingUpdate = this.checkPendingSelection(newGroupsMap);
+
+          // Only update the selected group reference if we have one selected
+          const newSelectedGroup = pendingUpdate?.selectedGroup || (
+            this.state.selectedGroup
+              ? newGroupsMap.get(this.state.selectedGroup.id) || this.state.selectedGroup
+              : sortedGroups.length === 1 ? sortedGroups[0] : null  // Auto-select first group if it's the only one
+          );
 
           this.setState({
             groupsMap: newGroupsMap,
             groups: sortedGroups,
-            selectedGroup: newSelectedGroup
+            selectedGroup: newSelectedGroup,
+            ...(pendingUpdate || {})
           });
         });
 
@@ -378,10 +423,21 @@ export class App extends Component<AppProps, AppState> {
   };
 
   handleGroupSelect = (group: Group) => {
-    this.setState({ 
-      selectedGroup: group,
-      isMobileMenuOpen: false // Close mobile menu when selecting a group
-    });
+    // If the group exists in the map, select it immediately
+    const existingGroup = this.state.groupsMap.get(group.id);
+    if (existingGroup) {
+      this.setState({
+        selectedGroup: existingGroup,
+        isMobileMenuOpen: false,
+        pendingGroupSelection: null
+      });
+    } else {
+      // Otherwise, queue it for selection when it becomes available
+      this.setState({
+        pendingGroupSelection: group.id,
+        isMobileMenuOpen: false
+      });
+    }
   };
 
   showMessage = (
@@ -397,6 +453,21 @@ export class App extends Component<AppProps, AppState> {
     this.setState({ flashMessage: null });
   };
 
+  // Add method to check pending selections
+  private checkPendingSelection = (groupsMap: Map<string, Group>) => {
+    const { pendingGroupSelection } = this.state;
+    if (pendingGroupSelection) {
+      const group = groupsMap.get(pendingGroupSelection);
+      if (group) {
+        return {
+          selectedGroup: group,
+          pendingGroupSelection: null
+        };
+      }
+    }
+    return null;
+  }
+
   render() {
     const { client, onLogout } = this.props;
     const { flashMessage, groupsMap, selectedGroup, isMobileMenuOpen } = this.state;
@@ -404,10 +475,25 @@ export class App extends Component<AppProps, AppState> {
 
     return (
       <div class="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
-        <BurgerButton 
-          isOpen={isMobileMenuOpen} 
-          onClick={this.toggleMobileMenu} 
-        />
+        {/* Header */}
+        <header class="fixed top-0 left-0 right-0 z-50 h-16 bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)] px-4 lg:px-8">
+          <div class="h-full max-w-screen-2xl mx-auto flex items-center justify-between gap-4">
+            <div class="flex items-center gap-4">
+              <BurgerButton
+                isOpen={isMobileMenuOpen}
+                onClick={this.toggleMobileMenu}
+              />
+              <h1 class="text-xl font-bold">Nostr Groups</h1>
+            </div>
+
+            {/* Profile Menu */}
+            <ProfileMenu
+              client={client}
+              onLogout={onLogout}
+              showMessage={this.showMessage}
+            />
+          </div>
+        </header>
 
         {flashMessage && (
           <FlashMessage
@@ -416,16 +502,14 @@ export class App extends Component<AppProps, AppState> {
             onDismiss={this.dismissMessage}
           />
         )}
-        
-        <div class="container mx-auto max-w-5xl px-8 py-8 lg:py-8 pt-16 lg:pt-8 min-h-screen">
-          <h1 class="text-2xl font-bold mb-8 text-center lg:text-left">Nostr Groups</h1>
-          
+
+        <div class="container mx-auto px-8 py-8 lg:py-8 pt-24 lg:pt-24">
           <div class="flex flex-col lg:flex-row gap-8 min-h-[calc(100vh-9rem)]">
             {/* Left Sidebar */}
-            <div 
+            <div
               class={`
-                fixed lg:relative inset-0 z-40 
-                w-full lg:w-72 lg:flex-none
+                fixed lg:relative inset-0 z-40
+                w-full lg:w-80 lg:flex-shrink-0
                 transform transition-transform duration-300 ease-in-out
                 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
                 bg-[var(--color-bg-primary)] lg:bg-transparent
@@ -437,18 +521,19 @@ export class App extends Component<AppProps, AppState> {
                 client={client}
                 updateGroupsMap={this.updateGroupsMap}
                 showMessage={this.showMessage}
-                onLogout={onLogout}
+                onGroupCreated={this.handleGroupSelect}
               />
               <GroupSidebar
                 groups={groups}
                 selectedGroupId={selectedGroup?.id}
                 onSelectGroup={this.handleGroupSelect}
+                client={client}
               />
             </div>
 
             {/* Overlay for mobile */}
             {isMobileMenuOpen && (
-              <div 
+              <div
                 class="fixed inset-0 z-30 bg-black bg-opacity-50 lg:hidden"
                 onClick={this.toggleMobileMenu}
               />

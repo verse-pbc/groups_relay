@@ -1,5 +1,7 @@
 # Groups Relay
 
+[![codecov](https://codecov.io/gh/verse-pbc/groups_relay/branch/main/graph/badge.svg)](https://codecov.io/gh/verse-pbc/groups_relay)
+
 A Nostr relay implementation specialized for group chat functionality.
 
 ## Project Structure

@@ -1,7 +1,7 @@
 import { Component } from 'preact'
 import { NostrClient, NostrGroupError } from '../api/nostr_client'
 import type { Group } from '../types'
-import { PubkeyDisplay } from './PubkeyDisplay'
+import { Member } from './Member'
 
 interface MembersSectionProps {
   group: Group
@@ -10,7 +10,7 @@ interface MembersSectionProps {
 }
 
 interface MembersSectionState {
-  newMemberPubkey: string
+  newMemberNpub: string
   isAddingMember: boolean
   removingMembers: Set<string>
   showConfirmRemove: string | null
@@ -18,7 +18,7 @@ interface MembersSectionState {
 
 export class MembersSection extends Component<MembersSectionProps, MembersSectionState> {
   state = {
-    newMemberPubkey: '',
+    newMemberNpub: '',
     isAddingMember: false,
     removingMembers: new Set<string>(),
     showConfirmRemove: null
@@ -32,12 +32,23 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
 
   handleAddMember = async (e: Event) => {
     e.preventDefault()
-    if (!this.state.newMemberPubkey.trim()) return
+    if (!this.state.newMemberNpub.trim()) return
 
     this.setState({ isAddingMember: true })
     try {
-      await this.props.client.addMember(this.props.group.id, this.state.newMemberPubkey)
-      this.setState({ newMemberPubkey: '' })
+      const input = this.state.newMemberNpub.trim()
+      let pubkey: string
+
+      if (input.includes('@')) {
+        // Handle NIP-05
+        pubkey = await this.props.client.resolveNip05(input)
+      } else {
+        // Handle npub
+        pubkey = this.props.client.npubToPubkey(input)
+      }
+
+      await this.props.client.addMember(this.props.group.id, pubkey)
+      this.setState({ newMemberNpub: '' })
       this.props.showMessage('Member added successfully!', 'success')
     } catch (error) {
       this.showError('Failed to add member', error)
@@ -71,8 +82,8 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
   }
 
   render() {
-    const { group } = this.props
-    const { newMemberPubkey, isAddingMember, removingMembers, showConfirmRemove } = this.state
+    const { group, client, showMessage } = this.props
+    const { newMemberNpub, isAddingMember, removingMembers, showConfirmRemove } = this.state
 
     return (
       <div class="space-y-4">
@@ -81,9 +92,9 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
             <div class="flex gap-2">
               <input
                 type="text"
-                value={newMemberPubkey}
-                onChange={(e) => this.setState({ newMemberPubkey: (e.target as HTMLInputElement).value })}
-                placeholder="Enter member pubkey"
+                value={newMemberNpub}
+                onChange={(e) => this.setState({ newMemberNpub: (e.target as HTMLInputElement).value })}
+                placeholder="Enter member npub or name@domain.com"
                 class="flex-1 px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
                        text-sm rounded-lg text-[var(--color-text-primary)]
                        placeholder-[var(--color-text-tertiary)]
@@ -93,7 +104,7 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
               />
               <button
                 type="submit"
-                disabled={!newMemberPubkey.trim()}
+                disabled={!newMemberNpub.trim()}
                 class="shrink-0 px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium
                        hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed
                        transition-colors flex items-center justify-center w-[70px]"
@@ -110,78 +121,18 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
 
         <div class="space-y-2">
           {group.members.map(member => (
-            <div
+            <Member
               key={member.pubkey}
-              class="group flex items-center gap-2 p-3 bg-[var(--color-bg-primary)]
-                     rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-hover)]
-                     hover:shadow-sm transition-all duration-150"
-            >
-              <div class="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-                <div class="flex items-center gap-2">
-                  <PubkeyDisplay pubkey={member.pubkey} showCopy={false} />
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(member.pubkey)
-                      this.props.showMessage('Pubkey copied to clipboard', 'success')
-                    }}
-                    class="opacity-0 group-hover:opacity-100 text-xs text-[var(--color-text-tertiary)]
-                           hover:text-[var(--color-text-secondary)] transition-all"
-                    title="Copy pubkey"
-                  >
-                    Copy
-                  </button>
-                </div>
-                {member.roles.map(role => (
-                  <span
-                    key={role}
-                    class={`shrink-0 px-2 py-1 text-xs font-medium rounded-full
-                            ${role.toLowerCase() === 'admin'
-                              ? 'bg-purple-500/10 text-purple-400'
-                              : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]'
-                            }`}
-                    title={`${this.formatRole(role)} of this group`}
-                  >
-                    {role.toLowerCase() === 'admin' ? '👑 Admin' : '👤 Member'}
-                  </span>
-                ))}
-              </div>
-
-              {group.members.length > 1 && (
-                showConfirmRemove === member.pubkey ? (
-                  <div class="flex items-center gap-1 shrink-0">
-                    <button
-                      onClick={() => this.handleRemoveMember(member.pubkey)}
-                      class="px-2 py-1 text-xs text-red-400 hover:text-red-300 transition-colors"
-                    >
-                      Confirm
-                    </button>
-                    <button
-                      onClick={() => this.setState({ showConfirmRemove: null })}
-                      class="px-2 py-1 text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => this.setState({ showConfirmRemove: member.pubkey })}
-                    disabled={removingMembers.has(member.pubkey)}
-                    class="opacity-0 group-hover:opacity-100 shrink-0 px-2 py-1 text-xs text-[var(--color-text-tertiary)]
-                           hover:text-red-400 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed
-                           flex items-center gap-1"
-                  >
-                    {removingMembers.has(member.pubkey) ? (
-                      <>
-                        <span class="animate-spin">⚡</span>
-                        Remove
-                      </>
-                    ) : (
-                      'Remove'
-                    )}
-                  </button>
-                )
-              )}
-            </div>
+              member={member}
+              group={group}
+              client={client}
+              showMessage={showMessage}
+              onRemove={this.handleRemoveMember}
+              isRemoving={removingMembers.has(member.pubkey)}
+              showConfirmRemove={showConfirmRemove === member.pubkey}
+              onShowConfirmRemove={() => this.setState({ showConfirmRemove: member.pubkey })}
+              onHideConfirmRemove={() => this.setState({ showConfirmRemove: null })}
+            />
           ))}
 
           {group.members.length === 0 && (
@@ -189,7 +140,7 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
               <div class="mb-3 text-2xl">👥</div>
               <p class="text-sm text-[var(--color-text-tertiary)]">No members yet</p>
               <p class="text-xs text-[var(--color-text-tertiary)] mt-1">
-                Add members using their public key
+                Add members using their npub or NIP-05 address
               </p>
             </div>
           )}

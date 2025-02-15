@@ -1,12 +1,12 @@
-import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import { Group } from '../types'
+import { BaseComponent } from './BaseComponent'
 
 interface CreateGroupFormProps {
   updateGroupsMap: (updater: (map: Map<string, Group>) => void) => void
   client: NostrClient
   showMessage: (message: string, type: 'success' | 'error' | 'info') => void
-  onLogout: () => void
+  onGroupCreated?: (group: Group) => void
 }
 
 interface CreateGroupFormState {
@@ -25,7 +25,7 @@ function generateGroupId(): string {
   ).join('')
 }
 
-export class CreateGroupForm extends Component<CreateGroupFormProps, CreateGroupFormState> {
+export class CreateGroupForm extends BaseComponent<CreateGroupFormProps, CreateGroupFormState> {
   constructor(props: CreateGroupFormProps) {
     super(props)
     this.state = {
@@ -81,6 +81,11 @@ export class CreateGroupForm extends Component<CreateGroupFormProps, CreateGroup
         groupsMap.set(group.id, groupCopy);
       })
 
+      // Queue the group for selection
+      if (this.props.onGroupCreated) {
+        this.props.onGroupCreated(group);
+      }
+
       this.setState({
         groupId: generateGroupId(),
         name: '',
@@ -91,7 +96,7 @@ export class CreateGroupForm extends Component<CreateGroupFormProps, CreateGroup
       this.props.showMessage('Group created successfully!', 'success')
     } catch (error) {
       console.error('Failed to create group:', error)
-      this.props.showMessage('Failed to create group: ' + error, 'error')
+      this.showError('Failed to create group', error)
     } finally {
       this.setState({ isSubmitting: false })
     }
@@ -99,7 +104,6 @@ export class CreateGroupForm extends Component<CreateGroupFormProps, CreateGroup
 
   render() {
     const { isSubmitting } = this.state
-    const { onLogout } = this.props
 
     return (
       <div class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] p-4">
@@ -180,19 +184,6 @@ export class CreateGroupForm extends Component<CreateGroupFormProps, CreateGroup
                     Create Group
                   </>
                 )}
-              </button>
-            </div>
-
-            <div class="pt-2">
-              <button
-                type="button"
-                onClick={onLogout}
-                class="w-full px-4 py-2 bg-[var(--color-bg-secondary)] text-[var(--color-text-tertiary)]
-                       rounded-lg text-sm hover:text-[var(--color-text-secondary)] transition-colors
-                       flex items-center justify-center gap-2"
-              >
-                <span>🚪</span>
-                Sign Out
               </button>
             </div>
           </div>

@@ -1,6 +1,6 @@
-import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
+import { BaseComponent } from './BaseComponent'
 
 interface GroupInfoProps {
   group: Group
@@ -16,7 +16,7 @@ interface GroupInfoState {
   editingAbout: string
 }
 
-export class GroupInfo extends Component<GroupInfoProps, GroupInfoState> {
+export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
   state = {
     editingName: '',
     editingAbout: ''
@@ -43,20 +43,41 @@ export class GroupInfo extends Component<GroupInfoProps, GroupInfoState> {
     await this.props.onEditSubmit(editingName, editingAbout)
   }
 
+  handleMetadataChange = async (changes: Partial<Group>) => {
+    try {
+      const updatedGroup = {
+        ...this.props.group,
+        ...changes
+      }
+      await this.props.client.updateGroupMetadata(updatedGroup)
+
+      if ('private' in changes && changes.private !== undefined) {
+        this.props.group.private = changes.private
+        this.props.showMessage('Group privacy updated successfully!', 'success')
+      } else if ('closed' in changes && changes.closed !== undefined) {
+        this.props.group.closed = changes.closed
+        this.props.showMessage('Group membership setting updated successfully!', 'success')
+      }
+    } catch (error) {
+      console.error('Failed to update group settings:', error)
+      this.showError('Failed to update group settings', error)
+    }
+  }
+
   render() {
     const { group, isEditing, onEditCancel } = this.props
     const { editingName, editingAbout } = this.state
 
     return (
-      <div class="space-y-4">
+      <div class="space-y-6">
         {/* Group Avatar and Name/About */}
         <div class="flex flex-col gap-4">
           <div class="flex items-center gap-4">
             <div class="w-20 h-20 bg-[var(--color-bg-primary)] rounded-full flex items-center justify-center text-3xl overflow-hidden border border-[var(--color-border)]">
               {group.picture ? (
-                <img 
-                  src={group.picture} 
-                  alt={group.name || 'Group'} 
+                <img
+                  src={group.picture}
+                  alt={group.name || 'Group'}
                   class="w-full h-full object-cover"
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = 'none';
@@ -119,6 +140,74 @@ export class GroupInfo extends Component<GroupInfoProps, GroupInfoState> {
               </div>
             </form>
           )}
+        </div>
+
+        {/* Settings */}
+        <div>
+          <div class="border-b border-[var(--color-border)] pb-3">
+            <h3 class="text-base font-semibold leading-6 text-[var(--color-text-primary)] flex items-center gap-2">
+              <span class="text-[var(--color-text-secondary)]">⚙️</span>
+              Privacy & Access
+            </h3>
+          </div>
+
+          <div class="mt-4 space-y-4 bg-[var(--color-bg-primary)] rounded-lg p-4">
+            {/* Private Group Toggle */}
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <span class="text-lg">🔒</span>
+                <div>
+                  <div class="font-medium">Private Group</div>
+                  <div class="text-sm text-[var(--color-text-tertiary)]">Only members can see group content</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => this.handleMetadataChange({ private: !group.private })}
+                class={`${
+                  group.private ? 'bg-[var(--color-accent)]' : 'bg-[#2A2B2E]'
+                } relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-2`}
+                role="switch"
+                aria-checked={group.private}
+              >
+                <span class="sr-only">Private group setting</span>
+                <span
+                  aria-hidden="true"
+                  class={`${
+                    group.private ? 'translate-x-5' : 'translate-x-0'
+                  } pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
+                />
+              </button>
+            </div>
+
+            {/* Closed Group Toggle */}
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <span class="text-lg">🔐</span>
+                <div>
+                  <div class="font-medium">Closed Group</div>
+                  <div class="text-sm text-[var(--color-text-tertiary)]">Only admins can add new members</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => this.handleMetadataChange({ closed: !group.closed })}
+                class={`${
+                  group.closed ? 'bg-[var(--color-accent)]' : 'bg-[#2A2B2E]'
+                } relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-2`}
+                role="switch"
+                aria-checked={group.closed}
+              >
+                <span class="sr-only">Closed group setting</span>
+                <span
+                  aria-hidden="true"
+                  class={`${
+                    group.closed ? 'translate-x-5' : 'translate-x-0'
+                  } pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
+                />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     )

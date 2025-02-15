@@ -2,7 +2,7 @@ import { Component } from 'preact'
 import { NostrClient, NostrGroupError } from '../api/nostr_client'
 import type { Group } from '../types'
 import { JoinRequestForm } from './JoinRequestForm'
-import { PubkeyDisplay } from './PubkeyDisplay'
+import { UserDisplay } from './UserDisplay'
 
 interface JoinRequestSectionProps {
   group: Group
@@ -85,14 +85,20 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
                        rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-hover)]
                        transition-colors"
               >
-                <PubkeyDisplay pubkey={pubkey} showCopy={false} />
-                <button
-                  onClick={() => this.handleAcceptRequest(pubkey)}
-                  class="shrink-0 px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium
-                         hover:bg-accent/90 transition-colors flex items-center gap-2"
-                >
-                  Accept
-                </button>
+                <div class="flex items-center gap-2">
+                  <UserDisplay
+                    pubkey={this.props.client.pubkeyToNpub(pubkey)}
+                    client={client}
+                    showCopy={false}
+                  />
+                  <button
+                    onClick={() => this.handleAcceptRequest(pubkey)}
+                    class="shrink-0 px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium
+                           hover:bg-accent/90 transition-colors flex items-center gap-2"
+                  >
+                    Accept
+                  </button>
+                </div>
               </div>
             ))}
           </div>

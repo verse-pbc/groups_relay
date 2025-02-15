@@ -4,7 +4,9 @@ import NDK, {
   NDKRelay,
   NDKRelayAuthPolicies,
   NDKPublishError,
+  NDKUser,
 } from "@nostr-dev-kit/ndk";
+import { nip19 } from "nostr-tools";
 import type { Group } from "../types";
 
 // NIP-29 event kinds
@@ -40,7 +42,9 @@ export class NostrGroupError extends Error {
 
 export class NostrClient {
   private ndk: NDK;
+  private profileNdk: NDK;
   readonly config: NostrClientConfig;
+  private profileCache: Map<string, any> = new Map();
 
   constructor(key: string, config?: Partial<NostrClientConfig>) {
     try {
@@ -51,9 +55,15 @@ export class NostrClient {
 
       const signer = new NDKPrivateKeySigner(key);
 
+      // Main NDK instance for group operations
       this.ndk = new NDK({
         explicitRelayUrls: [this.config.relayUrl],
         signer,
+      });
+
+      // Separate NDK instance for profile fetching
+      this.profileNdk = new NDK({
+        explicitRelayUrls: ["wss://relay.nos.social", "wss://purplepag.es"],
       });
 
       this.ndk.pool.on("relay:connect", (relay: NDKRelay) => {
@@ -73,7 +83,7 @@ export class NostrClient {
 
   async connect() {
     try {
-      await this.ndk.connect();
+      await Promise.all([this.ndk.connect(), this.profileNdk.connect()]);
 
       const relays = Array.from(this.ndk.pool.relays.values());
       const firstRelay = await Promise.race(
@@ -146,12 +156,18 @@ export class NostrClient {
 
   async disconnect() {
     try {
-      // Close all relay connections
-      const relays = Array.from(this.ndk.pool.relays.values());
-      await Promise.all(relays.map((relay) => relay.disconnect()));
+      // Close all relay connections from both NDK instances
+      const groupRelays = Array.from(this.ndk.pool.relays.values());
+      const profileRelays = Array.from(this.profileNdk.pool.relays.values());
+
+      await Promise.all([
+        ...groupRelays.map((relay) => relay.disconnect()),
+        ...profileRelays.map((relay) => relay.disconnect()),
+      ]);
 
       // Clear any subscriptions
       this.ndk.pool.removeAllListeners();
+      this.profileNdk.pool.removeAllListeners();
 
       console.log("Disconnected from all relays");
     } catch (error) {
@@ -302,6 +318,124 @@ export class NostrClient {
 
   async deleteGroup(groupId: string) {
     return this.publishEvent(GroupEventKind.DeleteGroup, [["h", groupId]]);
+  }
+
+  async fetchProfile(pubkey: string) {
+    try {
+      // Check cache first
+      if (this.profileCache.has(pubkey)) {
+        return this.profileCache.get(pubkey);
+      }
+
+      const user = new NDKUser({ pubkey });
+      user.ndk = this.profileNdk; // Use the profile-specific NDK instance
+      await user.fetchProfile();
+
+      // Cache the profile
+      if (user.profile) {
+        this.profileCache.set(pubkey, user.profile);
+      }
+
+      return user.profile;
+    } catch (error) {
+      console.error("Failed to fetch profile:", error);
+      return null;
+    }
+  }
+
+  // Convert a hex pubkey to npub
+  pubkeyToNpub(pubkey: string): string {
+    try {
+      return nip19.npubEncode(pubkey);
+    } catch (error) {
+      console.error("Failed to convert pubkey to npub:", error);
+      return pubkey;
+    }
+  }
+
+  // Convert an npub to hex pubkey
+  npubToPubkey(npub: string): string {
+    try {
+      const { type, data } = nip19.decode(npub);
+      if (type !== "npub") {
+        throw new Error("Not an npub");
+      }
+      return data as string;
+    } catch (error) {
+      console.error("Failed to convert npub to pubkey:", error);
+      throw new NostrGroupError("Invalid npub format");
+    }
+  }
+
+  // Resolve a NIP-05 address to a pubkey
+  async resolveNip05(nip05Address: string): Promise<string> {
+    try {
+      const [name, domain] = nip05Address.split("@");
+      if (!name || !domain) {
+        throw new Error("Invalid NIP-05 format");
+      }
+
+      const response = await fetch(
+        `https://${domain}/.well-known/nostr.json?name=${name}`
+      );
+      if (!response.ok) {
+        throw new Error("Failed to fetch NIP-05 data");
+      }
+
+      const data = await response.json();
+      const pubkey = data?.names?.[name];
+      if (!pubkey) {
+        throw new Error("NIP-05 address not found");
+      }
+
+      return pubkey;
+    } catch (error) {
+      console.error("Failed to resolve NIP-05:", error);
+      throw new NostrGroupError(
+        error instanceof Error ? error.message : "Failed to resolve NIP-05"
+      );
+    }
+  }
+
+  async checkIsRelayAdmin(): Promise<boolean> {
+    try {
+      const user = await this.ndkInstance.signer?.user();
+      if (!user?.pubkey) return false;
+
+      const httpUrl = this.config.relayUrl
+        .replace(/^wss?:\/\//, (match) =>
+          match === "ws://" ? "http://" : "https://"
+        )
+        .replace(/\/$/, "");
+
+      const response = await fetch(httpUrl, {
+        method: "GET",
+        mode: "cors",
+        credentials: "omit",
+        cache: "no-cache",
+        headers: {
+          Accept: "application/nostr+json",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+        },
+      });
+
+      const contentType = response.headers.get("content-type");
+      if (
+        response.ok &&
+        (contentType?.includes("application/json") ||
+          contentType?.includes("application/nostr+json"))
+      ) {
+        const relayInfo = await response.json();
+        return relayInfo.pubkey === user.pubkey;
+      }
+
+      console.warn("Unexpected response type:", contentType);
+      return false;
+    } catch (error) {
+      console.error("Failed to check relay admin status:", error);
+      return false;
+    }
   }
 }
 
