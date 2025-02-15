@@ -55,7 +55,7 @@ export class GroupSettings extends Component<GroupSettingsProps, GroupSettingsSt
     const { showConfirmDelete, isDeleting } = this.state
 
     return (
-      <div class="max-w-lg space-y-6">
+      <div class="space-y-6">
         {/* Settings */}
         <div>
           <div>
@@ -65,9 +65,9 @@ export class GroupSettings extends Component<GroupSettingsProps, GroupSettingsSt
             </h3>
           </div>
 
-          <div class="mt-4 space-y-4 bg-[var(--color-bg-primary)] rounded-lg p-4">
+          <div class="mt-4 w-full space-y-4 bg-[var(--color-bg-primary)] rounded-lg p-4">
             {/* Private Group Toggle */}
-            <div class="flex items-center justify-between">
+            <div class="w-full flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <span class="text-lg">🔒</span>
                 <div>
@@ -95,7 +95,7 @@ export class GroupSettings extends Component<GroupSettingsProps, GroupSettingsSt
             </div>
 
             {/* Closed Group Toggle */}
-            <div class="flex items-center justify-between">
+            <div class="w-full flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <span class="text-lg">👥</span>
                 <div>
@@ -125,7 +125,7 @@ export class GroupSettings extends Component<GroupSettingsProps, GroupSettingsSt
         </div>
 
         {/* Delete Group */}
-        <div class="flex justify-end">
+        <div class="w-full flex justify-end">
           {showConfirmDelete ? (
             <div class="flex items-center gap-2 text-xs">
               <button
