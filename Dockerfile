@@ -9,28 +9,11 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /usr/src/app
 
-# Copy only the files needed for dependency caching
+# Copy the entire workspace for building
 COPY Cargo.toml Cargo.lock ./
-COPY crates/groups_relay/Cargo.toml ./crates/groups_relay/
-COPY crates/websocket_builder/Cargo.toml ./crates/websocket_builder/
+COPY crates ./crates
 
-# Create dummy source files for dependency caching
-RUN mkdir -p crates/groups_relay/src && \
-    echo "fn main() {}" > crates/groups_relay/src/main.rs && \
-    mkdir -p crates/websocket_builder/src && \
-    echo "fn main() {}" > crates/websocket_builder/src/lib.rs
-
-# Build dependencies only
-RUN cargo build --release --package groups_relay
-
-# Remove the dummy source files
-RUN rm -rf crates/groups_relay/src crates/websocket_builder/src
-
-# Copy the actual source code
-COPY crates/groups_relay/src ./crates/groups_relay/src
-COPY crates/websocket_builder/src ./crates/websocket_builder/src
-
-# Build the actual binary
+# Build the relay binary
 RUN cargo build --release --package groups_relay
 
 FROM node:20-slim AS frontend-builder
