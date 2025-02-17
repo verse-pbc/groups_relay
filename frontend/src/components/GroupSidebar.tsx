@@ -35,7 +35,12 @@ export class GroupSidebar extends Component<GroupSidebarProps, GroupSidebarState
           .filter(group => group.members.some(m => m.pubkey === user.pubkey))
           .map(group => group.id)
       );
-      this.setState({ adminGroups, memberGroups });
+      // Expand other groups by default if user has no groups where they are a member
+      this.setState({
+        adminGroups,
+        memberGroups,
+        showOtherGroups: memberGroups.size === 0
+      });
     }
   }
 
@@ -53,7 +58,11 @@ export class GroupSidebar extends Component<GroupSidebarProps, GroupSidebarState
             .filter(group => group.members.some(m => m.pubkey === user.pubkey))
             .map(group => group.id)
         );
-        this.setState({ adminGroups, memberGroups });
+        this.setState({
+          adminGroups,
+          memberGroups,
+          showOtherGroups: memberGroups.size === 0
+        });
       }
     }
   }

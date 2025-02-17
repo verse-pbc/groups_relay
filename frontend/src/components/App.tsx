@@ -3,7 +3,6 @@ import { NostrClient, GroupEventKind } from "../api/nostr_client";
 import type {
   Group,
   GroupContent as GroupChatMessage,
-  GroupMember,
 } from "../types";
 import { CreateGroupForm } from "./CreateGroupForm";
 import { GroupCard } from "./GroupCard";
@@ -106,31 +105,6 @@ export class App extends Component<AppProps, AppState> {
         break;
       }
 
-      case GroupEventKind.PutUser: {
-        const memberTag = event.tags.find((t: string[]) => t[0] === "p");
-        if (memberTag) {
-          const [_, pubkey, ...roles] = memberTag;
-          const updatedMembers = [...baseGroup.members];
-          const memberIndex = updatedMembers.findIndex((m: GroupMember) => m.pubkey === pubkey);
-
-          if (memberIndex >= 0) {
-            updatedMembers[memberIndex] = {
-              ...updatedMembers[memberIndex],
-              roles: [...new Set([...updatedMembers[memberIndex].roles, ...roles])]
-            };
-          } else {
-            updatedMembers.push({ pubkey, roles } as GroupMember);
-          }
-
-          updatedGroup = {
-            ...baseGroup,
-            members: updatedMembers,
-            joinRequests: baseGroup.joinRequests.filter(p => p !== pubkey)
-          };
-        }
-        break;
-      }
-
       case GroupEventKind.CreateInvite: {
         const codeTag = event.tags.find((t: string[]) => t[0] === "code");
         if (codeTag) {
@@ -189,16 +163,38 @@ export class App extends Component<AppProps, AppState> {
       case 39001: { // Group admins
         const currentMembers = new Map(baseGroup.members.map(m => [m.pubkey, { ...m }]));
 
+        // Get all pubkeys from the event
+        const eventPubkeys = new Set(
+          event.tags
+            .filter((t: string[]) => t[0] === "p")
+            .map((t: string[]) => t[1])
+        );
+
+        // Remove members who are no longer in the admin list and have no other roles
+        for (const [pubkey, member] of currentMembers.entries()) {
+          const isCurrentlyAdmin = member.roles.some(r => r.toLowerCase() === 'admin');
+          if (isCurrentlyAdmin) {
+            if (!eventPubkeys.has(pubkey)) {
+              // This member is no longer an admin
+              member.roles = member.roles.filter(r => r.toLowerCase() !== 'admin');
+              if (member.roles.length === 0) {
+                member.roles = ["Member"];
+              }
+            }
+          }
+        }
+
+        // Update roles for members in the event
         event.tags
           .filter((t: string[]) => t[0] === "p")
           .forEach((t: string[]) => {
             const [_, pubkey, ...roles] = t;
-            if (currentMembers.has(pubkey)) {
-              const member = currentMembers.get(pubkey)!;
-              member.roles = [...new Set([...member.roles, ...roles])];
-            } else {
-              currentMembers.set(pubkey, { pubkey, roles } as GroupMember);
-            }
+            // Create or update member
+            const member = currentMembers.get(pubkey) || { pubkey, roles: [] };
+
+            // Ensure we're setting the roles exactly as they come from relay
+            member.roles = roles.length > 0 ? roles : ["Member"];
+            currentMembers.set(pubkey, member);
           });
 
         const newMembers = Array.from(currentMembers.values());
@@ -210,31 +206,44 @@ export class App extends Component<AppProps, AppState> {
       }
 
       case 39002: { // Group members metadata
-        const existingRoles = new Map(
-          baseGroup.members.map(member => [member.pubkey, [...member.roles]])
+        // Get all pubkeys from the event
+        const eventPubkeys = new Set(
+          event.tags
+            .filter((t: string[]) => t[0] === "p")
+            .map((t: string[]) => t[1])
         );
 
-        const newMembers = event.tags
+        // Create a new map with only members that are in the event
+        const currentMembers = new Map();
+
+        // First, add existing members that are still in the event
+        baseGroup.members.forEach(member => {
+          if (eventPubkeys.has(member.pubkey)) {
+            currentMembers.set(member.pubkey, { ...member });
+          }
+        });
+
+        // Then add any new members from the event
+        event.tags
           .filter((t: string[]) => t[0] === "p")
-          .map((t: string[]) => {
+          .forEach((t: string[]) => {
             const pubkey = t[1];
-            return {
-              pubkey,
-              roles: existingRoles.get(pubkey) || ["member"]
-            } as GroupMember;
+            if (!currentMembers.has(pubkey)) {
+              currentMembers.set(pubkey, {
+                pubkey,
+                roles: ["Member"]
+              });
+            }
           });
 
-        if (newMembers.length > 0) {
-          updatedGroup = {
-            ...baseGroup,
-            members: newMembers,
-            joinRequests: baseGroup.joinRequests.filter(pubkey =>
-              !newMembers.some((m: GroupMember) => m.pubkey === pubkey)
-            )
-          };
-        } else {
-          updatedGroup = baseGroup; // Preserve existing state if no new members
-        }
+        const newMembers = Array.from(currentMembers.values());
+        updatedGroup = {
+          ...baseGroup,
+          members: newMembers,
+          joinRequests: baseGroup.joinRequests.filter(pubkey =>
+            !newMembers.some(m => m.pubkey === pubkey)
+          )
+        };
         break;
       }
 

@@ -301,6 +301,13 @@ export class NostrClient {
     ]);
   }
 
+  async toggleAdminRole(groupId: string, pubkey: string, isAdmin: boolean) {
+    return this.publishEvent(GroupEventKind.PutUser, [
+      ["h", groupId],
+      ["p", pubkey, isAdmin ? "Admin" : "Member"],
+    ]);
+  }
+
   async createInvite(groupId: string, code: string) {
     return this.publishEvent(GroupEventKind.CreateInvite, [
       ["h", groupId],

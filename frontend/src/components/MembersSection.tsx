@@ -65,6 +65,7 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
 
     try {
       await this.props.client.removeMember(this.props.group.id, pubkey)
+      this.props.group.members = this.props.group.members.filter(m => m.pubkey !== pubkey)
       this.props.showMessage('Member removed successfully', 'success')
     } catch (error) {
       this.showError('Failed to remove member', error)

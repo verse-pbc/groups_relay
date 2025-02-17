@@ -27,8 +27,6 @@ interface GroupInfoState {
 }
 
 export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
-  private copyTimeout: number | null = null;
-
   state = {
     editingName: '',
     editingAbout: '',
