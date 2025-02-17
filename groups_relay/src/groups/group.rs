@@ -468,23 +468,39 @@ impl Group {
             .map(GroupMember::try_from)
             .filter_map(Result::ok);
 
-        self.add_members(group_members);
+        self.add_members(group_members)?;
         Ok(true)
     }
 
-    pub fn add_members(&mut self, group_members: impl Iterator<Item = GroupMember>) {
+    pub fn add_members(
+        &mut self,
+        group_members: impl Iterator<Item = GroupMember>,
+    ) -> Result<(), Error> {
         for member in group_members {
             self.join_requests.remove(&member.pubkey);
+
+            // If the member exists, check if we're removing the last admin
+            if let Some(existing) = self.members.get(&member.pubkey) {
+                // Prevent removing the last admin role.
+                if self.admin_pubkeys().len() == 1
+                    && existing.roles.contains(&GroupRole::Admin)
+                    && !member.roles.contains(&GroupRole::Admin)
+                {
+                    return Err(Error::notice("Cannot unset last admin role"));
+                }
+            }
+
             self.members.insert(member.pubkey, member);
         }
 
         self.update_roles();
         self.update_state();
+        Ok(())
     }
 
-    pub fn add_pubkey(&mut self, pubkey: PublicKey) {
+    pub fn add_pubkey(&mut self, pubkey: PublicKey) -> Result<(), Error> {
         let member = GroupMember::new_member(pubkey);
-        self.add_members(vec![member].into_iter());
+        self.add_members(vec![member].into_iter())
     }
 
     pub fn admin_pubkeys(&self) -> Vec<PublicKey> {
@@ -513,27 +529,32 @@ impl Group {
         let admins = self.admin_pubkeys();
         let mut removed_admins = false;
 
-        // Process each p tag to get members to remove
         for tag in members_event.tags.filter(TagKind::p()) {
             let member = GroupMember::try_from(tag)?;
             let removed_pubkey = member.pubkey;
 
-            // Check if we're trying to remove the last admin
+            // Exit early if this removal would remove the last admin.
             if admins.len() == 1 && admins.contains(&removed_pubkey) {
                 return Err(Error::notice("Cannot remove last admin"));
             }
 
-            // Remove the member and track if they were an admin
-            if self.members.remove(&removed_pubkey).is_some() {
-                self.join_requests.remove(&removed_pubkey);
-                if self.is_admin(&removed_pubkey) {
-                    removed_admins = true;
-                }
+            // Skip if the member doesn't exist.
+            if !self.members.contains_key(&removed_pubkey) {
+                continue;
+            }
+
+            let is_admin = self.is_admin(&removed_pubkey);
+            self.members.remove(&removed_pubkey);
+            self.join_requests.remove(&removed_pubkey);
+
+            if is_admin {
+                removed_admins = true;
             }
         }
 
         self.update_roles();
         self.update_state();
+
         Ok(removed_admins)
     }
 
@@ -1815,5 +1836,70 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), false);
         assert!(!group.is_member(&member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_add_pubkey_propagates_errors() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, _) = create_test_group(&admin_keys).await;
+
+        // Try to add the existing admin as a regular member, which should fail
+        // because it would remove the last admin role
+        let result = group.add_pubkey(admin_keys.public_key());
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Cannot unset last admin role"
+        );
+
+        // Verify admin still has admin role
+        let stored_member = group.members.get(&admin_keys.public_key()).unwrap();
+        assert!(stored_member.roles.contains(&GroupRole::Admin));
+    }
+
+    #[tokio::test]
+    async fn test_add_members_allows_role_downgrades() {
+        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (mut group, _) = create_test_group(&admin_keys).await;
+
+        // First add a second admin
+        let mut admin_roles = HashSet::new();
+        admin_roles.insert(GroupRole::Admin);
+        let second_admin = GroupMember::new(member_keys.public_key(), admin_roles);
+        assert!(group.add_members(vec![second_admin].into_iter()).is_ok());
+
+        // Now downgrade the second admin to a regular member (should succeed since we have another admin)
+        let member_basic = GroupMember::new_member(member_keys.public_key());
+        let result = group.add_members(vec![member_basic].into_iter());
+        assert!(result.is_ok());
+
+        // Verify member was downgraded to just Member role
+        let stored_member = group.members.get(&member_keys.public_key()).unwrap();
+        assert_eq!(stored_member.roles.len(), 1);
+        assert!(stored_member.roles.contains(&GroupRole::Member));
+        assert!(!stored_member.roles.contains(&GroupRole::Admin));
+
+        // Verify original admin still has admin role
+        let original_admin = group.members.get(&admin_keys.public_key()).unwrap();
+        assert!(original_admin.roles.contains(&GroupRole::Admin));
+    }
+
+    #[tokio::test]
+    async fn test_add_members_prevents_last_admin_downgrade() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, _) = create_test_group(&admin_keys).await;
+
+        // Try to downgrade the only admin to a regular member (should fail)
+        let member_basic = GroupMember::new_member(admin_keys.public_key());
+        let result = group.add_members(vec![member_basic].into_iter());
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Cannot unset last admin role"
+        );
+
+        // Verify admin still has admin role
+        let stored_member = group.members.get(&admin_keys.public_key()).unwrap();
+        assert!(stored_member.roles.contains(&GroupRole::Admin));
     }
 }

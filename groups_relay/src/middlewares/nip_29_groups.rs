@@ -186,7 +186,7 @@ impl Nip29Middleware {
                 if !group.metadata.closed {
                     // For open groups, non-members are automatically added
                     if !is_member {
-                        group.add_pubkey(event.pubkey);
+                        group.add_pubkey(event.pubkey)?;
 
                         let put_user_event = group.generate_put_user_event(&self.relay_pubkey);
                         let members_event = group.generate_members_event(&self.relay_pubkey);
