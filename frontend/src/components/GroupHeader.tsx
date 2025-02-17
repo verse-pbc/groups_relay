@@ -322,6 +322,7 @@ export class GroupHeader extends BaseComponent<GroupHeaderProps, GroupHeaderStat
             isEditing={isEditing}
             onEditSubmit={this.handleEditSubmit}
             onEditCancel={this.handleEditCancel}
+            onDelete={this.props.onDelete}
           />
         </div>
         <GroupTimestamps group={group} />
