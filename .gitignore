@@ -1,9 +1,15 @@
 /**/.*  # ignore all dotted files
 /**/.*/ # ignore all dotted folders
 !/.gitignore  # except `gitignore` :)
-!db/.gitkeep
+!crates/groups_relay/db/.gitkeep
+
+# Rust build artifacts
 /target
-/load_tester/target
-db/*
+/crates/*/target
+
+# Database files
+crates/groups_relay/db/*
+
+# Frontend build artifacts
 frontend/node_modules/*
 frontend/dist/*

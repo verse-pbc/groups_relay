@@ -9,10 +9,28 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /usr/src/app
 
-# Copy the entire workspace
-COPY . .
+# Copy only the files needed for dependency caching
+COPY Cargo.toml Cargo.lock ./
+COPY crates/groups_relay/Cargo.toml ./crates/groups_relay/
+COPY crates/websocket_builder/Cargo.toml ./crates/websocket_builder/
 
-# Build the relay binary
+# Create dummy source files for dependency caching
+RUN mkdir -p crates/groups_relay/src && \
+    echo "fn main() {}" > crates/groups_relay/src/main.rs && \
+    mkdir -p crates/websocket_builder/src && \
+    echo "fn main() {}" > crates/websocket_builder/src/lib.rs
+
+# Build dependencies only
+RUN cargo build --release --package groups_relay
+
+# Remove the dummy source files
+RUN rm -rf crates/groups_relay/src crates/websocket_builder/src
+
+# Copy the actual source code
+COPY crates/groups_relay/src ./crates/groups_relay/src
+COPY crates/websocket_builder/src ./crates/websocket_builder/src
+
+# Build the actual binary
 RUN cargo build --release --package groups_relay
 
 FROM node:20-slim AS frontend-builder
@@ -50,7 +68,7 @@ WORKDIR /app
 
 # Copy pre-built artifacts and default config
 COPY --from=rust-builder /usr/src/app/target/release/groups_relay ./groups_relay
-COPY config/settings.yml ./config/
+COPY crates/groups_relay/config/settings.yml ./config/
 COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
 
 EXPOSE 8080

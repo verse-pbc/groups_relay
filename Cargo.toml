@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "groups_relay",
-    "websocket_builder",
+    "crates/groups_relay",
+    "crates/websocket_builder",
 ]
 optional-members = [
-    "load_tester"
+    "crates/load_tester"
 ]
 resolver = "2"
 
