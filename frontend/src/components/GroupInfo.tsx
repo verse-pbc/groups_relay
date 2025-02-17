@@ -233,8 +233,8 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
       <div class="space-y-6">
         {/* Group Avatar and Name/About */}
         <div class="flex flex-col gap-4">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-4">
+          <div class="flex items-start justify-between">
+            <div class="flex items-center gap-4 min-w-0">
               <div
                 class="relative w-20 h-20 bg-[var(--color-bg-primary)] rounded-full flex items-center justify-center text-3xl overflow-hidden border border-[var(--color-border)] group cursor-pointer"
                 onClick={this.handleShowEditImage}
@@ -260,140 +260,143 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
                   </svg>
                 </div>
               </div>
-              {!isEditing && (
-                <div class="flex-1 space-y-1">
-                  {showEditName ? (
-                    <form onSubmit={this.handleNameSubmit} class="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={editingName}
-                        onInput={(e: Event) => this.setState({ editingName: (e.target as HTMLInputElement).value })}
-                        class="px-2 py-1 text-2xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded"
-                        placeholder="Enter group name"
-                      />
-                      <div class="flex items-center gap-2">
+              <div class="flex-1 min-w-0">
+                {!isEditing && (
+                  <div class="space-y-1">
+                    {showEditName ? (
+                      <form onSubmit={this.handleNameSubmit} class="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={editingName}
+                          onInput={(e: Event) => this.setState({ editingName: (e.target as HTMLInputElement).value })}
+                          class="px-2 py-1 text-2xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded"
+                          placeholder="Enter group name"
+                        />
+                        <div class="flex items-center gap-2">
+                          <button
+                            type="submit"
+                            class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => this.setState({ showEditName: false })}
+                            class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div class="flex items-center gap-2 group">
+                        <div class="flex items-center gap-2">
+                          <h2 class="text-3xl font-medium text-[var(--color-text-primary)] truncate">{group.name}</h2>
+                          {this.state.isAdmin ? (
+                            <span class="shrink-0 px-2 py-0.5 text-xs font-medium bg-purple-500/10 text-purple-400 rounded-full border border-purple-500/20">
+                              Admin
+                            </span>
+                          ) : this.state.isMember && (
+                            <span class="shrink-0 px-2 py-0.5 text-xs font-medium bg-blue-500/10 text-blue-400 rounded-full border border-blue-500/20">
+                              Member
+                            </span>
+                          )}
+                        </div>
                         <button
-                          type="submit"
-                          class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                          onClick={() => this.setState({ showEditName: true, editingName: group.name })}
+                          class="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors opacity-0 group-hover:opacity-100"
+                          title="Edit group name"
                         >
-                          Save
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => this.setState({ showEditName: false })}
-                          class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </form>
-                  ) : (
-                    <div class="flex items-center gap-2 group">
-                      <div class="flex items-center gap-2">
-                        <h2 class="text-3xl font-medium text-[var(--color-text-primary)]">{group.name}</h2>
-                        {this.state.isAdmin ? (
-                          <span class="shrink-0 px-2 py-0.5 text-xs font-medium bg-purple-500/10 text-purple-400 rounded-full border border-purple-500/20">
-                            Admin
-                          </span>
-                        ) : this.state.isMember && (
-                          <span class="shrink-0 px-2 py-0.5 text-xs font-medium bg-blue-500/10 text-blue-400 rounded-full border border-blue-500/20">
-                            Member
-                          </span>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => this.setState({ showEditName: true, editingName: group.name })}
-                        class="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors opacity-0 group-hover:opacity-100"
-                        title="Edit group name"
-                      >
-                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                          <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                      </button>
-                    </div>
-                  )}
-                  {showEditAbout ? (
-                    <form onSubmit={this.handleAboutSubmit} class="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={editingAbout}
-                        onInput={(e: Event) => this.setState({ editingAbout: (e.target as HTMLInputElement).value })}
-                        class="px-2 py-1 text-sm bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded w-full"
-                        placeholder="Enter group description"
-                      />
-                      <div class="flex items-center gap-2">
-                        <button
-                          type="submit"
-                          class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
-                        >
-                          Save
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => this.setState({ showEditAbout: false })}
-                          class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
-                        >
-                          Cancel
+                          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                          </svg>
                         </button>
                       </div>
-                    </form>
-                  ) : (
-                    <div class="flex items-center gap-2 group">
-                      <p class="text-sm text-[var(--color-text-secondary)]">
-                        {group.about || 'No description'}
-                      </p>
-                      <button
-                        onClick={() => this.setState({ showEditAbout: true, editingAbout: group.about || '' })}
-                        class="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors opacity-0 group-hover:opacity-100"
-                        title="Edit group description"
-                      >
-                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                          <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
+                    )}
+                    {showEditAbout ? (
+                      <form onSubmit={this.handleAboutSubmit} class="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={editingAbout}
+                          onInput={(e: Event) => this.setState({ editingAbout: (e.target as HTMLInputElement).value })}
+                          class="px-2 py-1 text-sm bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded w-full"
+                          placeholder="Enter group description"
+                        />
+                        <div class="flex items-center gap-2">
+                          <button
+                            type="submit"
+                            class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => this.setState({ showEditAbout: false })}
+                            class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div class="flex items-center gap-2 group">
+                        <p class="text-sm text-[var(--color-text-secondary)] break-words line-clamp-3">
+                          {group.about || 'No description'}
+                        </p>
+                        <button
+                          onClick={() => this.setState({ showEditAbout: true, editingAbout: group.about || '' })}
+                          class="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors opacity-0 group-hover:opacity-100 shrink-0"
+                          title="Edit group description"
+                        >
+                          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                          </svg>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Delete Group Button */}
             {!isEditing && (
-              showConfirmDelete ? (
-                <div class="flex items-center gap-1">
+              <div class="shrink-0 ml-4">
+                {showConfirmDelete ? (
+                  <div class="flex items-center gap-1">
+                    <button
+                      onClick={this.handleDeleteGroup}
+                      class="text-xs text-red-400 hover:text-red-300 transition-colors"
+                    >
+                      Confirm
+                    </button>
+                    <span class="text-[var(--color-text-tertiary)]">·</span>
+                    <button
+                      onClick={() => this.setState({ showConfirmDelete: false })}
+                      class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
                   <button
-                    onClick={this.handleDeleteGroup}
-                    class="text-xs text-red-400 hover:text-red-300 transition-colors"
+                    onClick={() => this.setState({ showConfirmDelete: true })}
+                    disabled={isDeleting}
+                    class="text-red-400 hover:text-red-300 transition-colors"
+                    title="Delete group"
                   >
-                    Confirm
+                    {isDeleting ? (
+                      <span class="animate-spin">⚡</span>
+                    ) : (
+                      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    )}
                   </button>
-                  <span class="text-[var(--color-text-tertiary)]">·</span>
-                  <button
-                    onClick={() => this.setState({ showConfirmDelete: false })}
-                    class="text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => this.setState({ showConfirmDelete: true })}
-                  disabled={isDeleting}
-                  class="text-red-400 hover:text-red-300 transition-colors"
-                  title="Delete group"
-                >
-                  {isDeleting ? (
-                    <span class="animate-spin">⚡</span>
-                  ) : (
-                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                      <path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  )}
-                </button>
-              )
+                )}
+              </div>
             )}
           </div>
 

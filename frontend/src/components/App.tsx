@@ -486,13 +486,15 @@ export class App extends Component<AppProps, AppState> {
       <div class="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
         {/* Header */}
         <header class="fixed top-0 left-0 right-0 z-50 h-16 bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)] px-4 lg:px-8">
-          <div class="h-full max-w-screen-2xl mx-auto flex items-center justify-between gap-4">
-            <div class="flex items-center gap-4">
-              <BurgerButton
-                isOpen={isMobileMenuOpen}
-                onClick={this.toggleMobileMenu}
-              />
-              <h1 class="text-xl font-bold">Nostr Groups</h1>
+          <div class="h-full max-w-screen-2xl mx-auto flex items-center justify-between">
+            <div class="flex items-center">
+              <div class="w-10 mr-4 flex-shrink-0 flex items-center justify-center">
+                <BurgerButton
+                  isOpen={isMobileMenuOpen}
+                  onClick={this.toggleMobileMenu}
+                />
+              </div>
+              <h1 class="text-xl font-bold whitespace-nowrap">Nostr Groups</h1>
             </div>
 
             {/* Profile Menu */}
