@@ -45,7 +45,7 @@ jobs:
       - name: Setup build context
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
-          mkdir -p build-context/config
+          mkdir -p build-context/config build-context/crates
           cp Cargo.toml Cargo.lock build-context/
           cp -r crates/groups_relay crates/websocket_builder build-context/crates/
           cp crates/groups_relay/config/settings.yml build-context/config/
