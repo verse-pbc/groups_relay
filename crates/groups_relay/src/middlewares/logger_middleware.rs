@@ -3,6 +3,7 @@ use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
+use std::time::Instant;
 use tracing::{debug, info};
 use websocket_builder::{
     ConnectionContext, DisconnectContext, InboundContext, Middleware, OutboundContext,
@@ -13,6 +14,12 @@ pub struct LoggerMiddleware;
 
 impl Default for LoggerMiddleware {
     fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LoggerMiddleware {
+    pub fn new() -> Self {
         Self
     }
 }
@@ -29,23 +36,33 @@ impl Middleware for LoggerMiddleware {
     ) -> Result<(), anyhow::Error> {
         match &ctx.message {
             ClientMessage::Event(event) => {
-                info!("> event kind {}: {}", event.kind, event.as_json());
+                let start_time = Instant::now();
+                info!("> EVENT kind {}: {}", event.kind.as_u16(), event.as_json());
+
+                // Store start time in state for outbound processing
+                ctx.state.event_start_time = Some(start_time);
+                ctx.next().await
             }
             ClientMessage::Req {
-                filter,
                 subscription_id,
+                filter,
             } => {
                 info!("> REQ {}: {}", subscription_id, filter.as_json());
+                ctx.next().await
             }
             ClientMessage::Close(subscription_id) => {
                 info!("> CLOSE {}", subscription_id);
+                ctx.next().await
             }
             ClientMessage::Auth(event) => {
                 info!("> AUTH {}", event.as_json());
+                ctx.next().await
             }
-            _ => debug!("> {:?}", ctx.message),
+            _ => {
+                debug!("> {:?}", ctx.message);
+                ctx.next().await
+            }
         }
-        ctx.next().await
     }
 
     async fn process_outbound(
@@ -53,7 +70,17 @@ impl Middleware for LoggerMiddleware {
         ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         if let Some(msg) = &ctx.message {
-            info!("< {}", msg.as_json());
+            // For OK responses, include the latency in the log message
+            if let RelayMessage::Ok { .. } = msg {
+                if let Some(start_time) = ctx.state.event_start_time.take() {
+                    let latency = start_time.elapsed();
+                    info!("< {} (took {:?})", msg.as_json(), latency);
+                } else {
+                    info!("< {}", msg.as_json());
+                }
+            } else {
+                info!("< {}", msg.as_json());
+            }
         }
         ctx.next().await
     }

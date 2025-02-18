@@ -2,6 +2,7 @@ use crate::error::Error;
 use crate::{EventStoreConnection, StoreCommand};
 use nostr_sdk::prelude::*;
 use std::backtrace::Backtrace;
+use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use websocket_builder::StateFactory;
 
@@ -14,6 +15,7 @@ pub struct NostrConnectionState {
     pub authed_pubkey: Option<PublicKey>,
     pub relay_connection: Option<EventStoreConnection>,
     pub connection_token: CancellationToken,
+    pub event_start_time: Option<Instant>,
 }
 
 impl Default for NostrConnectionState {
@@ -24,6 +26,7 @@ impl Default for NostrConnectionState {
             authed_pubkey: None,
             relay_connection: None,
             connection_token: CancellationToken::new(),
+            event_start_time: None,
         }
     }
 }
@@ -41,6 +44,7 @@ impl NostrConnectionState {
             authed_pubkey: None,
             relay_connection: None,
             connection_token: CancellationToken::new(),
+            event_start_time: None,
         })
     }
 
@@ -99,6 +103,7 @@ impl StateFactory<NostrConnectionState> for NostrConnectionFactory {
             relay_url: self.relay_url.clone(),
             relay_connection: None,
             connection_token: token,
+            event_start_time: None,
         }
     }
 }

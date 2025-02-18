@@ -38,12 +38,14 @@ pub async fn create_test_event(keys: &Keys, kind: u16, tags: Vec<Tag>) -> nostr_
 }
 
 pub fn create_test_state(pubkey: Option<nostr_sdk::PublicKey>) -> NostrConnectionState {
+    let token = CancellationToken::new();
     NostrConnectionState {
-        relay_url: RelayUrl::parse("wss://test.relay").expect("Valid URL"),
         challenge: None,
         authed_pubkey: pubkey,
+        relay_url: RelayUrl::parse("ws://test.relay").expect("Invalid test relay URL"),
         relay_connection: None,
-        connection_token: CancellationToken::new(),
+        connection_token: token.clone(),
+        event_start_time: None,
     }
 }
 

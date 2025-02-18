@@ -566,7 +566,9 @@ async fn test_middleware_chain_format() -> Result<(), anyhow::Error> {
     println!("Client connected");
 
     // Send a message and capture the exact format
-    client.send(Message::Text("test".to_string())).await?;
+    client
+        .send(Message::Text("test".to_string().into()))
+        .await?;
 
     if let Some(Ok(Message::Text(response))) = client.next().await {
         println!("Actual response format: {}", response);
@@ -593,7 +595,7 @@ async fn test_flood_middleware_with_backpressure() -> Result<(), Box<dyn std::er
 
     // This message triggers FloodMiddleware to send 200 messages through a channel of size 10
     client
-        .send(Message::Text("trigger flood".to_string()))
+        .send(Message::Text("trigger flood".to_string().into()))
         .await?;
 
     // We should receive exactly 10 messages (the channel capacity) before the middleware starts dropping messages

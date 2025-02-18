@@ -1090,7 +1090,7 @@ dependencies = [
  "thiserror 1.0.69",
  "time",
  "tokio",
- "tokio-tungstenite 0.24.0",
+ "tokio-tungstenite 0.26.1",
  "tokio-util",
  "tower 0.5.2",
  "tower-http",
@@ -1753,6 +1753,26 @@ dependencies = [
  "cc",
  "doxygen-rs",
  "libc",
+]
+
+[[package]]
+name = "load_tester"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "futures",
+ "groups_relay",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "nostr-sdk",
+ "rand",
+ "serde",
+ "tokio",
+ "tokio-tungstenite 0.26.1",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3748,7 +3768,7 @@ dependencies = [
  "pretty_assertions",
  "thiserror 1.0.69",
  "tokio",
- "tokio-tungstenite 0.24.0",
+ "tokio-tungstenite 0.26.1",
  "tokio-util",
  "tower-http",
  "tracing",

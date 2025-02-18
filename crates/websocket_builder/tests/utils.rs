@@ -21,7 +21,9 @@ pub async fn assert_proxy_response(
     message: &str,
     expected_response: &str,
 ) -> Result<()> {
-    client.send(Message::Text(message.to_string())).await?;
+    client
+        .send(Message::Text(message.to_string().into()))
+        .await?;
 
     if let Some(Ok(Message::Text(response))) = client.next().await {
         assert_eq!(response, expected_response);

@@ -171,7 +171,9 @@ async fn test_message_conversion_error() -> Result<(), anyhow::Error> {
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message - it should fail at conversion
-    client.send(Message::Text("test".to_string())).await?;
+    client
+        .send(Message::Text("test".to_string().into()))
+        .await?;
 
     // We should receive an error message or connection close
     if let Some(msg) = client.next().await {
@@ -195,7 +197,9 @@ async fn test_middleware_error() -> Result<(), anyhow::Error> {
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message - it should fail in middleware
-    client.send(Message::Text("test".to_string())).await?;
+    client
+        .send(Message::Text("test".to_string().into()))
+        .await?;
 
     // We should receive an error message or connection close
     if let Some(msg) = client.next().await {
@@ -223,7 +227,9 @@ async fn test_channel_capacity() -> Result<(), Error> {
 
     // Rapidly send multiple messages to test channel capacity
     for _ in 0..5 {
-        client.send(Message::Text("test".to_string())).await?;
+        client
+            .send(Message::Text("test".to_string().into()))
+            .await?;
     }
 
     // Wait a bit to let messages process
@@ -245,7 +251,9 @@ async fn test_cancellation() -> Result<(), Error> {
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message
-    client.send(Message::Text("test".to_string())).await?;
+    client
+        .send(Message::Text("test".to_string().into()))
+        .await?;
 
     // Immediately trigger shutdown
     server.shutdown().await?;
@@ -254,7 +262,7 @@ async fn test_cancellation() -> Result<(), Error> {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Try to send another message - should fail
-    let result = client.send(Message::Text("test".to_string())).await;
+    let result = client.send(Message::Text("test".to_string().into())).await;
     assert!(
         result.is_err() || {
             // If send succeeded, the next receive should fail
@@ -282,7 +290,9 @@ async fn test_outbound_message_conversion_error() -> Result<(), Error> {
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message - it should fail at outbound conversion
-    client.send(Message::Text("test".to_string())).await?;
+    client
+        .send(Message::Text("test".to_string().into()))
+        .await?;
 
     // We should receive an error message or connection close
     if let Some(msg) = client.next().await {
@@ -320,7 +330,7 @@ async fn test_channel_overflow() -> Result<(), Error> {
 
     // Send a message to trigger the flood middleware
     client
-        .send(Message::Text("trigger_flood".to_string()))
+        .send(Message::Text("trigger_flood".to_string().into()))
         .await?;
 
     let mut received_count = 0;
@@ -394,7 +404,7 @@ async fn test_connection_handling() -> Result<(), Error> {
     // Send messages with remaining clients
     for (i, client) in clients.iter_mut().enumerate() {
         client
-            .send(Message::Text(format!("test from client {}", i + 1)))
+            .send(Message::Text(format!("test from client {}", i + 1).into()))
             .await?;
     }
 
@@ -418,7 +428,7 @@ async fn test_graceful_shutdown() -> Result<(), Error> {
 
     // Send a message
     client
-        .send(Message::Text("test before shutdown".to_string()))
+        .send(Message::Text("test before shutdown".to_string().into()))
         .await?;
 
     // Start shutdown
@@ -428,7 +438,7 @@ async fn test_graceful_shutdown() -> Result<(), Error> {
     // Try to send messages during shutdown
     for i in 0..3 {
         if let Err(e) = client
-            .send(Message::Text(format!("test during shutdown {}", i)))
+            .send(Message::Text(format!("test during shutdown {}", i).into()))
             .await
         {
             println!("Send failed during shutdown: {e}");
@@ -457,7 +467,9 @@ async fn test_error_handling_in_subscription_management() -> Result<(), Error> {
 
     // Send multiple messages to trigger subscription errors
     for i in 0..5 {
-        client.send(Message::Text(format!("test{}", i))).await?;
+        client
+            .send(Message::Text(format!("test{}", i).into()))
+            .await?;
     }
 
     // We should receive error responses or connection reset
@@ -504,7 +516,9 @@ async fn test_error_handling_in_message_conversion() -> Result<(), Error> {
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message that should fail conversion
-    client.send(Message::Text("test".to_string())).await?;
+    client
+        .send(Message::Text("test".to_string().into()))
+        .await?;
 
     // We should receive an error response or connection close
     let mut error_received = false;
@@ -553,7 +567,9 @@ async fn test_error_handling_in_middleware_chain() -> Result<(), Box<dyn std::er
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message that should trigger middleware errors
-    client.send(Message::Text("test".to_string())).await?;
+    client
+        .send(Message::Text("test".to_string().into()))
+        .await?;
 
     // We should see the error propagate through the middleware chain
     let mut error_count = 0;
@@ -602,7 +618,10 @@ async fn test_error_handling_in_event_store() -> Result<(), Box<dyn std::error::
 
     // Send messages rapidly to trigger event store errors
     for i in 0..10 {
-        if let Err(e) = client.send(Message::Text(format!("store_event_{i}"))).await {
+        if let Err(e) = client
+            .send(Message::Text(format!("store_event_{i}").into()))
+            .await
+        {
             println!("Send error: {e}");
             break;
         }
@@ -656,7 +675,7 @@ async fn test_error_handling_in_replaceable_events() -> Result<(), Box<dyn std::
     // Send replaceable events rapidly
     for i in 0..5 {
         if let Err(e) = client
-            .send(Message::Text(format!("replaceable_event_{}", i)))
+            .send(Message::Text(format!("replaceable_event_{}", i).into()))
             .await
         {
             println!("Send error: {e}");
@@ -712,11 +731,15 @@ async fn test_error_handling_in_connection_state() -> Result<(), Box<dyn std::er
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Trigger connection state changes
-    client.send(Message::Text("init".to_string())).await?;
+    client
+        .send(Message::Text("init".to_string().into()))
+        .await?;
     client.send(Message::Close(None)).await?;
 
     // Attempt to send after close
-    let send_result = client.send(Message::Text("after_close".to_string())).await;
+    let send_result = client
+        .send(Message::Text("after_close".to_string().into()))
+        .await;
     assert!(send_result.is_err(), "Expected send after close to fail");
 
     server.shutdown().await?;

@@ -1,9 +1,10 @@
 [workspace]
+# Note: While load_tester is only needed for testing and could be in optional-members,
+# we keep it in members to prevent rust-analyzer from failing. Moving it to optional-members
+# causes rust-analyzer to fail to load the workspace.
 members = [
     "crates/groups_relay",
     "crates/websocket_builder",
-]
-optional-members = [
     "crates/load_tester"
 ]
 resolver = "2"
@@ -27,4 +28,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 metrics = "0.24.1"
 metrics-exporter-prometheus = "0.16.2"
 rand = "0.8.5"
-tokio-tungstenite = "0.24.0"
+tokio-tungstenite = "0.26.1"

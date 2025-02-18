@@ -349,7 +349,7 @@ impl Middleware for EventStoreMiddleware {
                             event_id,
                             e
                         );
-                        return Ok(());
+                        return Err(e.into());
                     }
                     debug!(
                         target: "event_store",
@@ -491,11 +491,12 @@ mod tests {
     impl StateFactory<NostrConnectionState> for TestStateFactory {
         fn create_state(&self, token: CancellationToken) -> NostrConnectionState {
             NostrConnectionState {
-                relay_url: RelayUrl::parse("ws://test.relay").expect("Invalid test relay URL"),
                 challenge: None,
                 authed_pubkey: None,
+                relay_url: RelayUrl::parse("ws://test.relay").expect("Invalid test relay URL"),
                 relay_connection: None,
-                connection_token: token,
+                connection_token: token.clone(),
+                event_start_time: None,
             }
         }
     }
@@ -590,7 +591,7 @@ mod tests {
         }
 
         async fn send_message(&mut self, msg: &ClientMessage) {
-            let message = Message::Text(msg.as_json());
+            let message = Message::Text(msg.as_json().into());
             debug!(target: "test_client", "Sending message: {:?}", message);
             self.write.send(message).await.unwrap();
         }
