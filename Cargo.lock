@@ -1769,8 +1769,10 @@ dependencies = [
  "nostr-sdk",
  "rand",
  "serde",
+ "serde_json",
  "tokio",
  "tokio-tungstenite 0.26.1",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]
