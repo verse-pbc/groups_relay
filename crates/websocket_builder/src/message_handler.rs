@@ -6,7 +6,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver as MpscReceiver, Sender as MpscSender};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error};
+use tracing::error;
 
 /// A trait for converting between wire format (string) messages and application types.
 ///
@@ -138,27 +138,11 @@ impl<
             0,
         );
 
-        debug!(
-            "[{}] Starting inbound message processing through middleware chain",
-            connection_id
-        );
-
-        // Process through first middleware
+        // Process through first middleware only - it will handle chain progression
         if let Err(e) = self.middlewares[0].process_inbound(&mut ctx).await {
             error!("[{}] Error in first middleware: {:?}", connection_id, e);
             return Err(WebsocketError::HandlerError(e.into(), state));
         }
-
-        // Continue processing through the rest of the chain
-        if let Err(e) = ctx.next().await {
-            error!("[{}] Error in middleware chain: {:?}", connection_id, e);
-            return Err(WebsocketError::HandlerError(e.into(), state));
-        }
-
-        debug!(
-            "[{}] Completed inbound message processing through middleware chain",
-            connection_id
-        );
 
         Ok(state)
     }
@@ -186,11 +170,6 @@ impl<
         middleware_index: usize,
         mut state: TapState,
     ) -> Result<(TapState, Option<String>), WebsocketError<TapState>> {
-        debug!(
-            "[{}] Starting outbound message processing from middleware {}",
-            connection_id, middleware_index
-        );
-
         let message = if middleware_index > 0 {
             let mut ctx = OutboundContext::new(
                 connection_id.clone(),
@@ -201,11 +180,7 @@ impl<
                 middleware_index,
             );
 
-            debug!(
-                "[{}] Processing through remaining middlewares starting at {}",
-                connection_id, middleware_index
-            );
-
+            // Start with the current middleware and work backward
             if let Err(e) = self.middlewares[middleware_index]
                 .process_outbound(&mut ctx)
                 .await
@@ -217,23 +192,13 @@ impl<
                 return Err(WebsocketError::HandlerError(e.into(), state));
             };
 
-            debug!(
-                "[{}] Middleware processing complete, message present: {:?}",
-                connection_id,
-                ctx.message.is_some()
-            );
             ctx.message
         } else {
-            debug!(
-                "[{}] No middleware processing needed (index 0)",
-                connection_id
-            );
             Some(message)
         };
 
         match message {
             Some(message) => {
-                debug!("[{}] Converting outbound message to string", connection_id);
                 let Ok(string_message) = self.message_converter.outbound_to_string(message) else {
                     error!(
                         "[{}] Failed to convert outbound message to string",
@@ -244,16 +209,9 @@ impl<
                         state,
                     ));
                 };
-                debug!(
-                    "[{}] Successfully converted message to string",
-                    connection_id
-                );
                 Ok((state, Some(string_message)))
             }
-            None => {
-                debug!("[{}] No message to send after processing", connection_id);
-                Ok((state, None))
-            }
+            None => Ok((state, None)),
         }
     }
 

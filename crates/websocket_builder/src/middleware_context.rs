@@ -520,7 +520,7 @@ impl<'a, S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 's
     /// Advances to the next middleware in the chain.
     ///
     /// This method:
-    /// 1. Increments the middleware index
+    /// 1. Decrements the middleware index
     /// 2. Updates the message sender's index
     /// 3. Calls the next middleware's `process_outbound` method
     ///
@@ -537,7 +537,8 @@ impl<'a, S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 's
             sender.index -= 1;
         }
 
-        self.middlewares[self.index].process_outbound(self).await
+        let middleware = &self.middlewares[self.index];
+        middleware.process_outbound(self).await
     }
 }
 
