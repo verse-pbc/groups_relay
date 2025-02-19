@@ -6,6 +6,7 @@ use crate::groups::group::{
     KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022, NON_GROUP_ALLOWED_KINDS,
 };
 use crate::metrics;
+use crate::nostr_database::RelayDatabase;
 use crate::nostr_session_state::NostrConnectionState;
 use crate::Groups;
 use crate::StoreCommand;
@@ -14,19 +15,23 @@ use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tracing::error;
-use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage};
+use websocket_builder::{
+    ConnectionContext, InboundContext, Middleware, OutboundContext, SendMessage,
+};
 
 #[derive(Debug)]
 pub struct Nip29Middleware {
     groups: Arc<Groups>,
     relay_pubkey: PublicKey,
+    database: Arc<RelayDatabase>,
 }
 
 impl Nip29Middleware {
-    pub fn new(groups: Arc<Groups>, relay_pubkey: PublicKey) -> Self {
+    pub fn new(groups: Arc<Groups>, relay_pubkey: PublicKey, database: Arc<RelayDatabase>) -> Self {
         Self {
             groups,
             relay_pubkey,
+            database,
         }
     }
 
@@ -61,7 +66,7 @@ impl Nip29Middleware {
             k if k == KIND_GROUP_EDIT_METADATA_9002 => {
                 self.groups.handle_edit_metadata(event)?;
                 let Some(group) = self.groups.find_group_from_event(event) else {
-                    return Ok(None);
+                    return Err(Error::notice("Group not found for this group content"));
                 };
                 let metadata_event = group.generate_metadata_event(&self.relay_pubkey);
                 vec![
@@ -319,7 +324,7 @@ impl Middleware for Nip29Middleware {
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        let response_message = match &ctx.message {
+        match &ctx.message {
             ClientMessage::Event(ref event) => {
                 // Increment the inbound events processed counter
                 crate::metrics::inbound_events_processed().increment(1);
@@ -327,36 +332,194 @@ impl Middleware for Nip29Middleware {
                 match self.handle_event(event, &ctx.state.authed_pubkey).await {
                     Ok(Some(events_to_save)) => {
                         let event_id = event.id;
+                        tracing::debug!("Nip29Middleware::process_inbound: processing event; events_to_save: {:?}", events_to_save);
                         ctx.state.save_events(events_to_save).await?;
-                        Some(RelayMessage::ok(event_id, true, ""))
+                        tracing::debug!(
+                            "Nip29Middleware::process_inbound: saved events for event_id: {:?}",
+                            event_id
+                        );
+                        tracing::debug!("Nip29Middleware::process_inbound: sending OK message for event_id: {:?}", event_id);
+                        ctx.send_message(RelayMessage::ok(
+                            event_id,
+                            true,
+                            "Event processed successfully",
+                        ))
+                        .await?;
+                        Ok(())
                     }
-                    Ok(None) => return Ok(()),
+                    Ok(None) => {
+                        tracing::debug!(
+                            "Nip29Middleware::process_inbound: handle_event returned None"
+                        );
+                        Ok(())
+                    }
                     Err(e) => {
                         if let Err(err) = e.handle_inbound_error(ctx).await {
                             error!("Failed to handle inbound error: {}", err);
                         }
-                        return Ok(());
+                        Ok(())
                     }
                 }
             }
             ClientMessage::Req {
+                subscription_id,
                 filter,
-                subscription_id: _,
             } => {
+                tracing::debug!(
+                    target: "event_store",
+                    "[{}] Processing REQ message for subscription {}",
+                    ctx.connection_id,
+                    subscription_id
+                );
+
+                // First verify the filter
                 if let Err(e) = self.verify_filter(ctx.state.authed_pubkey, filter) {
                     if let Err(e) = e.handle_inbound_error(ctx).await {
                         error!("Failed to handle inbound error: {}", e);
                     }
                     return Ok(());
                 }
-                None
-            }
-            _ => None,
-        };
 
-        match response_message {
-            Some(relay_message) => ctx.send_message(relay_message).await,
-            None => ctx.next().await,
+                // Then handle the subscription
+                let connection = ctx.state.relay_connection.as_ref();
+                if let Some(connection) = connection {
+                    if let Err(e) = connection
+                        .handle_subscription_request(
+                            subscription_id.clone(),
+                            vec![(**filter).clone()],
+                        )
+                        .await
+                    {
+                        error!(
+                            target: "event_store",
+                            "[{}] Failed to handle subscription request {}: {}",
+                            ctx.connection_id,
+                            subscription_id,
+                            e
+                        );
+                        if let Err(err) = e.handle_inbound_error(ctx).await {
+                            error!("Failed to handle inbound error: {}", err);
+                        }
+                        return Ok(());
+                    }
+                } else {
+                    error!(
+                        target: "event_store",
+                        "[{}] No connection available for subscription {}",
+                        ctx.connection_id,
+                        subscription_id
+                    );
+                }
+
+                Ok(())
+            }
+            ClientMessage::ReqMultiFilter {
+                subscription_id,
+                filters,
+            } => {
+                tracing::debug!(
+                    target: "event_store",
+                    "[{}] Processing REQ message for subscription {} with multiple filters",
+                    ctx.connection_id,
+                    subscription_id
+                );
+
+                // Verify each filter
+                for filter in filters.iter() {
+                    if let Err(e) = self.verify_filter(ctx.state.authed_pubkey, filter) {
+                        if let Err(e) = e.handle_inbound_error(ctx).await {
+                            error!("Failed to handle inbound error: {}", e);
+                        }
+                        return Ok(());
+                    }
+                }
+
+                // Then handle the subscription
+                let connection = ctx.state.relay_connection.as_ref();
+                if let Some(connection) = connection {
+                    if let Err(e) = connection
+                        .handle_subscription_request(subscription_id.clone(), filters.clone())
+                        .await
+                    {
+                        error!(
+                            target: "event_store",
+                            "[{}] Failed to handle subscription request {}: {}",
+                            ctx.connection_id,
+                            subscription_id,
+                            e
+                        );
+                        if let Err(err) = e.handle_inbound_error(ctx).await {
+                            error!("Failed to handle inbound error: {}", err);
+                        }
+                        return Ok(());
+                    }
+                } else {
+                    error!(
+                        target: "event_store",
+                        "[{}] No connection available for subscription {}",
+                        ctx.connection_id,
+                        subscription_id
+                    );
+                }
+
+                Ok(())
+            }
+            ClientMessage::Close(subscription_id) => {
+                let connection_id = ctx.connection_id.clone();
+                let subscription_id = subscription_id.clone();
+
+                tracing::debug!(
+                    target: "event_store",
+                    "[{}] Processing CLOSE message for subscription {}",
+                    connection_id,
+                    subscription_id
+                );
+
+                // First handle the unsubscribe
+                let unsubscribe_result =
+                    if let Some(connection) = ctx.state.relay_connection.as_ref() {
+                        connection.handle_unsubscribe(subscription_id.clone()).await
+                    } else {
+                        error!(
+                            target: "event_store",
+                            "[{}] No connection available for unsubscribing {}",
+                            connection_id,
+                            subscription_id
+                        );
+                        Ok(()) // Not having a connection is not an error for unsubscribe
+                    };
+
+                // Then handle any errors and send the response
+                match unsubscribe_result {
+                    Ok(()) => {
+                        // Send CLOSED message to confirm unsubscription
+                        ctx.send_message(RelayMessage::closed(subscription_id.clone(), ""))
+                            .await?;
+
+                        tracing::debug!(
+                            target: "event_store",
+                            "[{}] Successfully unsubscribed {}",
+                            connection_id,
+                            subscription_id
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            target: "event_store",
+                            "[{}] Failed to unsubscribe {}: {}",
+                            connection_id,
+                            subscription_id,
+                            e
+                        );
+                        if let Err(err) = e.handle_inbound_error(ctx).await {
+                            error!("Failed to handle inbound error: {}", err);
+                        }
+                    }
+                }
+
+                Ok(())
+            }
+            _ => ctx.next().await,
         }
     }
 
@@ -376,24 +539,296 @@ impl Middleware for Nip29Middleware {
 
         ctx.next().await
     }
+
+    async fn on_connect(
+        &self,
+        ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
+        tracing::debug!(
+            target: "event_store",
+            "[{}] Setting up connection in Nip29Middleware",
+            ctx.connection_id
+        );
+
+        if let Some(sender) = ctx.sender.clone() {
+            ctx.state
+                .setup_connection(ctx.connection_id.clone(), self.database.clone(), sender)
+                .await?;
+
+            tracing::debug!(
+                target: "event_store",
+                "[{}] Connection setup complete in Nip29Middleware",
+                ctx.connection_id
+            );
+        } else {
+            tracing::error!(
+                target: "event_store",
+                "[{}] No sender available for connection setup in Nip29Middleware",
+                ctx.connection_id
+            );
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_utils::{create_test_event, create_test_keys, create_test_state, setup_test};
-    use websocket_builder::OutboundContext;
+    use axum::{
+        extract::{ConnectInfo, State, WebSocketUpgrade},
+        response::IntoResponse,
+        routing::get,
+        Router,
+    };
+    use futures_util::{SinkExt, StreamExt};
+    use std::{net::SocketAddr, time::Duration};
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+    use tokio_util::sync::CancellationToken;
+    use tracing::{debug, error, warn};
+    use websocket_builder::{
+        InboundContext, MessageConverter, OutboundContext, StateFactory, WebSocketBuilder,
+        WebSocketHandler,
+    };
+
+    struct TestClient {
+        write: futures_util::stream::SplitSink<
+            WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+            Message,
+        >,
+        read: futures_util::stream::SplitStream<
+            WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+        >,
+    }
+
+    #[derive(Clone)]
+    struct TestStateFactory;
+
+    impl StateFactory<NostrConnectionState> for TestStateFactory {
+        fn create_state(&self, token: CancellationToken) -> NostrConnectionState {
+            NostrConnectionState {
+                challenge: None,
+                authed_pubkey: None,
+                relay_url: RelayUrl::parse("ws://test.relay").expect("Invalid test relay URL"),
+                relay_connection: None,
+                connection_token: token.clone(),
+                event_start_time: None,
+            }
+        }
+    }
+
+    struct ServerState {
+        ws_handler: WebSocketHandler<
+            NostrConnectionState,
+            ClientMessage,
+            RelayMessage,
+            NostrMessageConverter,
+            TestStateFactory,
+        >,
+        shutdown: CancellationToken,
+    }
+
+    async fn websocket_handler(
+        ws: WebSocketUpgrade,
+        ConnectInfo(addr): ConnectInfo<SocketAddr>,
+        State(state): State<Arc<ServerState>>,
+    ) -> impl IntoResponse {
+        ws.on_upgrade(move |socket| async move {
+            state
+                .ws_handler
+                .start(socket, addr.to_string(), state.shutdown.clone())
+                .await
+                .unwrap();
+        })
+    }
+
+    async fn start_test_server(database: Arc<RelayDatabase>) -> (SocketAddr, CancellationToken) {
+        let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        let cancellation_token = CancellationToken::new();
+        let token = cancellation_token.clone();
+
+        let ws_handler = WebSocketBuilder::new(TestStateFactory, NostrMessageConverter)
+            .with_middleware(Nip29Middleware::new(
+                Arc::new(
+                    Groups::load_groups(database.clone(), Keys::generate().public_key())
+                        .await
+                        .unwrap(),
+                ),
+                Keys::generate().public_key(),
+                database,
+            ))
+            .build();
+
+        let server_state = ServerState {
+            ws_handler,
+            shutdown: token,
+        };
+
+        let app = Router::new()
+            .route("/", get(websocket_handler))
+            .with_state(Arc::new(server_state));
+
+        let listener = TcpListener::bind(addr).await.unwrap();
+        let local_addr = listener.local_addr().unwrap();
+
+        let token = cancellation_token.clone();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                token.cancelled().await;
+            })
+            .await
+            .unwrap();
+        });
+
+        (local_addr, cancellation_token)
+    }
+
+    impl TestClient {
+        async fn connect(url: &str) -> Self {
+            debug!(target: "test_client", "Connecting to {}", url);
+            let (ws_stream, _) = connect_async(url).await.unwrap();
+            let (write, read) = ws_stream.split();
+            debug!(target: "test_client", "Connected successfully to {}", url);
+            Self { write, read }
+        }
+
+        async fn send_message(&mut self, msg: &ClientMessage) {
+            let message = Message::Text(msg.as_json().into());
+            debug!(target: "test_client", "Sending message: {:?}", message);
+            self.write.send(message).await.unwrap();
+        }
+
+        async fn expect_message(&mut self) -> RelayMessage {
+            debug!(target: "test_client", "Waiting for message");
+            match self.read.next().await {
+                Some(Ok(msg)) => {
+                    debug!(target: "test_client", "Received message: {:?}", msg);
+                    match msg {
+                        Message::Text(text) => RelayMessage::from_json(&*text).unwrap(),
+                        Message::Close(_) => {
+                            debug!(target: "test_client", "Received close frame, sending close response");
+                            // Send close frame in response if we haven't already
+                            let _ = self.write.send(Message::Close(None)).await;
+                            panic!("Unexpected close frame");
+                        }
+                        _ => panic!("Unexpected message type: {:?}", msg),
+                    }
+                }
+                Some(Err(e)) => {
+                    error!(target: "test_client", "WebSocket error: {}", e);
+                    panic!("WebSocket error: {}", e);
+                }
+                None => {
+                    error!(target: "test_client", "Connection closed unexpectedly");
+                    panic!("Connection closed unexpectedly");
+                }
+            }
+        }
+
+        async fn expect_closed(&mut self, subscription_id: &SubscriptionId) {
+            debug!(
+                target: "test_client",
+                "Expecting CLOSED for subscription {}", subscription_id
+            );
+            match self.expect_message().await {
+                RelayMessage::Closed {
+                    subscription_id: sub_id,
+                    ..
+                } => {
+                    assert_eq!(sub_id, *subscription_id, "CLOSED subscription ID mismatch");
+                    debug!(
+                        target: "test_client",
+                        "Successfully received CLOSED for subscription {}", subscription_id
+                    );
+                }
+                msg => panic!(
+                    "Expected CLOSED message for subscription {}, got: {:?}",
+                    subscription_id, msg
+                ),
+            }
+        }
+
+        async fn close(mut self) {
+            debug!(target: "test_client", "Initiating graceful close");
+            // Send close frame
+            if let Err(e) = self.write.send(Message::Close(None)).await {
+                warn!(target: "test_client", "Failed to send close frame: {}", e);
+            }
+
+            // Wait for close frame response or timeout after 1 second
+            let timeout = tokio::time::sleep(Duration::from_secs(1));
+            tokio::pin!(timeout);
+
+            loop {
+                tokio::select! {
+                    msg = self.read.next() => {
+                        match msg {
+                            Some(Ok(Message::Close(_))) => {
+                                debug!(target: "test_client", "Received close frame response");
+                                break;
+                            }
+                            Some(Ok(msg)) => {
+                                debug!(target: "test_client", "Ignoring message during close: {:?}", msg);
+                                continue;
+                            }
+                            Some(Err(e)) => {
+                                warn!(target: "test_client", "Error during close: {}", e);
+                                break;
+                            }
+                            None => {
+                                debug!(target: "test_client", "Connection closed by server");
+                                break;
+                            }
+                        }
+                    }
+                    _ = &mut timeout => {
+                        warn!(target: "test_client", "Close handshake timed out");
+                        break;
+                    }
+                }
+            }
+
+            debug!(target: "test_client", "Close complete");
+        }
+    }
+
+    #[derive(Clone)]
+    struct NostrMessageConverter;
+
+    impl MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
+        fn outbound_to_string(&self, message: RelayMessage) -> Result<String> {
+            debug!("Converting outbound message to string: {:?}", message);
+            Ok(message.as_json())
+        }
+
+        fn inbound_from_string(&self, message: String) -> Result<Option<ClientMessage>> {
+            // Parse synchronously since JSON parsing doesn't need to be async
+            if let Ok(client_message) = ClientMessage::from_json(&message) {
+                debug!("Successfully parsed inbound message: {}", message);
+                Ok(Some(client_message))
+            } else {
+                error!("Ignoring invalid inbound message: {}", message);
+                Ok(None)
+            }
+        }
+    }
 
     #[tokio::test]
     async fn test_group_content_event_without_group() {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups, admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups, admin_keys.public_key(), database);
 
         // Create a content event for a non-existent group
         let event = create_test_event(
@@ -417,11 +852,11 @@ mod tests {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups, admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups, admin_keys.public_key(), database);
 
         // Create a content event for a non-existent group
         let event = create_test_event(
@@ -441,11 +876,11 @@ mod tests {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
 
         // Create a group
         let group_id = "test_group";
@@ -495,11 +930,11 @@ mod tests {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, non_member_keys) = create_test_keys().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
 
         // Create a group
         let group_id = "test_group";
@@ -537,11 +972,11 @@ mod tests {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
 
         // Create a group
         let group_id = "test_group";
@@ -579,11 +1014,11 @@ mod tests {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
 
         let normal_filter = Filter::new()
             .kind(Kind::Custom(11))
@@ -598,11 +1033,11 @@ mod tests {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
 
         let meta_filter = Filter::new()
             .kind(Kind::Custom(9007))
@@ -617,11 +1052,11 @@ mod tests {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
 
         let ref_filter = Filter::new()
             .kind(Kind::Custom(11))
@@ -636,11 +1071,11 @@ mod tests {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
 
         let non_existing_group_filter = Filter::new().kind(Kind::Custom(11)).custom_tag(
             SingleLetterTag::lowercase(Alphabet::H),
@@ -656,11 +1091,11 @@ mod tests {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
 
         // Create a test group
         let group_id = "test_group";
@@ -685,11 +1120,11 @@ mod tests {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, _) = create_test_keys().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
 
         let private_group_id = "private_group";
         let private_create_event = create_test_event(
@@ -730,11 +1165,11 @@ mod tests {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, _, non_member_keys) = create_test_keys().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
 
         let private_group_id = "private_group";
         let private_create_event = create_test_event(
@@ -763,11 +1198,11 @@ mod tests {
     async fn test_filter_verification_private_group_no_auth() {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
 
         let private_group_id = "private_group";
         let private_create_event = create_test_event(
@@ -794,11 +1229,11 @@ mod tests {
     async fn test_filter_verification_private_group_relay_access() {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let groups = Arc::new(
-            Groups::load_groups(database, admin_keys.public_key())
+            Groups::load_groups(database.clone(), admin_keys.public_key())
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key());
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
 
         let private_group_id = "private_group";
         let private_create_event = create_test_event(
@@ -821,6 +1256,113 @@ mod tests {
         assert!(middleware
             .verify_filter(Some(admin_keys.public_key()), &private_filter)
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_group_not_found_single_ok_message() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database.clone(), admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups, admin_keys.public_key(), database);
+
+        // Create a content event for a non-existent group
+        let event = create_test_event(
+            &member_keys,
+            11, // Group content event
+            vec![Tag::custom(TagKind::h(), ["non_existent_group"])],
+        )
+        .await;
+
+        // Create a test context
+        let mut state = create_test_state(None);
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Event(Box::new(event.clone())),
+            None,
+            &mut state,
+            &[],
+            0,
+        );
+
+        // Process the event
+        let result = middleware.process_inbound(&mut ctx).await;
+        assert!(result.is_ok());
+
+        // Verify that no OK message was sent since we're letting EventStoreMiddleware handle it
+        assert!(ctx.sender.is_none() || ctx.capacity() == 0);
+    }
+
+    #[tokio::test]
+    async fn test_close_subscription() {
+        let (_tmp_dir, database, _admin_keys) = setup_test().await;
+
+        // Start the test server
+        let (addr, token) = start_test_server(database).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Connect client
+        let url = format!("ws://{}", addr);
+        let mut client = TestClient::connect(&url).await;
+
+        // Send CLOSE message
+        let subscription_id = SubscriptionId::new("test_sub");
+        client
+            .send_message(&ClientMessage::Close(subscription_id.clone()))
+            .await;
+
+        // Verify we receive a CLOSED message
+        client.expect_closed(&subscription_id).await;
+
+        // Clean up
+        client.close().await;
+        token.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_close_active_subscription() {
+        let (_tmp_dir, database, _admin_keys) = setup_test().await;
+
+        // Start the test server
+        let (addr, token) = start_test_server(database).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Connect client
+        let url = format!("ws://{}", addr);
+        let mut client = TestClient::connect(&url).await;
+
+        // Create a subscription first
+        let subscription_id = SubscriptionId::new("test_sub");
+        let filter = Filter::new().kinds(vec![Kind::TextNote]).limit(5);
+        client
+            .send_message(&ClientMessage::Req {
+                subscription_id: subscription_id.clone(),
+                filter: Box::new(filter),
+            })
+            .await;
+
+        // Wait for EOSE since there are no historical events
+        match client.expect_message().await {
+            RelayMessage::EndOfStoredEvents(sub_id) => {
+                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+            }
+            msg => panic!("Expected EOSE message, got: {:?}", msg),
+        }
+
+        // Now close the subscription
+        client
+            .send_message(&ClientMessage::Close(subscription_id.clone()))
+            .await;
+
+        // Verify we receive a CLOSED message
+        client.expect_closed(&subscription_id).await;
+
+        // Clean up
+        client.close().await;
+        token.cancel();
     }
 
     fn create_test_context(

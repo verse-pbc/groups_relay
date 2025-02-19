@@ -437,6 +437,156 @@ impl EventStoreConnection {
     pub fn get_local_subscription_count(&self) -> usize {
         self.local_subscription_count.load(Ordering::Relaxed)
     }
+
+    /// Fetches historical events for a subscription and sends them through the provided sender
+    /// Returns the number of events sent
+    pub async fn fetch_historical_events(
+        &self,
+        subscription_id: &SubscriptionId,
+        filters: &[Filter],
+        mut sender: MessageSender<RelayMessage>,
+    ) -> Result<usize, Error> {
+        let events = self.fetch_events(filters.to_vec()).await?;
+
+        // Send each event
+        let len = events.len();
+        let capacity = self.sender_capacity() / 2;
+
+        for event in events.into_iter().take(capacity) {
+            if let Err(e) = sender
+                .send(RelayMessage::Event {
+                    subscription_id: subscription_id.clone(),
+                    event: Box::new(event),
+                })
+                .await
+            {
+                error!(
+                    target: "event_store",
+                    "[{}] Failed to send historical event to subscription {}: {:?}",
+                    self.id,
+                    subscription_id,
+                    e
+                );
+            }
+        }
+
+        debug!(
+            target: "event_store",
+            "[{}] Sending EOSE for subscription {} after {} historical events",
+            self.id,
+            subscription_id,
+            len
+        );
+
+        // Send EOSE
+        if let Err(e) = sender
+            .send(RelayMessage::EndOfStoredEvents(subscription_id.clone()))
+            .await
+        {
+            error!(
+                target: "event_store",
+                "[{}] Failed to send EOSE to subscription {}: {:?}",
+                self.id,
+                subscription_id,
+                e
+            );
+        }
+
+        Ok(len)
+    }
+
+    /// Handles a complete subscription request by:
+    /// 1. Adding the subscription
+    /// 2. Fetching and sending historical events
+    /// 3. Sending EOSE
+    pub async fn handle_subscription_request(
+        &self,
+        subscription_id: SubscriptionId,
+        filters: Vec<Filter>,
+    ) -> Result<(), Error> {
+        debug!(
+            target: "event_store",
+            "[{}] Processing subscription request for {}",
+            self.id,
+            subscription_id
+        );
+
+        let Some(sender) = &self.outgoing_sender else {
+            error!(
+                target: "event_store",
+                "[{}] No outgoing sender available for subscription {}",
+                self.id,
+                subscription_id
+            );
+            return Err(Error::Internal {
+                message: "No outgoing sender available".to_string(),
+                backtrace: Backtrace::capture(),
+            });
+        };
+
+        // First add the subscription
+        if let Err(e) = self
+            .handle_subscription(subscription_id.clone(), filters.clone())
+            .await
+        {
+            error!(
+                target: "event_store",
+                "[{}] Failed to add subscription {}: {}",
+                self.id,
+                subscription_id,
+                e
+            );
+            return Err(e);
+        }
+
+        debug!(
+            target: "event_store",
+            "[{}] Successfully added subscription {}",
+            self.id,
+            subscription_id
+        );
+
+        // Then fetch and send historical events
+        if let Err(e) = self
+            .fetch_historical_events(&subscription_id, &filters, sender.clone())
+            .await
+        {
+            error!(
+                target: "event_store",
+                "[{}] Failed to fetch historical events for subscription {}: {}",
+                self.id,
+                subscription_id,
+                e
+            );
+            // Clean up subscription since we failed
+            self.remove_subscription(&subscription_id);
+            return Err(e);
+        }
+
+        debug!(
+            target: "event_store",
+            "[{}] Successfully completed subscription request for {}",
+            self.id,
+            subscription_id
+        );
+
+        Ok(())
+    }
+
+    /// Cleans up resources and metrics when the connection is closed
+    pub fn cleanup(&self) {
+        let remaining_subs = self.get_local_subscription_count();
+        if remaining_subs > 0 {
+            debug!(
+                target: "event_store",
+                "[{}] Cleaning up {} remaining subscriptions from metrics",
+                self.id,
+                remaining_subs
+            );
+            // Decrement the global metrics by the number of subscriptions that weren't explicitly closed
+            crate::metrics::active_subscriptions().decrement(remaining_subs as f64);
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -453,5 +603,684 @@ impl StoreCommand {
             StoreCommand::SaveSignedEvent(event) => event.kind.is_replaceable(),
             StoreCommand::DeleteEvents(_) => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::setup_test;
+    use std::time::{Duration, Instant};
+    use tokio::sync::mpsc;
+    use websocket_builder::MessageSender;
+
+    #[tokio::test]
+    async fn test_subscription_receives_historical_events() {
+        let (_tmp_dir, database, _admin_keys) = setup_test().await;
+
+        // Create and save a historical event
+        let keys = Keys::generate();
+        let historical_event = EventBuilder::text_note("Historical event")
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let historical_event = keys.sign_event(historical_event).await.unwrap();
+        database.save_signed_event(&historical_event).await.unwrap();
+
+        // Create a connection with a channel to receive messages
+        let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
+        let connection = EventStoreConnection::new(
+            "test_conn".to_string(),
+            database,
+            "test_db".to_string(),
+            CancellationToken::new(),
+            MessageSender::new(tx, 0),
+        )
+        .await
+        .unwrap();
+
+        // Set up subscription
+        let subscription_id = SubscriptionId::new("test_sub");
+        let filter = Filter::new().kinds(vec![Kind::TextNote]).limit(5);
+
+        // Handle subscription request
+        connection
+            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .await
+            .unwrap();
+
+        // Verify we receive the historical event
+        match rx.recv().await {
+            Some((
+                RelayMessage::Event {
+                    event,
+                    subscription_id: sub_id,
+                },
+                _idx,
+            )) => {
+                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(*event, historical_event, "Event content mismatch");
+            }
+            other => panic!("Expected Event message, got: {:?}", other),
+        }
+
+        // Verify we receive EOSE
+        match rx.recv().await {
+            Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
+                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+            }
+            other => panic!("Expected EOSE message, got: {:?}", other),
+        }
+
+        // Verify subscription count
+        assert_eq!(connection.get_local_subscription_count(), 1);
+
+        // Clean up
+        connection.cleanup();
+    }
+
+    #[tokio::test]
+    async fn test_subscription_receives_new_events() {
+        let (_tmp_dir, database, _admin_keys) = setup_test().await;
+
+        // Create a connection with a channel to receive messages
+        let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
+        let connection = EventStoreConnection::new(
+            "test_conn".to_string(),
+            database.clone(),
+            "test_db".to_string(),
+            CancellationToken::new(),
+            MessageSender::new(tx, 0),
+        )
+        .await
+        .unwrap();
+
+        // Set up subscription
+        let subscription_id = SubscriptionId::new("test_sub");
+        let filter = Filter::new().kinds(vec![Kind::TextNote]).limit(5);
+
+        // Handle subscription request
+        connection
+            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .await
+            .unwrap();
+
+        // Verify we receive EOSE since there are no historical events
+        match rx.recv().await {
+            Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
+                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+            }
+            other => panic!("Expected EOSE message, got: {:?}", other),
+        }
+
+        // Create and save a new event
+        let keys = Keys::generate();
+        let new_event = EventBuilder::text_note("Hello, world!")
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let new_event = keys.sign_event(new_event).await.unwrap();
+
+        // Save and broadcast the event
+        connection
+            .save_and_broadcast(new_event.clone())
+            .await
+            .unwrap();
+
+        // Verify we receive the new event
+        match rx.recv().await {
+            Some((
+                RelayMessage::Event {
+                    event,
+                    subscription_id: sub_id,
+                },
+                _idx,
+            )) => {
+                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(*event, new_event, "Event content mismatch");
+            }
+            other => panic!("Expected Event message, got: {:?}", other),
+        }
+
+        // Verify subscription count
+        assert_eq!(connection.get_local_subscription_count(), 1);
+
+        // Clean up
+        connection.cleanup();
+    }
+
+    #[tokio::test]
+    async fn test_subscription_receives_both_historical_and_new_events() {
+        let (_tmp_dir, database, _admin_keys) = setup_test().await;
+
+        // Create and save a historical event
+        let keys = Keys::generate();
+        let historical_event = EventBuilder::text_note("Historical event")
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let historical_event = keys.sign_event(historical_event).await.unwrap();
+        database.save_signed_event(&historical_event).await.unwrap();
+
+        // Create a connection with a channel to receive messages
+        let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
+        let connection = EventStoreConnection::new(
+            "test_conn".to_string(),
+            database.clone(),
+            "test_db".to_string(),
+            CancellationToken::new(),
+            MessageSender::new(tx, 0),
+        )
+        .await
+        .unwrap();
+
+        // Set up subscription
+        let subscription_id = SubscriptionId::new("test_sub");
+        let filter = Filter::new().kinds(vec![Kind::TextNote]).limit(5);
+
+        // Handle subscription request
+        connection
+            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .await
+            .unwrap();
+
+        // Verify we receive the historical event
+        match rx.recv().await {
+            Some((
+                RelayMessage::Event {
+                    event,
+                    subscription_id: sub_id,
+                },
+                _idx,
+            )) => {
+                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(
+                    *event, historical_event,
+                    "Historical event content mismatch"
+                );
+            }
+            other => panic!("Expected Event message, got: {:?}", other),
+        }
+
+        // Verify we receive EOSE
+        match rx.recv().await {
+            Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
+                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+            }
+            other => panic!("Expected EOSE message, got: {:?}", other),
+        }
+
+        // Create and save a new event
+        let keys = Keys::generate();
+        let new_event =
+            EventBuilder::text_note("New event").build_with_ctx(&Instant::now(), keys.public_key());
+        let new_event = keys.sign_event(new_event).await.unwrap();
+
+        // Save and broadcast the event
+        connection
+            .save_and_broadcast(new_event.clone())
+            .await
+            .unwrap();
+
+        // Verify we receive the new event
+        match rx.recv().await {
+            Some((
+                RelayMessage::Event {
+                    event,
+                    subscription_id: sub_id,
+                },
+                _idx,
+            )) => {
+                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(*event, new_event, "New event content mismatch");
+            }
+            other => panic!("Expected Event message, got: {:?}", other),
+        }
+
+        // Verify subscription count
+        assert_eq!(connection.get_local_subscription_count(), 1);
+
+        // Clean up
+        connection.cleanup();
+    }
+
+    #[tokio::test]
+    async fn test_limit_filter_returns_events_in_reverse_chronological_order() {
+        let (_tmp_dir, database, _admin_keys) = setup_test().await;
+
+        // Create and save events with different timestamps
+        let keys = Keys::generate();
+        let mut events = vec![];
+
+        // Create events with increasing timestamps
+        for i in 0..5 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let event = EventBuilder::text_note(format!("Event {}", i))
+                .build_with_ctx(&Instant::now(), keys.public_key());
+            let event = keys.sign_event(event).await.unwrap();
+            database.save_signed_event(&event).await.unwrap();
+            events.push(event);
+        }
+
+        // Create a connection with a channel to receive messages
+        let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
+        let connection = EventStoreConnection::new(
+            "test_conn".to_string(),
+            database.clone(),
+            "test_db".to_string(),
+            CancellationToken::new(),
+            MessageSender::new(tx, 0),
+        )
+        .await
+        .unwrap();
+
+        // Set up subscription with limit filter
+        let subscription_id = SubscriptionId::new("limited_events");
+        let filter = Filter::new().limit(3); // Only get last 3 events
+
+        // Handle subscription request
+        connection
+            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .await
+            .unwrap();
+
+        // Collect received events
+        let mut received_events = vec![];
+        for _ in 0..3 {
+            match rx.recv().await {
+                Some((
+                    RelayMessage::Event {
+                        event,
+                        subscription_id: sub_id,
+                    },
+                    _idx,
+                )) => {
+                    assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                    received_events.push(*event);
+                }
+                other => panic!("Expected Event message, got: {:?}", other),
+            }
+        }
+
+        // Verify we receive EOSE
+        match rx.recv().await {
+            Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
+                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+            }
+            other => panic!("Expected EOSE message, got: {:?}", other),
+        }
+
+        // Verify events are in reverse chronological order
+        for i in 0..received_events.len() - 1 {
+            assert!(
+                received_events[i].created_at >= received_events[i + 1].created_at,
+                "Events not in reverse chronological order"
+            );
+        }
+
+        // Verify we got the most recent events (last 3 from our 5 events)
+        assert_eq!(received_events.len(), 3);
+        assert_eq!(received_events[0].created_at, events[4].created_at);
+        assert_eq!(received_events[1].created_at, events[3].created_at);
+        assert_eq!(received_events[2].created_at, events[2].created_at);
+
+        // Verify subscription count
+        assert_eq!(connection.get_local_subscription_count(), 1);
+
+        // Clean up
+        connection.cleanup();
+    }
+
+    #[tokio::test]
+    async fn test_empty_filter_returns_text_note_events() {
+        let (_tmp_dir, database, _admin_keys) = setup_test().await;
+
+        // Create and save a text note event
+        let keys = Keys::generate();
+        let text_note = EventBuilder::text_note("Text note event")
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let text_note = keys.sign_event(text_note).await.unwrap();
+        database.save_signed_event(&text_note).await.unwrap();
+
+        // Create a connection with a channel to receive messages
+        let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
+        let connection = EventStoreConnection::new(
+            "test_conn".to_string(),
+            database,
+            "test_db".to_string(),
+            CancellationToken::new(),
+            MessageSender::new(tx, 0),
+        )
+        .await
+        .unwrap();
+
+        // Set up subscription with empty filter
+        let subscription_id = SubscriptionId::new("text_note_events");
+        let filter = Filter::new();
+
+        // Handle subscription request
+        connection
+            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .await
+            .unwrap();
+
+        // We should receive the text note event
+        match rx.recv().await {
+            Some((
+                RelayMessage::Event {
+                    event,
+                    subscription_id: sub_id,
+                },
+                _idx,
+            )) => {
+                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(event.kind, Kind::TextNote, "Event was not a text note");
+            }
+            other => panic!("Expected Event message, got: {:?}", other),
+        }
+
+        // Verify we receive EOSE
+        match rx.recv().await {
+            Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
+                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+            }
+            other => panic!("Expected EOSE message, got: {:?}", other),
+        }
+
+        // Clean up
+        connection.cleanup();
+    }
+
+    #[tokio::test]
+    async fn test_empty_filter_returns_metadata_events() {
+        let (_tmp_dir, database, _admin_keys) = setup_test().await;
+
+        // Create and save a metadata event
+        let keys = Keys::generate();
+        let mut metadata = Metadata::new();
+        metadata.name = Some("Test User".to_string());
+        let metadata_event =
+            EventBuilder::metadata(&metadata).build_with_ctx(&Instant::now(), keys.public_key());
+        let metadata_event = keys.sign_event(metadata_event).await.unwrap();
+        database.save_signed_event(&metadata_event).await.unwrap();
+
+        // Create a connection with a channel to receive messages
+        let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
+        let connection = EventStoreConnection::new(
+            "test_conn".to_string(),
+            database,
+            "test_db".to_string(),
+            CancellationToken::new(),
+            MessageSender::new(tx, 0),
+        )
+        .await
+        .unwrap();
+
+        // Set up subscription with empty filter
+        let subscription_id = SubscriptionId::new("metadata_events");
+        let filter = Filter::new();
+
+        // Handle subscription request
+        connection
+            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .await
+            .unwrap();
+
+        // We should receive the metadata event
+        match rx.recv().await {
+            Some((
+                RelayMessage::Event {
+                    event,
+                    subscription_id: sub_id,
+                },
+                _idx,
+            )) => {
+                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(event.kind, Kind::Metadata, "Event was not a metadata event");
+            }
+            other => panic!("Expected Event message, got: {:?}", other),
+        }
+
+        // Verify we receive EOSE
+        match rx.recv().await {
+            Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
+                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+            }
+            other => panic!("Expected EOSE message, got: {:?}", other),
+        }
+
+        // Clean up
+        connection.cleanup();
+    }
+
+    #[tokio::test]
+    async fn test_empty_filter_returns_contact_list_events() {
+        let (_tmp_dir, database, _admin_keys) = setup_test().await;
+
+        // Create and save a contact list event
+        let keys = Keys::generate();
+        let contacts_event = EventBuilder::new(Kind::ContactList, "[]")
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let contacts_event = keys.sign_event(contacts_event).await.unwrap();
+        database.save_signed_event(&contacts_event).await.unwrap();
+
+        // Create a connection with a channel to receive messages
+        let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
+        let connection = EventStoreConnection::new(
+            "test_conn".to_string(),
+            database,
+            "test_db".to_string(),
+            CancellationToken::new(),
+            MessageSender::new(tx, 0),
+        )
+        .await
+        .unwrap();
+
+        // Set up subscription with empty filter
+        let subscription_id = SubscriptionId::new("contact_list_events");
+        let filter = Filter::new();
+
+        // Handle subscription request
+        connection
+            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .await
+            .unwrap();
+
+        // We should receive the contacts event
+        match rx.recv().await {
+            Some((
+                RelayMessage::Event {
+                    event,
+                    subscription_id: sub_id,
+                },
+                _idx,
+            )) => {
+                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(
+                    event.kind,
+                    Kind::ContactList,
+                    "Event was not a contact list event"
+                );
+            }
+            other => panic!("Expected Event message, got: {:?}", other),
+        }
+
+        // Verify we receive EOSE
+        match rx.recv().await {
+            Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
+                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+            }
+            other => panic!("Expected EOSE message, got: {:?}", other),
+        }
+
+        // Clean up
+        connection.cleanup();
+    }
+
+    #[tokio::test]
+    async fn test_empty_filter_returns_events_from_multiple_authors() {
+        let (_tmp_dir, database, _admin_keys) = setup_test().await;
+
+        // Create events with different authors
+        let keys1 = Keys::generate();
+        let keys2 = Keys::generate();
+
+        let event1 = EventBuilder::text_note("Event from author 1")
+            .build_with_ctx(&Instant::now(), keys1.public_key());
+        let event1 = keys1.sign_event(event1).await.unwrap();
+
+        let event2 = EventBuilder::text_note("Event from author 2")
+            .build_with_ctx(&Instant::now(), keys2.public_key());
+        let event2 = keys2.sign_event(event2).await.unwrap();
+
+        // Save events
+        database.save_signed_event(&event1).await.unwrap();
+        database.save_signed_event(&event2).await.unwrap();
+
+        // Create a connection with a channel to receive messages
+        let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
+        let connection = EventStoreConnection::new(
+            "test_conn".to_string(),
+            database,
+            "test_db".to_string(),
+            CancellationToken::new(),
+            MessageSender::new(tx, 0),
+        )
+        .await
+        .unwrap();
+
+        // Set up subscription with empty filter
+        let subscription_id = SubscriptionId::new("multi_author_events");
+        let filter = Filter::new();
+
+        // Handle subscription request
+        connection
+            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .await
+            .unwrap();
+
+        // We should receive events from both authors
+        let mut received_events = Vec::new();
+        for _ in 0..2 {
+            match rx.recv().await {
+                Some((
+                    RelayMessage::Event {
+                        event,
+                        subscription_id: sub_id,
+                    },
+                    _idx,
+                )) => {
+                    assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                    received_events.push(*event);
+                }
+                other => panic!("Expected Event message, got: {:?}", other),
+            }
+        }
+
+        // Verify we receive EOSE
+        match rx.recv().await {
+            Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
+                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+            }
+            other => panic!("Expected EOSE message, got: {:?}", other),
+        }
+
+        // Verify we got events from both authors
+        assert!(
+            received_events
+                .iter()
+                .any(|e| e.pubkey == keys1.public_key()),
+            "No events from author 1"
+        );
+        assert!(
+            received_events
+                .iter()
+                .any(|e| e.pubkey == keys2.public_key()),
+            "No events from author 2"
+        );
+
+        // Clean up
+        connection.cleanup();
+    }
+
+    #[tokio::test]
+    async fn test_empty_filter_returns_all_event_kinds() {
+        let (_tmp_dir, database, _admin_keys) = setup_test().await;
+
+        // Create and save events of different kinds
+        let keys = Keys::generate();
+        let text_note =
+            EventBuilder::text_note("Text note").build_with_ctx(&Instant::now(), keys.public_key());
+        let text_note = keys.sign_event(text_note).await.unwrap();
+
+        let mut metadata = Metadata::new();
+        metadata.name = Some("Test User".to_string());
+        metadata.about = Some("about me".to_string());
+        metadata.picture = Some("https://example.com/pic.jpg".to_string());
+        let metadata_event =
+            EventBuilder::metadata(&metadata).build_with_ctx(&Instant::now(), keys.public_key());
+        let metadata_event = keys.sign_event(metadata_event).await.unwrap();
+
+        let recommend_relay = EventBuilder::new(Kind::RelayList, "wss://relay.example.com")
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let recommend_relay = keys.sign_event(recommend_relay).await.unwrap();
+
+        // Save all events
+        database.save_signed_event(&text_note).await.unwrap();
+        database.save_signed_event(&metadata_event).await.unwrap();
+        database.save_signed_event(&recommend_relay).await.unwrap();
+
+        // Create a connection with a channel to receive messages
+        let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
+        let connection = EventStoreConnection::new(
+            "test_conn".to_string(),
+            database,
+            "test_db".to_string(),
+            CancellationToken::new(),
+            MessageSender::new(tx, 0),
+        )
+        .await
+        .unwrap();
+
+        // Set up subscription with empty filter
+        let subscription_id = SubscriptionId::new("all_events");
+        let filter = Filter::new();
+
+        // Handle subscription request
+        connection
+            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .await
+            .unwrap();
+
+        // We should receive all events (order may vary)
+        let mut received_kinds = vec![];
+        for _ in 0..3 {
+            match rx.recv().await {
+                Some((
+                    RelayMessage::Event {
+                        event,
+                        subscription_id: sub_id,
+                    },
+                    _idx,
+                )) => {
+                    assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                    received_kinds.push(event.kind);
+                }
+                other => panic!("Expected Event message, got: {:?}", other),
+            }
+        }
+
+        // Verify we receive EOSE
+        match rx.recv().await {
+            Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
+                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+            }
+            other => panic!("Expected EOSE message, got: {:?}", other),
+        }
+
+        // Verify we received all kinds
+        assert!(received_kinds.contains(&Kind::TextNote));
+        assert!(received_kinds.contains(&Kind::Metadata));
+        assert!(received_kinds.contains(&Kind::RelayList));
+
+        // Verify subscription count
+        assert_eq!(connection.get_local_subscription_count(), 1);
+
+        // Clean up
+        connection.cleanup();
     }
 }

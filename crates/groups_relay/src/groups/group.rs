@@ -39,6 +39,10 @@ pub const KIND_NUTZAP_9321: Kind = Kind::Custom(9321); // Nutzap event
 pub const KIND_SIMPLE_LIST_10009: Kind = Kind::Custom(10009); // Simple Groups (NIP-51): List of groups a user wants to remember being in
 pub const KIND_CLAIM_28934: Kind = Kind::Custom(28934); // Claim (NIP-43): Claim auth
 
+// MLS Related
+pub const KIND_GIFT_WRAP: Kind = Kind::GiftWrap;
+pub const KIND_MLS_KEY_PACKAGE: Kind = Kind::MlsKeyPackage;
+
 pub const ADDRESSABLE_EVENT_KINDS: [Kind; 4] = [
     KIND_GROUP_METADATA_39000,
     KIND_GROUP_ADMINS_39001,
@@ -46,7 +50,7 @@ pub const ADDRESSABLE_EVENT_KINDS: [Kind; 4] = [
     KIND_GROUP_ROLES_39003,
 ];
 
-pub const NON_GROUP_ALLOWED_KINDS: [Kind; 8] = [
+pub const NON_GROUP_ALLOWED_KINDS: [Kind; 10] = [
     KIND_SIMPLE_LIST_10009,
     KIND_CLAIM_28934,
     KIND_WALLET_17375,
@@ -55,6 +59,8 @@ pub const NON_GROUP_ALLOWED_KINDS: [Kind; 8] = [
     KIND_QUOTE_7374,
     KIND_NUTZAP_INFO_10019,
     KIND_NUTZAP_9321,
+    KIND_GIFT_WRAP,
+    KIND_MLS_KEY_PACKAGE,
 ];
 
 pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 10] = [

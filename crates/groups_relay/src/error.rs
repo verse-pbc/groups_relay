@@ -4,7 +4,7 @@ use nostr_sdk::prelude::*;
 use snafu::{Backtrace, Snafu};
 use std::borrow::Cow;
 use tracing::{error, warn};
-use websocket_builder::InboundContext;
+use websocket_builder::{InboundContext, SendMessage};
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
@@ -207,11 +207,9 @@ impl Error {
             }
         };
 
-        if let Some(sender) = &mut ctx.sender {
-            for msg in relay_messages {
-                if let Err(e) = sender.send(msg).await {
-                    error!("Failed to send error message: {:?}", e);
-                }
+        for msg in relay_messages {
+            if let Err(e) = ctx.send_message(msg).await {
+                error!("Failed to send error message: {:?}", e);
             }
         }
         Ok(())

@@ -1,193 +1,25 @@
+use crate::error::Error;
 use crate::nostr_session_state::NostrConnectionState;
-use anyhow::Error;
+use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
-use tracing::{debug, info, warn};
-use websocket_builder::{ConnectionContext, InboundContext, Middleware, SendMessage};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{debug, error};
+use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage};
 
-const MAX_AUTH_EVENT_AGE: u64 = 5000;
-
-#[derive(Debug)]
-pub struct Nip42Auth {
-    local_url: String,
+#[derive(Debug, Clone)]
+pub struct Nip42Middleware {
+    auth_url: String,
 }
 
-impl Nip42Auth {
-    pub fn new(local_url: String) -> Self {
-        debug!("Initializing Nip42Auth with local_url: {}", local_url);
-        let local_url = local_url.trim_end_matches('/').to_string();
-        Self { local_url }
-    }
-
-    pub fn authed_pubkey(&self, event: &Event, challenge: Option<&str>) -> Option<PublicKey> {
-        debug!(
-            "Checking auth event: id={}, pubkey={}, kind={}",
-            event.id, event.pubkey, event.kind
-        );
-
-        let challenge = match challenge {
-            Some(c) => {
-                debug!("Found challenge: {}", c);
-                c
-            }
-            None => {
-                warn!("No challenge provided");
-                return None;
-            }
-        };
-
-        if event.kind != Kind::Authentication {
-            warn!(
-                "Event kind is not authentication. Got {}, expected {}",
-                event.kind,
-                Kind::Authentication
-            );
-            return None;
-        }
-
-        if let Err(e) = event.verify() {
-            warn!("Event signature verification failed: {:?}", e);
-            return None;
-        }
-        debug!("Event signature verified successfully");
-
-        let now = Timestamp::now();
-        let event_age = now.as_u64().saturating_sub(event.created_at.as_u64());
-        debug!(
-            "Checking event age. Now: {}, Created: {}, Age: {}ms",
-            now.to_human_datetime(),
-            event.created_at.to_human_datetime(),
-            event_age
-        );
-
-        if event_age > MAX_AUTH_EVENT_AGE {
-            warn!(
-                "Event is too old. Now: {}, Created: {}, Age: {}ms, Max: {}ms",
-                now.to_human_datetime(),
-                event.created_at.to_human_datetime(),
-                event_age,
-                MAX_AUTH_EVENT_AGE
-            );
-            return None;
-        }
-
-        let challenge_tag = event.tags.find_standardized(TagKind::Challenge);
-        debug!("Found challenge tag: {:?}", challenge_tag);
-
-        let has_valid_challenge = matches!(
-            challenge_tag,
-            Some(TagStandard::Challenge(c)) if c == challenge
-        );
-
-        if !has_valid_challenge {
-            warn!(
-                "Event has invalid challenge. Expected: {}, Got: {:?}",
-                challenge, challenge_tag
-            );
-            return None;
-        }
-        debug!("Challenge validated successfully");
-
-        let relay_tag = event.tags.find_standardized(TagKind::Relay);
-        debug!("Found relay tag: {:?}", relay_tag);
-
-        let relay_url = match relay_tag {
-            Some(TagStandard::Relay(relay_url)) => relay_url
-                .as_str_without_trailing_slash()
-                .trim_end_matches('/')
-                .to_string(),
-            None => {
-                warn!("Event has no relay tag");
-                return None;
-            }
-            _ => {
-                warn!("Event has invalid relay tag");
-                return None;
-            }
-        };
-
-        let has_valid_relay = relay_url == self.local_url;
-        debug!(
-            "Checking relay URL. Expected: {}, Got: {}, Match: {}",
-            self.local_url, relay_url, has_valid_relay
-        );
-
-        if !has_valid_relay {
-            warn!(
-                "Event has invalid relay. Expected: {}, Got: {}",
-                self.local_url, relay_url
-            );
-            return None;
-        }
-
-        info!("Authentication successful for pubkey: {}", event.pubkey);
-        Some(event.pubkey)
-    }
-
-    fn get_auth_failure_reason(&self, event: &Event, challenge: Option<&str>) -> Option<String> {
-        if challenge.is_none() {
-            return Some("No challenge found in connection state".to_string());
-        }
-        let challenge = challenge.unwrap();
-
-        if event.kind != Kind::Authentication {
-            return Some(format!(
-                "Event kind is not authentication. Got {}, expected {}",
-                event.kind,
-                Kind::Authentication
-            ));
-        }
-
-        if let Err(e) = event.verify() {
-            return Some(format!("Event signature verification failed: {:?}", e));
-        }
-
-        let now = Timestamp::now();
-        let event_age = now.as_u64().saturating_sub(event.created_at.as_u64());
-        if event_age > MAX_AUTH_EVENT_AGE {
-            return Some(format!(
-                "Event is too old. Created: {}, Age: {}ms, Max: {}ms",
-                event.created_at.to_human_datetime(),
-                event_age,
-                MAX_AUTH_EVENT_AGE
-            ));
-        }
-
-        let challenge_tag = event.tags.find_standardized(TagKind::Challenge);
-        let has_valid_challenge = matches!(
-            challenge_tag,
-            Some(TagStandard::Challenge(c)) if c == challenge
-        );
-        if !has_valid_challenge {
-            return Some(format!(
-                "Invalid challenge. Expected: {}, Got: {:?}",
-                challenge, challenge_tag
-            ));
-        }
-
-        let relay_tag = event.tags.find_standardized(TagKind::Relay);
-        let relay_url = match relay_tag {
-            Some(TagStandard::Relay(relay_url)) => relay_url
-                .as_str_without_trailing_slash()
-                .trim_end_matches('/')
-                .to_string(),
-            None => return Some("No relay tag found in event".to_string()),
-            _ => return Some("Invalid relay tag format".to_string()),
-        };
-
-        if relay_url != self.local_url {
-            return Some(format!(
-                "Invalid relay URL. Expected: {}, Got: {}",
-                self.local_url, relay_url
-            ));
-        }
-
-        None
+impl Nip42Middleware {
+    pub fn new(auth_url: String) -> Self {
+        Self { auth_url }
     }
 }
 
 #[async_trait]
-impl Middleware for Nip42Auth {
+impl Middleware for Nip42Middleware {
     type State = NostrConnectionState;
     type IncomingMessage = ClientMessage;
     type OutgoingMessage = RelayMessage;
@@ -196,63 +28,126 @@ impl Middleware for Nip42Auth {
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        debug!("Processing inbound message");
-
         match &ctx.message {
             ClientMessage::Auth(event) => {
-                info!(
-                    "Processing AUTH message. Event id: {}, pubkey: {}",
-                    event.id, event.pubkey
-                );
-
                 debug!(
-                    "Current connection state - Challenge: {:?}, Authed: {:?}",
-                    ctx.state.challenge, ctx.state.authed_pubkey
+                    target: "auth",
+                    "[{}] Processing AUTH message",
+                    ctx.connection_id
                 );
 
-                if let Some(failure_reason) =
-                    self.get_auth_failure_reason(event, ctx.state.challenge.as_deref())
-                {
-                    warn!(
-                        "Authentication failed for event id {}: {}",
-                        event.id, failure_reason
+                // Verify the challenge matches
+                let Some(challenge) = &ctx.state.challenge else {
+                    error!(
+                        target: "auth",
+                        "[{}] No challenge found for AUTH message",
+                        ctx.connection_id
                     );
-                    ctx.send_message(RelayMessage::Ok {
-                        event_id: event.id,
-                        status: false,
-                        message: format!("auth-failed: {}", failure_reason),
-                    })
-                    .await?;
-                    return ctx.next().await;
+                    return Err(Error::auth_required("No challenge found").into());
+                };
+
+                // Verify the event is a NIP-42 auth event
+                if event.kind != Kind::Authentication {
+                    error!(
+                        target: "auth",
+                        "[{}] Invalid event kind for AUTH message: {}",
+                        ctx.connection_id,
+                        event.kind
+                    );
+                    return Err(Error::auth_required("Invalid event kind").into());
                 }
 
-                // If we get here, authentication was successful
-                ctx.state.authed_pubkey = Some(event.pubkey);
-                info!("Authentication successful for pubkey: {}", event.pubkey);
+                // Verify the event is signed by the correct pubkey
+                if event.verify().is_err() {
+                    error!(
+                        target: "auth",
+                        "[{}] Invalid signature for AUTH message",
+                        ctx.connection_id
+                    );
+                    return Err(Error::auth_required("Invalid signature").into());
+                }
 
-                ctx.send_message(RelayMessage::Ok {
-                    event_id: event.id,
-                    status: true,
-                    message: "".to_string(),
-                })
+                // Verify the challenge tag matches
+                let challenge_tag = event.tags.find_standardized(TagKind::Challenge);
+                if let Some(TagStandard::Challenge(tag_challenge)) = challenge_tag {
+                    if tag_challenge != challenge {
+                        error!(
+                            target: "auth",
+                            "[{}] Challenge mismatch for AUTH message",
+                            ctx.connection_id
+                        );
+                        return Err(Error::auth_required("Challenge mismatch").into());
+                    }
+                } else {
+                    error!(
+                        target: "auth",
+                        "[{}] No challenge tag found in AUTH message",
+                        ctx.connection_id
+                    );
+                    return Err(Error::auth_required("No challenge tag found").into());
+                }
+
+                // Verify the relay tag matches
+                let relay_tag = event.tags.find_standardized(TagKind::Relay);
+                if let Some(TagStandard::Relay(tag_url)) = relay_tag {
+                    if tag_url.as_str_without_trailing_slash() != self.auth_url {
+                        error!(
+                            target: "auth",
+                            "[{}] Relay mismatch for AUTH message",
+                            ctx.connection_id
+                        );
+                        return Err(Error::auth_required("Relay mismatch").into());
+                    }
+                } else {
+                    error!(
+                        target: "auth",
+                        "[{}] No relay tag found in AUTH message",
+                        ctx.connection_id
+                    );
+                    return Err(Error::auth_required("No relay tag found").into());
+                }
+
+                // Verify the event is not expired
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                if event.created_at.as_u64() < now - 600 {
+                    error!(
+                        target: "auth",
+                        "[{}] Expired AUTH message",
+                        ctx.connection_id
+                    );
+                    return Err(Error::auth_required("Expired auth event").into());
+                }
+
+                // Set the authed pubkey
+                ctx.state.authed_pubkey = Some(event.pubkey);
+                debug!(
+                    target: "auth",
+                    "[{}] Successfully authenticated pubkey {}",
+                    ctx.connection_id,
+                    event.pubkey
+                );
+
+                // Send OK message
+                ctx.send_message(RelayMessage::ok(
+                    event.id,
+                    true,
+                    "Successfully authenticated",
+                ))
                 .await?;
-                ctx.next().await
+
+                Ok(())
             }
-            _ => {
-                debug!("Non-AUTH message, passing through");
-                ctx.next().await
-            }
+            _ => ctx.next().await,
         }
     }
 
-    async fn on_connect(
+    async fn process_outbound(
         &self,
-        ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<(), Error> {
-        debug!("New connection, generating challenge");
-        let challenge_event = ctx.state.get_challenge_event();
-        debug!("Generated challenge event: {:?}", challenge_event);
-        ctx.send_message(challenge_event).await?;
+        ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
         ctx.next().await
     }
 }
@@ -260,146 +155,193 @@ impl Middleware for Nip42Auth {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pretty_assertions::assert_eq;
+    use crate::test_utils::create_test_state;
     use std::time::Instant;
 
     #[tokio::test]
     async fn test_authed_pubkey_valid_auth() {
         let keys = Keys::generate();
-        let local_url = RelayUrl::parse("wss://test.relay").unwrap();
-        let auth = Nip42Auth::new(local_url.as_str().to_string());
-        let challenge = "test_challenge";
+        let auth_url = "wss://test.relay".to_string();
+        let middleware = Nip42Middleware::new(auth_url.clone());
+        let mut state = create_test_state(None);
+        let challenge = "test_challenge".to_string();
+        state.challenge = Some(challenge.clone());
 
-        // Create valid auth event
-        let unsigned_event = EventBuilder::new(Kind::Authentication, "")
-            .tag(Tag::from_standardized(TagStandard::Challenge(
-                challenge.to_string(),
+        let auth_event = EventBuilder::new(Kind::Authentication, "")
+            .tag(Tag::from_standardized(TagStandard::Challenge(challenge)))
+            .tag(Tag::from_standardized(TagStandard::Relay(
+                RelayUrl::parse(&auth_url).unwrap(),
             )))
-            .tag(Tag::from_standardized(TagStandard::Relay(local_url)))
             .build_with_ctx(&Instant::now(), keys.public_key());
-        let event = keys.sign_event(unsigned_event).await.unwrap();
+        let auth_event = keys.sign_event(auth_event).await.unwrap();
 
-        // Verify event signature
-        assert!(event.verify().is_ok());
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Auth(Box::new(auth_event.clone())),
+            None,
+            &mut state,
+            &[],
+            0,
+        );
 
-        // Test valid auth
-        let result = auth.authed_pubkey(&event, Some(challenge));
-        assert_eq!(result, Some(keys.public_key()));
-    }
-
-    #[tokio::test]
-    async fn test_authed_pubkey_wrong_challenge() {
-        let keys = Keys::generate();
-        let local_url = RelayUrl::parse("wss://test.relay").unwrap();
-        let auth = Nip42Auth::new(local_url.as_str().to_string());
-        let challenge = "test_challenge";
-
-        // Create valid auth event
-        let unsigned_event = EventBuilder::new(Kind::Authentication, "")
-            .tag(Tag::from_standardized(TagStandard::Challenge(
-                challenge.to_string(),
-            )))
-            .tag(Tag::from_standardized(TagStandard::Relay(local_url)))
-            .build_with_ctx(&Instant::now(), keys.public_key());
-        let event = keys.sign_event(unsigned_event).await.unwrap();
-
-        // Test with wrong challenge
-        let result = auth.authed_pubkey(&event, Some("wrong_challenge"));
-        assert_eq!(result, None);
+        assert!(middleware.process_inbound(&mut ctx).await.is_ok());
+        assert_eq!(state.authed_pubkey, Some(keys.public_key()));
     }
 
     #[tokio::test]
     async fn test_authed_pubkey_missing_challenge() {
         let keys = Keys::generate();
-        let local_url = RelayUrl::parse("wss://test.relay").unwrap();
-        let auth = Nip42Auth::new(local_url.as_str().to_string());
-        let challenge = "test_challenge";
+        let auth_url = "wss://test.relay".to_string();
+        let middleware = Nip42Middleware::new(auth_url.clone());
+        let mut state = create_test_state(None);
 
-        // Create valid auth event
-        let unsigned_event = EventBuilder::new(Kind::Authentication, "")
-            .tag(Tag::from_standardized(TagStandard::Challenge(
-                challenge.to_string(),
+        let auth_event = EventBuilder::new(Kind::Authentication, "")
+            .tag(Tag::from_standardized(TagStandard::Relay(
+                RelayUrl::parse(&auth_url).unwrap(),
             )))
-            .tag(Tag::from_standardized(TagStandard::Relay(local_url)))
             .build_with_ctx(&Instant::now(), keys.public_key());
-        let event = keys.sign_event(unsigned_event).await.unwrap();
+        let auth_event = keys.sign_event(auth_event).await.unwrap();
 
-        // Test with missing challenge
-        let result = auth.authed_pubkey(&event, None);
-        assert_eq!(result, None);
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Auth(Box::new(auth_event.clone())),
+            None,
+            &mut state,
+            &[],
+            0,
+        );
+
+        assert!(middleware.process_inbound(&mut ctx).await.is_err());
+        assert_eq!(state.authed_pubkey, None);
     }
 
     #[tokio::test]
-    async fn test_expired_auth() {
+    async fn test_authed_pubkey_wrong_challenge() {
         let keys = Keys::generate();
-        let local_url = RelayUrl::parse("wss://test.relay").unwrap();
-        let auth = Nip42Auth::new(local_url.as_str().to_string());
-        let challenge = "test_challenge";
+        let auth_url = "wss://test.relay".to_string();
+        let middleware = Nip42Middleware::new(auth_url.clone());
+        let mut state = create_test_state(None);
+        let challenge = "test_challenge".to_string();
+        state.challenge = Some(challenge);
 
-        // Create expired auth event with manual timestamp
-        let unsigned_event = EventBuilder::new(Kind::Authentication, "")
+        let auth_event = EventBuilder::new(Kind::Authentication, "")
             .tag(Tag::from_standardized(TagStandard::Challenge(
-                challenge.to_string(),
+                "wrong_challenge".to_string(),
             )))
-            .tag(Tag::from_standardized(TagStandard::Relay(local_url)))
-            .custom_created_at(Timestamp::from(0))
-            .build(keys.public_key());
+            .tag(Tag::from_standardized(TagStandard::Relay(
+                RelayUrl::parse(&auth_url).unwrap(),
+            )))
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let auth_event = keys.sign_event(auth_event).await.unwrap();
 
-        let event = keys.sign_event(unsigned_event).await.unwrap();
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Auth(Box::new(auth_event.clone())),
+            None,
+            &mut state,
+            &[],
+            0,
+        );
 
-        // Verify event signature
-        assert!(event.verify().is_ok());
-
-        let result = auth.authed_pubkey(&event, Some(challenge));
-        assert_eq!(result, None);
+        assert!(middleware.process_inbound(&mut ctx).await.is_err());
+        assert_eq!(state.authed_pubkey, None);
     }
 
     #[tokio::test]
     async fn test_wrong_relay() {
         let keys = Keys::generate();
-        let local_url = RelayUrl::parse("wss://test.relay").unwrap();
-        let wrong_url = RelayUrl::parse("wss://wrong.relay").unwrap();
-        let auth = Nip42Auth::new(local_url.as_str().to_string());
-        let challenge = "test_challenge";
+        let auth_url = "wss://test.relay".to_string();
+        let middleware = Nip42Middleware::new(auth_url);
+        let mut state = create_test_state(None);
+        let challenge = "test_challenge".to_string();
+        state.challenge = Some(challenge.clone());
 
-        // Create auth event with wrong relay
-        let unsigned_event = EventBuilder::new(Kind::Authentication, "")
-            .tag(Tag::from_standardized(TagStandard::Challenge(
-                challenge.to_string(),
+        let auth_event = EventBuilder::new(Kind::Authentication, "")
+            .tag(Tag::from_standardized(TagStandard::Challenge(challenge)))
+            .tag(Tag::from_standardized(TagStandard::Relay(
+                RelayUrl::parse("wss://wrong.relay").unwrap(),
             )))
-            .tag(Tag::from_standardized(TagStandard::Relay(wrong_url)))
             .build_with_ctx(&Instant::now(), keys.public_key());
-        let event = keys.sign_event(unsigned_event).await.unwrap();
+        let auth_event = keys.sign_event(auth_event).await.unwrap();
 
-        // Verify event signature
-        assert!(event.verify().is_ok());
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Auth(Box::new(auth_event.clone())),
+            None,
+            &mut state,
+            &[],
+            0,
+        );
 
-        let result = auth.authed_pubkey(&event, Some(challenge));
-        assert_eq!(result, None);
+        assert!(middleware.process_inbound(&mut ctx).await.is_err());
+        assert_eq!(state.authed_pubkey, None);
     }
 
     #[tokio::test]
     async fn test_wrong_signature() {
-        let auth_keys = Keys::generate();
+        let keys = Keys::generate();
         let wrong_keys = Keys::generate();
-        let local_url = RelayUrl::parse("wss://test.relay").unwrap();
-        let auth = Nip42Auth::new(local_url.as_str().to_string());
-        let challenge = "test_challenge";
+        let auth_url = "wss://test.relay".to_string();
+        let middleware = Nip42Middleware::new(auth_url.clone());
+        let mut state = create_test_state(None);
+        let challenge = "test_challenge".to_string();
+        state.challenge = Some(challenge.clone());
 
-        // Create auth event with wrong_keys but claiming to be from auth_keys
-        let unsigned_event = EventBuilder::new(Kind::Authentication, "")
-            .tag(Tag::from_standardized(TagStandard::Challenge(
-                challenge.to_string(),
+        let auth_event = EventBuilder::new(Kind::Authentication, "")
+            .tag(Tag::from_standardized(TagStandard::Challenge(challenge)))
+            .tag(Tag::from_standardized(TagStandard::Relay(
+                RelayUrl::parse(&auth_url).unwrap(),
             )))
-            .tag(Tag::from_standardized(TagStandard::Relay(local_url)))
-            .build_with_ctx(&Instant::now(), auth_keys.public_key()); // Claim to be auth_keys
-        let event = wrong_keys.sign_event(unsigned_event).await.unwrap(); // But sign with wrong_keys
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let auth_event = wrong_keys.sign_event(auth_event).await.unwrap();
 
-        // Verify event signature should fail
-        assert!(event.verify().is_err());
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Auth(Box::new(auth_event.clone())),
+            None,
+            &mut state,
+            &[],
+            0,
+        );
 
-        // Should fail because signature doesn't match the claimed pubkey
-        let result = auth.authed_pubkey(&event, Some(challenge));
-        assert_eq!(result, None);
+        assert!(middleware.process_inbound(&mut ctx).await.is_err());
+        assert_eq!(state.authed_pubkey, None);
+    }
+
+    #[tokio::test]
+    async fn test_expired_auth() {
+        let keys = Keys::generate();
+        let auth_url = "wss://test.relay".to_string();
+        let middleware = Nip42Middleware::new(auth_url.clone());
+        let mut state = create_test_state(None);
+        let challenge = "test_challenge".to_string();
+        state.challenge = Some(challenge.clone());
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let expired_time = now - 601; // Just over 10 minutes ago
+
+        let auth_event = EventBuilder::new(Kind::Authentication, "")
+            .tag(Tag::from_standardized(TagStandard::Challenge(challenge)))
+            .tag(Tag::from_standardized(TagStandard::Relay(
+                RelayUrl::parse(&auth_url).unwrap(),
+            )))
+            .custom_created_at(Timestamp::from(expired_time))
+            .build(keys.public_key());
+        let auth_event = keys.sign_event(auth_event).await.unwrap();
+
+        let mut ctx = InboundContext::new(
+            "test_conn".to_string(),
+            ClientMessage::Auth(Box::new(auth_event.clone())),
+            None,
+            &mut state,
+            &[],
+            0,
+        );
+
+        assert!(middleware.process_inbound(&mut ctx).await.is_err());
+        assert_eq!(state.authed_pubkey, None);
     }
 }

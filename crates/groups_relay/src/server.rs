@@ -3,10 +3,9 @@ use crate::{
     config,
     groups::Groups,
     handler, metrics,
-    middlewares::NostrMessageConverter,
     nostr_database::RelayDatabase,
     nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
-    websocket_server,
+    websocket_server::{self, NostrMessageConverter},
 };
 use anyhow::Result;
 use axum::{routing::get, Router};

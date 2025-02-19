@@ -2,8 +2,8 @@ use crate::{
     config,
     groups::Groups,
     middlewares::{
-        EventStoreMiddleware, EventVerifierMiddleware, LoggerMiddleware, Nip29Middleware,
-        Nip42Middleware, Nip70Middleware, NostrMessageConverter, ValidationMiddleware,
+        EventVerifierMiddleware, LoggerMiddleware, Nip29Middleware, Nip42Middleware,
+        Nip70Middleware, ValidationMiddleware,
     },
     nostr_database::RelayDatabase,
     nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
@@ -13,6 +13,23 @@ use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use websocket_builder::WebSocketBuilder;
 pub use websocket_builder::WebSocketHandler;
+
+#[derive(Clone)]
+pub struct NostrMessageConverter;
+
+impl websocket_builder::MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
+    fn outbound_to_string(&self, message: RelayMessage) -> Result<String> {
+        Ok(message.as_json())
+    }
+
+    fn inbound_from_string(&self, message: String) -> Result<Option<ClientMessage>> {
+        if let Ok(client_message) = ClientMessage::from_json(&message) {
+            Ok(Some(client_message))
+        } else {
+            Ok(None)
+        }
+    }
+}
 
 pub fn build_websocket_handler(
     relay_url: String,
@@ -34,8 +51,7 @@ pub fn build_websocket_handler(
     let event_verifier = EventVerifierMiddleware;
     let nip_42 = Nip42Middleware::new(auth_url);
     let nip_70 = Nip70Middleware;
-    let nip_29 = Nip29Middleware::new(groups, relay_keys.public_key());
-    let event_store = EventStoreMiddleware::new(database);
+    let nip_29 = Nip29Middleware::new(groups, relay_keys.public_key(), database.clone());
     let validation_middleware = ValidationMiddleware::new(relay_keys.public_key());
     let connection_state_factory = NostrConnectionFactory::new(relay_url)?;
 
@@ -58,6 +74,5 @@ pub fn build_websocket_handler(
         .with_middleware(event_verifier)
         .with_middleware(nip_70)
         .with_middleware(nip_29)
-        .with_middleware(event_store)
         .build())
 }

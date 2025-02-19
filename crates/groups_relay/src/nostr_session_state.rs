@@ -1,10 +1,13 @@
 use crate::error::Error;
+use crate::nostr_database::RelayDatabase;
 use crate::{EventStoreConnection, StoreCommand};
 use nostr_sdk::prelude::*;
 use std::backtrace::Backtrace;
+use std::sync::Arc;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
-use websocket_builder::StateFactory;
+use tracing::{debug, error};
+use websocket_builder::{MessageSender, StateFactory};
 
 const DEFAULT_RELAY_URL: &str = "wss://default.relay";
 
@@ -52,16 +55,63 @@ impl NostrConnectionState {
         self.authed_pubkey.is_some()
     }
 
-    pub async fn save_events(&self, events_to_save: Vec<StoreCommand>) -> Result<(), Error> {
-        let Some(connection) = self.relay_connection.as_ref() else {
+    /// Sets up a new event store connection
+    pub async fn setup_connection(
+        &mut self,
+        connection_id: String,
+        database: Arc<RelayDatabase>,
+        sender: MessageSender<RelayMessage>,
+    ) -> Result<(), Error> {
+        debug!(
+            target: "event_store",
+            "[{}] Setting up connection",
+            connection_id
+        );
+
+        let connection = EventStoreConnection::new(
+            connection_id.clone(),
+            database,
+            connection_id.clone(),
+            self.connection_token.clone(),
+            sender,
+        )
+        .await
+        .map_err(|e| Error::Internal {
+            message: format!("Failed to create connection: {}", e),
+            backtrace: Backtrace::capture(),
+        })?;
+
+        self.relay_connection = Some(connection);
+
+        debug!(
+            target: "event_store",
+            "[{}] Connection setup complete",
+            connection_id
+        );
+
+        Ok(())
+    }
+
+    /// Cleans up the event store connection
+    pub fn cleanup_connection(&mut self) {
+        if let Some(connection) = &self.relay_connection {
+            connection.cleanup();
+        }
+    }
+
+    pub async fn save_events(&mut self, events: Vec<StoreCommand>) -> Result<(), Error> {
+        let Some(connection) = &self.relay_connection else {
             return Err(Error::Internal {
-                message: "No connection".to_string(),
+                message: "No connection available".to_string(),
                 backtrace: Backtrace::capture(),
             });
         };
 
-        for event in events_to_save {
-            connection.save_event(event).await?
+        for event in events {
+            if let Err(e) = connection.save_event(event).await {
+                error!("Failed to save event: {}", e);
+                return Err(e);
+            }
         }
 
         Ok(())

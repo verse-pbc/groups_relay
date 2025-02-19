@@ -597,7 +597,7 @@ async fn main() -> Result<()> {
                     && tag
                         .as_slice()
                         .get(1)
-                        .map_or(false, |v| v == &admin_config.keys.public_key().to_string())
+                        .is_some_and(|v| v == &admin_config.keys.public_key().to_string())
             })
         })
         .await?;
@@ -726,8 +726,8 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
             tag.kind() == TagKind::p()
                 && tag
                     .as_slice()
-                    .get(1) // p tags in members list have pubkey as second element
-                    .map_or(false, |v| v == &config.keys.public_key().to_string())
+                    .get(1)
+                    .is_some_and(|v| v == &config.keys.public_key().to_string())
         })
     })
     .await?;
@@ -790,7 +790,7 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
                 && tag
                     .as_slice()
                     .get(1)
-                    .map_or(false, |v| v == &config.keys.public_key().to_string())
+                    .is_some_and(|v| v == &config.keys.public_key().to_string())
         })
     })
     .await?;
