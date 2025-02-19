@@ -94,8 +94,6 @@ impl EventStoreConnection {
                                     id_clone2, subscription_id, subscriptions.len()
                                 );
                                 subscriptions.insert(subscription_id, filters);
-                                local_subscription_count.fetch_add(1, Ordering::Relaxed);
-                                crate::metrics::active_subscriptions().increment(1.0);
                             }
                             SubscriptionMessage::Remove(subscription_id) => {
                                 if subscriptions.remove(&subscription_id).is_some() {
@@ -386,10 +384,20 @@ impl EventStoreConnection {
             self.db_connection
         );
 
+        // Increment subscription count before sending message
+        self.local_subscription_count
+            .fetch_add(1, Ordering::Relaxed);
+        crate::metrics::active_subscriptions().increment(1.0);
+
         if let Err(e) = self
             .subscription_sender
             .send(SubscriptionMessage::Add(subscription_id, filters))
         {
+            // Decrement count if we failed to send
+            self.local_subscription_count
+                .fetch_sub(1, Ordering::Relaxed);
+            crate::metrics::active_subscriptions().decrement(1.0);
+
             error!(
                 target: "event_store",
                 "[{}] Failed to send subscription to manager: {:?}",
