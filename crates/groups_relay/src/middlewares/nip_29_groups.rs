@@ -255,10 +255,18 @@ impl Nip29Middleware {
                 .contains_key(&SingleLetterTag::lowercase(Alphabet::H))
             {
                 is_normal = true;
-            } else if !filter
+            } else if filter
                 .generic_tags
                 .contains_key(&SingleLetterTag::lowercase(Alphabet::D))
             {
+                // this is a metadata query
+            } else if filter
+                .generic_tags
+                .contains_key(&SingleLetterTag::lowercase(Alphabet::P))
+            {
+                // this is a normal query with p tags, no group validation needed
+                return Ok(());
+            } else {
                 // this may be a request for "#e", "authors" or just "ids"
                 is_reference = true;
             }
@@ -307,15 +315,15 @@ impl Nip29Middleware {
                 .generic_tags
                 .iter()
                 .any(|(k, _)| k == &SingleLetterTag::lowercase(Alphabet::E))
+                || filter.authors.is_some()
+                || filter.ids.is_some()
             {
                 return Ok(());
             }
 
-            if filter.authors.is_some() && filter.ids.is_some() {
-                return Err(Error::notice(
-                    "invalid query, must have 'e', 'authors' or 'ids' tag",
-                ));
-            }
+            return Err(Error::notice(
+                "invalid query, must have 'e', 'authors' or 'ids' tag",
+            ));
         }
 
         Ok(())
@@ -1268,7 +1276,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_close_active_subscription() {
-        let (_tmp_dir, database, _admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
 
         // Start the test server
         let (addr, token) = start_test_server(database).await;
@@ -1280,7 +1288,11 @@ mod tests {
 
         // Create a subscription first
         let subscription_id = SubscriptionId::new("test_sub");
-        let filter = Filter::new().kinds(vec![Kind::TextNote]).limit(5);
+        let filter = Filter::new().kinds(vec![Kind::TextNote]).custom_tag(
+            SingleLetterTag::lowercase(Alphabet::P),
+            admin_keys.public_key().to_string(),
+        );
+
         client
             .send_message(&ClientMessage::Req {
                 subscription_id: subscription_id.clone(),
@@ -1381,5 +1393,51 @@ mod tests {
         // Verify the group was created and is managed
         let group = groups.get_group(group_id).unwrap();
         assert!(group.is_admin(&admin_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_filter_verification_p_tag_without_reference_tags() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let groups = Arc::new(
+            Groups::load_groups(database.clone(), admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
+
+        // Create a filter with just a 'p' tag and kind
+        let p_tag_filter = Filter::new().kind(Kind::Custom(1059)).custom_tag(
+            SingleLetterTag::lowercase(Alphabet::P),
+            admin_keys.public_key().to_string(),
+        );
+
+        // Should pass verification since 'p' tags don't need reference tags
+        assert!(middleware
+            .verify_filter(Some(admin_keys.public_key()), &p_tag_filter)
+            .is_ok());
+
+        // Same filter but with multiple 'p' tags should also work
+        let multi_p_filter = Filter::new().kind(Kind::Custom(1059)).custom_tags(
+            SingleLetterTag::lowercase(Alphabet::P),
+            vec![
+                admin_keys.public_key().to_string(),
+                "another_pubkey".to_string(),
+            ],
+        );
+        assert!(middleware
+            .verify_filter(Some(admin_keys.public_key()), &multi_p_filter)
+            .is_ok());
+
+        // Filter with 'p' tag and other non-reference tags should also work
+        let mixed_filter = Filter::new()
+            .kind(Kind::Custom(1059))
+            .custom_tag(
+                SingleLetterTag::lowercase(Alphabet::P),
+                admin_keys.public_key().to_string(),
+            )
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::T), "test");
+        assert!(middleware
+            .verify_filter(Some(admin_keys.public_key()), &mixed_filter)
+            .is_ok());
     }
 }
