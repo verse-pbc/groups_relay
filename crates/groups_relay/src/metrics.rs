@@ -1,5 +1,5 @@
 use anyhow::Result;
-use metrics::{describe_counter, describe_gauge, Counter, Gauge};
+use metrics::{describe_counter, describe_gauge, describe_histogram, Counter, Gauge, Histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
 pub use metrics_exporter_prometheus::PrometheusHandle;
 
@@ -21,6 +21,41 @@ pub fn active_subscriptions() -> Gauge {
 /// Total groups created counter
 pub fn groups_created() -> Counter {
     metrics::counter!("groups_created")
+}
+
+/// Event processing latency in milliseconds by event kind
+pub fn event_latency(kind: u32) -> Histogram {
+    let kind_label = match kind {
+        // Group management events
+        9000 => "add_user",
+        9001 => "remove_user",
+        9002 => "edit_metadata",
+        9005 => "delete_event",
+        9006 => "set_roles",
+        9007 => "create",
+        9008 => "delete",
+        9009 => "create_invite",
+        9021 => "join_request",
+        9022 => "leave_request",
+        // Addressable events
+        39000 => "metadata",
+        39001 => "admins",
+        39002 => "members",
+        39003 => "roles",
+        // NIP-60 Cashu Wallet events
+        17375 => "wallet",
+        7375 => "token",
+        7376 => "spending_history",
+        7374 => "quote",
+        // NIP-61 Nutzap events
+        10019 => "nutzap_info",
+        9321 => "nutzap",
+        // Other specific events
+        10009 => "simple_list",
+        28934 => "claim",
+        _ => "other",
+    };
+    metrics::histogram!("event_latency_ms", "kind" => kind_label.to_string())
 }
 
 /// Groups gauge by privacy settings
@@ -46,6 +81,10 @@ pub fn setup_metrics() -> Result<PrometheusHandle, anyhow::Error> {
     describe_gauge!(
         "groups_by_privacy",
         "Number of groups by privacy settings (private/public and closed/open)"
+    );
+    describe_histogram!(
+        "event_latency_ms",
+        "Event processing latency in milliseconds by event kind"
     );
     describe_gauge!(
         "active_groups_by_privacy",

@@ -39,8 +39,9 @@ impl Middleware for LoggerMiddleware {
                 let start_time = Instant::now();
                 info!("> EVENT kind {}: {}", event.kind.as_u16(), event.as_json());
 
-                // Store start time in state for outbound processing
+                // Store start time and kind in state for outbound processing
                 ctx.state.event_start_time = Some(start_time);
+                ctx.state.event_kind = Some(event.kind.as_u16());
                 ctx.next().await
             }
             ClientMessage::Req {
@@ -70,27 +71,43 @@ impl Middleware for LoggerMiddleware {
         ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         if let Some(msg) = &ctx.message {
-            // For OK responses, include the latency in the log message
-            if let RelayMessage::Ok { .. } = msg {
-                if let Some(start_time) = ctx.state.event_start_time.take() {
-                    let latency = start_time.elapsed();
-                    info!("< {} (took {:?})", msg.as_json(), latency);
-                } else {
-                    info!("< {}", msg.as_json());
+            match msg {
+                RelayMessage::Ok {
+                    event_id,
+                    status,
+                    message,
+                } => {
+                    // Calculate latency if we have a start time
+                    if let Some(start_time) = ctx.state.event_start_time.take() {
+                        let latency_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+
+                        // Get the event kind from the state
+                        if let Some(kind) = ctx.state.event_kind.take() {
+                            metrics::event_latency(kind as u32).record(latency_ms);
+                        }
+                    }
+                    info!("< OK {} {} {}", event_id, status, message);
                 }
-            } else {
-                info!("< {}", msg.as_json());
+                RelayMessage::Event {
+                    subscription_id,
+                    event,
+                } => {
+                    info!("< EVENT {} {}", subscription_id, event.as_json());
+                }
+                RelayMessage::Notice(message) => {
+                    info!("< NOTICE {}", message);
+                }
+                RelayMessage::EndOfStoredEvents(subscription_id) => {
+                    info!("< EOSE {}", subscription_id);
+                }
+                RelayMessage::Auth { challenge } => {
+                    info!("< AUTH {}", challenge);
+                }
+                _ => {
+                    debug!("< {:?}", msg);
+                }
             }
         }
-        ctx.next().await
-    }
-
-    async fn on_connect(
-        &self,
-        ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-    ) -> Result<(), anyhow::Error> {
-        info!("Connected to relay");
-        metrics::active_connections().increment(1.0);
         ctx.next().await
     }
 
@@ -100,6 +117,15 @@ impl Middleware for LoggerMiddleware {
     ) -> Result<(), anyhow::Error> {
         info!("Disconnected from relay");
         metrics::active_connections().decrement(1.0);
+        ctx.next().await
+    }
+
+    async fn on_connect(
+        &self,
+        ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
+        info!("Connected to relay");
+        metrics::active_connections().increment(1.0);
         ctx.next().await
     }
 }

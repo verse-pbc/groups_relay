@@ -46,6 +46,7 @@ pub fn create_test_state(pubkey: Option<nostr_sdk::PublicKey>) -> NostrConnectio
         relay_connection: None,
         connection_token: token.clone(),
         event_start_time: None,
+        event_kind: None,
     }
 }
 

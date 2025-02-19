@@ -19,6 +19,7 @@ pub struct NostrConnectionState {
     pub relay_connection: Option<EventStoreConnection>,
     pub connection_token: CancellationToken,
     pub event_start_time: Option<Instant>,
+    pub event_kind: Option<u16>,
 }
 
 impl Default for NostrConnectionState {
@@ -30,6 +31,7 @@ impl Default for NostrConnectionState {
             relay_connection: None,
             connection_token: CancellationToken::new(),
             event_start_time: None,
+            event_kind: None,
         }
     }
 }
@@ -48,6 +50,7 @@ impl NostrConnectionState {
             relay_connection: None,
             connection_token: CancellationToken::new(),
             event_start_time: None,
+            event_kind: None,
         })
     }
 
@@ -154,6 +157,7 @@ impl StateFactory<NostrConnectionState> for NostrConnectionFactory {
             relay_connection: None,
             connection_token: token,
             event_start_time: None,
+            event_kind: None,
         }
     }
 }

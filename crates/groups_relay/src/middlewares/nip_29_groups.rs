@@ -549,6 +549,7 @@ mod tests {
                 relay_connection: None,
                 connection_token: token.clone(),
                 event_start_time: None,
+                event_kind: None,
             }
         }
     }
