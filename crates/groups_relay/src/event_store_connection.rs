@@ -263,7 +263,6 @@ impl EventStoreConnection {
         match store_command {
             // These events are signed by the relay key
             StoreCommand::SaveUnsignedEvent(event) => {
-                println!("Saving unsigned event: {:?}", event);
                 match self.database.save_unsigned_event(event).await {
                     Ok(event) => {
                         info!(
@@ -926,9 +925,9 @@ mod tests {
         // Verify we got the most recent events (last 3 from our 5 events)
         assert_eq!(received_events.len(), 3);
         // Verify we got events 4, 3, and 2 in that order
-        for i in 0..3 {
+        for (i, event) in received_events.iter().enumerate() {
             assert_eq!(
-                received_events[i].content,
+                event.content,
                 format!("Event {}", 4 - i),
                 "Wrong event content at position {}",
                 i

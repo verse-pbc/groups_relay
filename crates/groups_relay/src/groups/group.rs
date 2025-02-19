@@ -25,6 +25,8 @@ pub const KIND_CLAIM_28934: Kind = Kind::Custom(28934);
 pub const KIND_GIFT_WRAP: Kind = Kind::GiftWrap;
 pub const KIND_MLS_KEY_PACKAGE: Kind = Kind::MlsKeyPackage;
 
+pub const KIND_GENERAL_EVENT_DELETION: Kind = Kind::EventDeletion;
+
 // Custom event kinds for groups
 pub const KIND_GROUP_CREATE_9007: Kind = Kind::Custom(9007); // Admin/Relay -> Relay: Create a new group
 pub const KIND_GROUP_DELETE_9008: Kind = Kind::Custom(9008); // Admin/Relay -> Relay: Delete an existing group
@@ -50,7 +52,7 @@ pub const ADDRESSABLE_EVENT_KINDS: [Kind; 4] = [
     KIND_GROUP_ROLES_39003,
 ];
 
-pub const NON_GROUP_ALLOWED_KINDS: [Kind; 10] = [
+pub const NON_GROUP_ALLOWED_KINDS: [Kind; 11] = [
     KIND_SIMPLE_LIST_10009,
     KIND_CLAIM_28934,
     KIND_WALLET_17375,
@@ -61,6 +63,7 @@ pub const NON_GROUP_ALLOWED_KINDS: [Kind; 10] = [
     KIND_NUTZAP_9321,
     KIND_GIFT_WRAP,
     KIND_MLS_KEY_PACKAGE,
+    KIND_GENERAL_EVENT_DELETION,
 ];
 
 pub const ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE: [Kind; 10] = [

@@ -229,101 +229,59 @@ impl Nip29Middleware {
         authed_pubkey: Option<PublicKey>,
         filter: &Filter,
     ) -> Result<(), Error> {
-        let mut is_meta: bool = false;
-        let mut is_normal: bool = false;
-        let mut is_reference: bool = false;
+        // Check for group-related tags
+        let has_h_tag = filter
+            .generic_tags
+            .contains_key(&SingleLetterTag::lowercase(Alphabet::H));
+        let has_d_tag = filter
+            .generic_tags
+            .contains_key(&SingleLetterTag::lowercase(Alphabet::D));
 
-        if let Some(kinds) = &filter.kinds {
-            // Check kinds in reverse order to catch addressable kinds first
-            for k in kinds.iter().rev() {
-                if ADDRESSABLE_EVENT_KINDS.contains(k) {
-                    is_meta = true;
-                } else if is_meta {
-                    // This was taken from relay29. I still unsure why this was done so I'm commenting until I know why we don't let a mixed query
-                    // return Err(Error::notice(
-                    //     "Invalid query, cannot mix metadata and normal event kinds",
-                    // ));
-                }
-            }
-        }
-
-        if !is_meta {
-            // we assume the caller wants normal events if the 'h' tag is specified
-            // or metadata events if the 'd' tag is specified
-            if filter
-                .generic_tags
-                .contains_key(&SingleLetterTag::lowercase(Alphabet::H))
-            {
-                is_normal = true;
-            } else if filter
-                .generic_tags
-                .contains_key(&SingleLetterTag::lowercase(Alphabet::D))
-            {
-                // this is a metadata query
-            } else if filter
-                .generic_tags
-                .contains_key(&SingleLetterTag::lowercase(Alphabet::P))
-            {
-                // this is a normal query with p tags, no group validation needed
-                return Ok(());
-            } else {
-                // this may be a request for "#e", "authors" or just "ids"
-                is_reference = true;
-            }
-        }
-
-        if is_normal {
-            for tag in filter
-                .generic_tags
-                .iter()
-                .filter(|(k, _)| k == &&SingleLetterTag::lowercase(Alphabet::H))
-                .flat_map(|(_, tag_set)| tag_set.iter())
-            {
-                let Some(group) = self.groups.get_group(tag) else {
-                    return Ok(());
-                };
-
-                if !group.metadata.private {
-                    return Ok(());
-                }
-
-                match authed_pubkey {
-                    Some(authed_pubkey) => {
-                        // relay pubkey can always read private groups
-                        if authed_pubkey == self.relay_pubkey {
-                            return Ok(());
-                        }
-
-                        if !group.is_member(&authed_pubkey) {
-                            return Err(Error::restricted(
-                                "authed user is not a member of this group",
-                            ));
-                        }
-                    }
-                    None => {
-                        return Err(Error::auth_required("trying to read from a private group"));
-                    }
-                }
-            }
-
+        // If this isn't a group query (no h or d tags), allow it
+        if !has_h_tag && !has_d_tag {
             return Ok(());
         }
 
-        // reference queries will be filtered on each individual event
-        if is_reference {
-            if filter
-                .generic_tags
-                .iter()
-                .any(|(k, _)| k == &SingleLetterTag::lowercase(Alphabet::E))
-                || filter.authors.is_some()
-                || filter.ids.is_some()
-            {
+        // For addressable event kinds (metadata queries), just allow them
+        if let Some(kinds) = &filter.kinds {
+            if kinds.iter().any(|k| ADDRESSABLE_EVENT_KINDS.contains(k)) {
+                return Ok(());
+            }
+        }
+
+        // At this point we have a group query with an 'h' tag
+        // Check each group referenced in the filter
+        for tag in filter
+            .generic_tags
+            .iter()
+            .filter(|(k, _)| k == &&SingleLetterTag::lowercase(Alphabet::H))
+            .flat_map(|(_, tag_set)| tag_set.iter())
+        {
+            let Some(group) = self.groups.get_group(tag) else {
+                return Ok(());
+            };
+
+            if !group.metadata.private {
                 return Ok(());
             }
 
-            return Err(Error::notice(
-                "invalid query, must have 'e', 'authors' or 'ids' tag",
-            ));
+            match authed_pubkey {
+                Some(authed_pubkey) => {
+                    // relay pubkey can always read private groups
+                    if authed_pubkey == self.relay_pubkey {
+                        return Ok(());
+                    }
+
+                    if !group.is_member(&authed_pubkey) {
+                        return Err(Error::restricted(
+                            "authed user is not a member of this group",
+                        ));
+                    }
+                }
+                None => {
+                    return Err(Error::auth_required("trying to read from a private group"));
+                }
+            }
         }
 
         Ok(())
@@ -1009,6 +967,36 @@ mod tests {
             .custom_tag(SingleLetterTag::lowercase(Alphabet::E), "test_id");
         assert!(middleware
             .verify_filter(Some(member_keys.public_key()), &ref_filter)
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_filter_verification_non_group_query() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let groups = Arc::new(
+            Groups::load_groups(database.clone(), admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware = Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database);
+
+        // Create a filter with no 'h' tag but with other tags
+        let non_group_filter = Filter::new()
+            .kind(Kind::Custom(443))
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::T), "test-tag");
+
+        // Should pass verification since it's not a group query
+        assert!(middleware
+            .verify_filter(Some(admin_keys.public_key()), &non_group_filter)
+            .is_ok());
+
+        // Same filter but with multiple tags should also work
+        let multi_tag_filter = Filter::new()
+            .kind(Kind::Custom(443))
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::T), "test-tag-1")
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::T), "test-tag-2");
+        assert!(middleware
+            .verify_filter(Some(admin_keys.public_key()), &multi_tag_filter)
             .is_ok());
     }
 

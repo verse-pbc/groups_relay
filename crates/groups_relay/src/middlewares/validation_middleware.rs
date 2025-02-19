@@ -102,30 +102,30 @@ impl Middleware for ValidationMiddleware {
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        match &ctx.message {
-            ClientMessage::Event(event) => {
-                debug!(
-                    "[{}] Validating event kind {} with id {}",
-                    ctx.connection_id, event.kind, event.id
-                );
+        let ClientMessage::Event(event) = &ctx.message else {
+            return ctx.next().await;
+        };
 
-                if let Err(reason) = self.validate_event(event) {
-                    warn!(
-                        "[{}] Event {} validation failed: {}",
-                        ctx.connection_id, event.id, reason
-                    );
+        debug!(
+            "[{}] Validating event kind {} with id {}",
+            ctx.connection_id, event.kind, event.id
+        );
 
-                    ctx.send_message(RelayMessage::ok(event.id, false, reason))
-                        .await?;
+        if let Err(reason) = self.validate_event(event) {
+            warn!(
+                "[{}] Event {} validation failed: {}",
+                ctx.connection_id, event.id, reason
+            );
 
-                    ctx.state.connection_token.cancel();
-                    return Ok(());
-                }
+            // Send error message
+            ctx.send_message(RelayMessage::ok(event.id, false, reason))
+                .await?;
 
-                ctx.next().await
-            }
-            _ => ctx.next().await,
+            // Stop the chain here with Ok since we've handled the error
+            return Ok(());
         }
+
+        ctx.next().await
     }
 }
 
