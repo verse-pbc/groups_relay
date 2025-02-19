@@ -47,7 +47,7 @@ jobs:
         run: |
           mkdir -p build-context/config build-context/crates
           cp Cargo.toml Cargo.lock build-context/
-          cp -r crates/groups_relay crates/websocket_builder build-context/crates/
+          cp -r crates/groups_relay crates/websocket_builder crates/load_tester build-context/crates/
           cp crates/groups_relay/config/settings.yml build-context/config/
           cp -r frontend build-context/
 
