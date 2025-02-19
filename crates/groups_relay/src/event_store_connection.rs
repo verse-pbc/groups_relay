@@ -610,7 +610,7 @@ impl StoreCommand {
 mod tests {
     use super::*;
     use crate::test_utils::setup_test;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
     use tokio::sync::mpsc;
     use websocket_builder::MessageSender;
 
@@ -842,15 +842,16 @@ mod tests {
     async fn test_limit_filter_returns_events_in_reverse_chronological_order() {
         let (_tmp_dir, database, _admin_keys) = setup_test().await;
 
-        // Create and save events with different timestamps
+        // Create events with different timestamps
         let keys = Keys::generate();
         let mut events = vec![];
 
         // Create events with increasing timestamps
+        let base_time = Timestamp::now();
         for i in 0..5 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
             let event = EventBuilder::text_note(format!("Event {}", i))
-                .build_with_ctx(&Instant::now(), keys.public_key());
+                .custom_created_at(base_time + i as u64) // Each event 1 second apart
+                .build(keys.public_key());
             let event = keys.sign_event(event).await.unwrap();
             database.save_signed_event(&event).await.unwrap();
             events.push(event);
@@ -904,19 +905,27 @@ mod tests {
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
 
-        // Verify events are in reverse chronological order
+        // Verify events are in reverse chronological order and have different timestamps
         for i in 0..received_events.len() - 1 {
             assert!(
-                received_events[i].created_at >= received_events[i + 1].created_at,
-                "Events not in reverse chronological order"
+                received_events[i].created_at > received_events[i + 1].created_at,
+                "Events not in reverse chronological order or have same timestamp: {} <= {}",
+                received_events[i].created_at,
+                received_events[i + 1].created_at
             );
         }
 
         // Verify we got the most recent events (last 3 from our 5 events)
         assert_eq!(received_events.len(), 3);
-        assert_eq!(received_events[0].created_at, events[4].created_at);
-        assert_eq!(received_events[1].created_at, events[3].created_at);
-        assert_eq!(received_events[2].created_at, events[2].created_at);
+        // Verify we got events 4, 3, and 2 in that order
+        for i in 0..3 {
+            assert_eq!(
+                received_events[i].content,
+                format!("Event {}", 4 - i),
+                "Wrong event content at position {}",
+                i
+            );
+        }
 
         // Verify subscription count
         assert_eq!(connection.get_local_subscription_count(), 1);
