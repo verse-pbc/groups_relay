@@ -8,6 +8,23 @@ use std::str::FromStr;
 use strum::{Display, EnumIter, IntoEnumIterator};
 use tracing::{debug, error, info, warn};
 
+// NIP-60 Cashu Wallet kinds
+pub const KIND_WALLET_17375: Kind = Kind::Custom(17375);
+pub const KIND_TOKEN_7375: Kind = Kind::Custom(7375);
+pub const KIND_SPENDING_HISTORY_7376: Kind = Kind::Custom(7376);
+pub const KIND_QUOTE_7374: Kind = Kind::Custom(7374);
+
+// NIP-61 Nutzap kinds
+pub const KIND_NUTZAP_INFO_10019: Kind = Kind::Custom(10019);
+pub const KIND_NUTZAP_9321: Kind = Kind::Custom(9321);
+
+pub const KIND_SIMPLE_LIST_10009: Kind = Kind::Custom(10009);
+pub const KIND_CLAIM_28934: Kind = Kind::Custom(28934);
+
+// MLS Related
+pub const KIND_GIFT_WRAP: Kind = Kind::GiftWrap;
+pub const KIND_MLS_KEY_PACKAGE: Kind = Kind::MlsKeyPackage;
+
 // Custom event kinds for groups
 pub const KIND_GROUP_CREATE_9007: Kind = Kind::Custom(9007); // Admin/Relay -> Relay: Create a new group
 pub const KIND_GROUP_DELETE_9008: Kind = Kind::Custom(9008); // Admin/Relay -> Relay: Delete an existing group
@@ -25,23 +42,6 @@ pub const KIND_GROUP_METADATA_39000: Kind = Kind::Custom(39000); // Relay -> All
 pub const KIND_GROUP_ADMINS_39001: Kind = Kind::Custom(39001); // Relay -> All: List of group admins
 pub const KIND_GROUP_MEMBERS_39002: Kind = Kind::Custom(39002); // Relay -> All: List of group members
 pub const KIND_GROUP_ROLES_39003: Kind = Kind::Custom(39003); // Relay -> All: Supported roles in group
-
-// NIP-60 Cashu Wallet kinds
-pub const KIND_WALLET_17375: Kind = Kind::Custom(17375); // Replaceable wallet event
-pub const KIND_TOKEN_7375: Kind = Kind::Custom(7375); // Token event (unspent proofs)
-pub const KIND_SPENDING_HISTORY_7376: Kind = Kind::Custom(7376); // Spending history event
-pub const KIND_QUOTE_7374: Kind = Kind::Custom(7374); // Quote event (optional)
-
-// NIP-61 Nutzap kinds
-pub const KIND_NUTZAP_INFO_10019: Kind = Kind::Custom(10019); // Nutzap informational event
-pub const KIND_NUTZAP_9321: Kind = Kind::Custom(9321); // Nutzap event
-
-pub const KIND_SIMPLE_LIST_10009: Kind = Kind::Custom(10009); // Simple Groups (NIP-51): List of groups a user wants to remember being in
-pub const KIND_CLAIM_28934: Kind = Kind::Custom(28934); // Claim (NIP-43): Claim auth
-
-// MLS Related
-pub const KIND_GIFT_WRAP: Kind = Kind::GiftWrap;
-pub const KIND_MLS_KEY_PACKAGE: Kind = Kind::MlsKeyPackage;
 
 pub const ADDRESSABLE_EVENT_KINDS: [Kind; 4] = [
     KIND_GROUP_METADATA_39000,
@@ -134,7 +134,7 @@ impl FromStr for GroupRole {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupMember {
     pub pubkey: PublicKey,
     pub roles: HashSet<GroupRole>,
@@ -342,6 +342,21 @@ impl Group {
     fn update_state(&mut self) {
         self.updated_at = Timestamp::now();
         info!("Group state: {:?}", self);
+    }
+
+    /// Checks if an event kind is a group management kind that requires a managed group to exist
+    pub fn is_group_management_kind(kind: Kind) -> bool {
+        matches!(kind,
+            k if k == KIND_GROUP_EDIT_METADATA_9002 ||
+            k == KIND_GROUP_USER_JOIN_REQUEST_9021 ||
+            k == KIND_GROUP_USER_LEAVE_REQUEST_9022 ||
+            k == KIND_GROUP_ADD_USER_9000 ||
+            k == KIND_GROUP_REMOVE_USER_9001 ||
+            k == KIND_GROUP_DELETE_9008 ||
+            k == KIND_GROUP_DELETE_EVENT_9005 ||
+            k == KIND_GROUP_CREATE_INVITE_9009 ||
+            k == KIND_GROUP_SET_ROLES_9006
+        )
     }
 
     pub fn new_with_id(id: String) -> Self {

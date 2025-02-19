@@ -1,6 +1,6 @@
 use crate::error::Error;
-use crate::groups::group::{
-    ADDRESSABLE_EVENT_KINDS, KIND_GROUP_ADD_USER_9000, KIND_GROUP_CREATE_9007,
+use crate::groups::{
+    Group, ADDRESSABLE_EVENT_KINDS, KIND_GROUP_ADD_USER_9000, KIND_GROUP_CREATE_9007,
     KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_DELETE_9008, KIND_GROUP_DELETE_EVENT_9005,
     KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006,
     KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022, NON_GROUP_ALLOWED_KINDS,
@@ -60,6 +60,14 @@ impl Nip29Middleware {
                 StoreCommand::SaveUnsignedEvent(members_event),
                 StoreCommand::SaveUnsignedEvent(roles_event),
             ]));
+        }
+
+        // For events with h tags that are not management events, allow them through only if no managed group exists
+        if event.tags.find(TagKind::h()).is_some()
+            && !Group::is_group_management_kind(event.kind)
+            && self.groups.find_group_from_event(event).is_none()
+        {
+            return Ok(Some(vec![StoreCommand::SaveSignedEvent(event.clone())]));
         }
 
         let events_to_save = match event.kind {
@@ -332,13 +340,7 @@ impl Middleware for Nip29Middleware {
                 match self.handle_event(event, &ctx.state.authed_pubkey).await {
                     Ok(Some(events_to_save)) => {
                         let event_id = event.id;
-                        tracing::debug!("Nip29Middleware::process_inbound: processing event; events_to_save: {:?}", events_to_save);
                         ctx.state.save_events(events_to_save).await?;
-                        tracing::debug!(
-                            "Nip29Middleware::process_inbound: saved events for event_id: {:?}",
-                            event_id
-                        );
-                        tracing::debug!("Nip29Middleware::process_inbound: sending OK message for event_id: {:?}", event_id);
                         ctx.send_message(RelayMessage::ok(
                             event_id,
                             true,
@@ -347,12 +349,7 @@ impl Middleware for Nip29Middleware {
                         .await?;
                         Ok(())
                     }
-                    Ok(None) => {
-                        tracing::debug!(
-                            "Nip29Middleware::process_inbound: handle_event returned None"
-                        );
-                        Ok(())
-                    }
+                    Ok(None) => Ok(()),
                     Err(e) => {
                         if let Err(err) = e.handle_inbound_error(ctx).await {
                             error!("Failed to handle inbound error: {}", err);
@@ -365,13 +362,6 @@ impl Middleware for Nip29Middleware {
                 subscription_id,
                 filter,
             } => {
-                tracing::debug!(
-                    target: "event_store",
-                    "[{}] Processing REQ message for subscription {}",
-                    ctx.connection_id,
-                    subscription_id
-                );
-
                 // First verify the filter
                 if let Err(e) = self.verify_filter(ctx.state.authed_pubkey, filter) {
                     if let Err(e) = e.handle_inbound_error(ctx).await {
@@ -391,11 +381,8 @@ impl Middleware for Nip29Middleware {
                         .await
                     {
                         error!(
-                            target: "event_store",
-                            "[{}] Failed to handle subscription request {}: {}",
-                            ctx.connection_id,
-                            subscription_id,
-                            e
+                            "Failed to handle subscription request {}: {}",
+                            subscription_id, e
                         );
                         if let Err(err) = e.handle_inbound_error(ctx).await {
                             error!("Failed to handle inbound error: {}", err);
@@ -404,9 +391,7 @@ impl Middleware for Nip29Middleware {
                     }
                 } else {
                     error!(
-                        target: "event_store",
-                        "[{}] No connection available for subscription {}",
-                        ctx.connection_id,
+                        "No connection available for subscription {}",
                         subscription_id
                     );
                 }
@@ -417,13 +402,6 @@ impl Middleware for Nip29Middleware {
                 subscription_id,
                 filters,
             } => {
-                tracing::debug!(
-                    target: "event_store",
-                    "[{}] Processing REQ message for subscription {} with multiple filters",
-                    ctx.connection_id,
-                    subscription_id
-                );
-
                 // Verify each filter
                 for filter in filters.iter() {
                     if let Err(e) = self.verify_filter(ctx.state.authed_pubkey, filter) {
@@ -442,11 +420,8 @@ impl Middleware for Nip29Middleware {
                         .await
                     {
                         error!(
-                            target: "event_store",
-                            "[{}] Failed to handle subscription request {}: {}",
-                            ctx.connection_id,
-                            subscription_id,
-                            e
+                            "Failed to handle subscription request {}: {}",
+                            subscription_id, e
                         );
                         if let Err(err) = e.handle_inbound_error(ctx).await {
                             error!("Failed to handle inbound error: {}", err);
@@ -455,9 +430,7 @@ impl Middleware for Nip29Middleware {
                     }
                 } else {
                     error!(
-                        target: "event_store",
-                        "[{}] No connection available for subscription {}",
-                        ctx.connection_id,
+                        "No connection available for subscription {}",
                         subscription_id
                     );
                 }
@@ -465,15 +438,7 @@ impl Middleware for Nip29Middleware {
                 Ok(())
             }
             ClientMessage::Close(subscription_id) => {
-                let connection_id = ctx.connection_id.clone();
                 let subscription_id = subscription_id.clone();
-
-                tracing::debug!(
-                    target: "event_store",
-                    "[{}] Processing CLOSE message for subscription {}",
-                    connection_id,
-                    subscription_id
-                );
 
                 // First handle the unsubscribe
                 let unsubscribe_result =
@@ -481,9 +446,7 @@ impl Middleware for Nip29Middleware {
                         connection.handle_unsubscribe(subscription_id.clone()).await
                     } else {
                         error!(
-                            target: "event_store",
-                            "[{}] No connection available for unsubscribing {}",
-                            connection_id,
+                            "No connection available for unsubscribing {}",
                             subscription_id
                         );
                         Ok(()) // Not having a connection is not an error for unsubscribe
@@ -495,22 +458,9 @@ impl Middleware for Nip29Middleware {
                         // Send CLOSED message to confirm unsubscription
                         ctx.send_message(RelayMessage::closed(subscription_id.clone(), ""))
                             .await?;
-
-                        tracing::debug!(
-                            target: "event_store",
-                            "[{}] Successfully unsubscribed {}",
-                            connection_id,
-                            subscription_id
-                        );
                     }
                     Err(e) => {
-                        error!(
-                            target: "event_store",
-                            "[{}] Failed to unsubscribe {}: {}",
-                            connection_id,
-                            subscription_id,
-                            e
-                        );
+                        error!("Failed to unsubscribe {}: {}", subscription_id, e);
                         if let Err(err) = e.handle_inbound_error(ctx).await {
                             error!("Failed to handle inbound error: {}", err);
                         }
@@ -544,28 +494,12 @@ impl Middleware for Nip29Middleware {
         &self,
         ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        tracing::debug!(
-            target: "event_store",
-            "[{}] Setting up connection in Nip29Middleware",
-            ctx.connection_id
-        );
-
         if let Some(sender) = ctx.sender.clone() {
             ctx.state
                 .setup_connection(ctx.connection_id.clone(), self.database.clone(), sender)
                 .await?;
-
-            tracing::debug!(
-                target: "event_store",
-                "[{}] Connection setup complete in Nip29Middleware",
-                ctx.connection_id
-            );
         } else {
-            tracing::error!(
-                target: "event_store",
-                "[{}] No sender available for connection setup in Nip29Middleware",
-                ctx.connection_id
-            );
+            error!("No sender available for connection setup in Nip29Middleware");
         }
 
         Ok(())
@@ -589,8 +523,8 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use tracing::{debug, error, warn};
     use websocket_builder::{
-        InboundContext, MessageConverter, OutboundContext, StateFactory, WebSocketBuilder,
-        WebSocketHandler,
+        InboundContext, MessageConverter, MessageSender, OutboundContext, StateFactory,
+        WebSocketBuilder, WebSocketHandler,
     };
 
     struct TestClient {
@@ -838,13 +772,16 @@ mod tests {
         )
         .await;
 
-        // Should return an error because group doesn't exist
+        // Should allow the event through since it's an unmanaged group
         let result = middleware.handle_event(&event, &None).await;
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Group not found for this group content"
-        );
+        assert!(result.is_ok());
+        if let Ok(Some(commands)) = result {
+            assert_eq!(commands.len(), 1);
+            match &commands[0] {
+                StoreCommand::SaveSignedEvent(saved_event) => assert_eq!(saved_event.id, event.id),
+                _ => panic!("Expected SaveSignedEvent command"),
+            }
+        }
     }
 
     #[tokio::test]
@@ -1267,7 +1204,7 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let middleware = Nip29Middleware::new(groups, admin_keys.public_key(), database);
+        let middleware = Nip29Middleware::new(groups, admin_keys.public_key(), database.clone());
 
         // Create a content event for a non-existent group
         let event = create_test_event(
@@ -1277,8 +1214,14 @@ mod tests {
         )
         .await;
 
-        // Create a test context
+        // Create a test context with a connection
         let mut state = create_test_state(None);
+        let (tx, _rx) = tokio::sync::mpsc::channel(10);
+        state
+            .setup_connection("test_conn".to_string(), database, MessageSender::new(tx, 0))
+            .await
+            .unwrap();
+
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
             ClientMessage::Event(Box::new(event.clone())),
@@ -1288,7 +1231,7 @@ mod tests {
             0,
         );
 
-        // Process the event
+        // Process the event - should succeed since it's an unmanaged group
         let result = middleware.process_inbound(&mut ctx).await;
         assert!(result.is_ok());
 
@@ -1370,5 +1313,72 @@ mod tests {
         message: RelayMessage,
     ) -> OutboundContext<'_, NostrConnectionState, ClientMessage, RelayMessage> {
         OutboundContext::new("test_conn".to_string(), message, None, state, &[], 0)
+    }
+
+    #[tokio::test]
+    async fn test_group_create_with_existing_events_requires_relay_admin() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_, member_keys, _) = create_test_keys().await;
+        let groups = Arc::new(
+            Groups::load_groups(database.clone(), admin_keys.public_key())
+                .await
+                .unwrap(),
+        );
+        let middleware =
+            Nip29Middleware::new(groups.clone(), admin_keys.public_key(), database.clone());
+
+        // First create an unmanaged event for a group
+        let group_id = "test_group";
+        let unmanaged_event = create_test_event(
+            &member_keys,
+            11, // Regular content event
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+
+        // Save the unmanaged event
+        database.save_signed_event(&unmanaged_event).await.unwrap();
+
+        // Try to create a managed group with non-admin key - should fail
+        let create_event_non_admin = create_test_event(
+            &member_keys,
+            9007, // KIND_GROUP_CREATE_9007
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+
+        let result = middleware
+            .handle_event(&create_event_non_admin, &None)
+            .await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Only relay admin can create a managed group from an unmanaged one"
+        );
+
+        // Try to create a managed group with relay admin key - should succeed
+        let create_event_admin = create_test_event(
+            &admin_keys,
+            9007, // KIND_GROUP_CREATE_9007
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+
+        let result = middleware.handle_event(&create_event_admin, &None).await;
+        assert!(result.is_ok());
+        if let Ok(Some(commands)) = result {
+            // Should have 6 commands: save create event + 5 metadata events
+            assert_eq!(commands.len(), 6);
+            match &commands[0] {
+                StoreCommand::SaveSignedEvent(saved_event) => {
+                    assert_eq!(saved_event.id, create_event_admin.id)
+                }
+                _ => panic!("Expected SaveSignedEvent command"),
+            }
+        }
+
+        // Verify the group was created and is managed
+        let group = groups.get_group(group_id).unwrap();
+        assert!(group.is_admin(&admin_keys.public_key()));
     }
 }

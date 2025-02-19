@@ -2,8 +2,8 @@
 description: 
 globs: 
 ---
+This project implements a nostr relay to implement nostr's nip 29 spec which is this:
 
-This project implements a nostr relay to implement nip 29 which is this:
 NIP-29
 ======
 
@@ -241,10 +241,10 @@ When a group is `open`, anyone can send a `kind:9021` event to it in order to be
 
 ### Storing your list of groups
 
-A definition for `kind:10009` was included in [NIP-51](51.md) that allows clients to store the list of groups a user wants to remember being in.
+A definition for `kind:10009` was included in [NIP-51](mdc:51.md) that allows clients to store the list of groups a user wants to remember being in.
 
 ### Using `unmanaged` relays
 
-To prevent event leakage, when using `unmanaged` relays, clients should include the [NIP-70](70.md) `-` tag, as just the `previous` tag won't be checked by other `unmanaged` relays.
+To prevent event leakage, when using `unmanaged` relays, clients should include the [NIP-70](mdc:70.md) `-` tag, as just the `previous` tag won't be checked by other `unmanaged` relays.
 
 Groups MAY be named without relay support by adding a `name` to the corresponding tag in a user's `kind 10009` group list.

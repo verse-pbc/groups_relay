@@ -201,7 +201,45 @@ impl Groups {
             return Err(Error::notice("Group existed before and was deleted"));
         }
 
-        let group = Group::new(event)?;
+        // Find all previous participants in unmanaged group
+        let previous_events = match self
+            .db
+            .query(vec![Filter::new().custom_tag(
+                SingleLetterTag::lowercase(Alphabet::H),
+                group_id.to_string(),
+            )])
+            .await
+        {
+            Ok(events) => events,
+            Err(e) => return Err(Error::notice(format!("Error querying database: {}", e))),
+        };
+
+        let mut group = Group::new(event)?;
+
+        // Only allow migrating unmanaged groups to managed ones if creator is relay admin
+        if !previous_events.is_empty() && event.pubkey != self.relay_pubkey {
+            return Err(Error::notice(
+                "Only relay admin can create a managed group from an unmanaged one",
+            ));
+        }
+
+        // Add all previous participants as members
+        let mut previous_participants = std::collections::HashSet::new();
+        for prev_event in previous_events {
+            // Skip any group management events
+            if Group::is_group_management_kind(prev_event.kind) {
+                continue;
+            }
+            previous_participants.insert(prev_event.pubkey);
+        }
+
+        for pubkey in previous_participants {
+            if pubkey != event.pubkey {
+                // Skip creator as they're already an admin
+                group.add_pubkey(pubkey)?;
+            }
+        }
+
         self.groups.insert(group.id.to_string(), group.clone());
         Ok(group)
     }

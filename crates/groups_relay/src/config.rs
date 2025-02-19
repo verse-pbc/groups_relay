@@ -4,6 +4,7 @@ use nostr_sdk::prelude::*;
 use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
+use tracing::info;
 
 const ENVIRONMENT_PREFIX: &str = "NIP29";
 const CONFIG_SEPARATOR: &str = "__";
@@ -108,7 +109,7 @@ impl Config {
     pub fn get_settings(&self) -> Result<RelaySettings, ConfigError> {
         let settings: RelaySettings = self.config.get("relay")?;
         // Only log non-sensitive WebSocket settings
-        tracing::info!(
+        info!(
             "WebSocket settings: channel_size={}, max_connections={:?}, max_connection_time={:?}",
             settings.websocket.channel_size,
             settings.websocket.max_connections,
