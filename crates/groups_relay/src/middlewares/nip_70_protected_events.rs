@@ -1,3 +1,4 @@
+use crate::error::Error;
 use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -26,13 +27,9 @@ impl Middleware for Nip70Middleware {
         }
 
         let Some(auth_pubkey) = ctx.state.authed_pubkey else {
-            return ctx
-                .send_message(RelayMessage::ok(
-                    event.id,
-                    false,
-                    "auth-required: this event may only be published by its author",
-                ))
-                .await;
+            return Err(
+                Error::auth_required("this event may only be published by its author").into(),
+            );
         };
 
         if auth_pubkey != event.pubkey {

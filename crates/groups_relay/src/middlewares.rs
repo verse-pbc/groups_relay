@@ -1,3 +1,4 @@
+mod error_handling_middleware;
 mod event_verifier;
 mod logger_middleware;
 mod nip_09_deletion;
@@ -6,6 +7,7 @@ mod nip_42_auth;
 mod nip_70_protected_events;
 mod validation_middleware;
 
+pub use error_handling_middleware::ErrorHandlingMiddleware;
 pub use event_verifier::EventVerifierMiddleware;
 pub use logger_middleware::LoggerMiddleware;
 pub use nip_09_deletion::Nip09Middleware;

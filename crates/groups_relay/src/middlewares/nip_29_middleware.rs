@@ -299,7 +299,7 @@ impl Middleware for Nip29Middleware {
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         match &ctx.message {
-            ClientMessage::Event(ref event) => {
+            ClientMessage::Event(event) => {
                 // Increment the inbound events processed counter
                 crate::metrics::inbound_events_processed().increment(1);
 
@@ -316,12 +316,7 @@ impl Middleware for Nip29Middleware {
                         Ok(())
                     }
                     Ok(None) => Ok(()),
-                    Err(e) => {
-                        if let Err(err) = e.handle_inbound_error(ctx).await {
-                            error!("Failed to handle inbound error: {}", err);
-                        }
-                        Ok(())
-                    }
+                    Err(e) => Err(e.into()),
                 }
             }
             ClientMessage::Req {
@@ -329,32 +324,17 @@ impl Middleware for Nip29Middleware {
                 filter,
             } => {
                 // First verify the filter
-                if let Err(e) = self.verify_filter(ctx.state.authed_pubkey, filter) {
-                    if let Err(e) = e.handle_inbound_error(ctx).await {
-                        error!("Failed to handle inbound error: {}", e);
-                    }
-                    return Ok(());
-                }
+                self.verify_filter(ctx.state.authed_pubkey, filter)?;
 
                 // Then handle the subscription
                 let connection = ctx.state.relay_connection.as_ref();
                 if let Some(connection) = connection {
-                    if let Err(e) = connection
+                    connection
                         .handle_subscription_request(
                             subscription_id.clone(),
                             vec![(**filter).clone()],
                         )
-                        .await
-                    {
-                        error!(
-                            "Failed to handle subscription request {}: {}",
-                            subscription_id, e
-                        );
-                        if let Err(err) = e.handle_inbound_error(ctx).await {
-                            error!("Failed to handle inbound error: {}", err);
-                        }
-                        return Ok(());
-                    }
+                        .await?;
                 } else {
                     error!(
                         "No connection available for subscription {}",
@@ -370,30 +350,15 @@ impl Middleware for Nip29Middleware {
             } => {
                 // Verify each filter
                 for filter in filters.iter() {
-                    if let Err(e) = self.verify_filter(ctx.state.authed_pubkey, filter) {
-                        if let Err(e) = e.handle_inbound_error(ctx).await {
-                            error!("Failed to handle inbound error: {}", e);
-                        }
-                        return Ok(());
-                    }
+                    self.verify_filter(ctx.state.authed_pubkey, filter)?;
                 }
 
                 // Then handle the subscription
                 let connection = ctx.state.relay_connection.as_ref();
                 if let Some(connection) = connection {
-                    if let Err(e) = connection
+                    connection
                         .handle_subscription_request(subscription_id.clone(), filters.clone())
-                        .await
-                    {
-                        error!(
-                            "Failed to handle subscription request {}: {}",
-                            subscription_id, e
-                        );
-                        if let Err(err) = e.handle_inbound_error(ctx).await {
-                            error!("Failed to handle inbound error: {}", err);
-                        }
-                        return Ok(());
-                    }
+                        .await?;
                 } else {
                     error!(
                         "No connection available for subscription {}",
@@ -427,9 +392,7 @@ impl Middleware for Nip29Middleware {
                     }
                     Err(e) => {
                         error!("Failed to unsubscribe {}: {}", subscription_id, e);
-                        if let Err(err) = e.handle_inbound_error(ctx).await {
-                            error!("Failed to handle inbound error: {}", err);
-                        }
+                        return Err(e.into());
                     }
                 }
 

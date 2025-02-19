@@ -2,8 +2,8 @@ use crate::{
     config,
     groups::Groups,
     middlewares::{
-        EventVerifierMiddleware, LoggerMiddleware, Nip09Middleware, Nip29Middleware,
-        Nip42Middleware, Nip70Middleware, ValidationMiddleware,
+        ErrorHandlingMiddleware, EventVerifierMiddleware, LoggerMiddleware, Nip09Middleware,
+        Nip29Middleware, Nip42Middleware, Nip70Middleware, ValidationMiddleware,
     },
     nostr_database::RelayDatabase,
     nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
@@ -54,6 +54,7 @@ pub fn build_websocket_handler(
     let nip_29 = Nip29Middleware::new(groups, relay_keys.public_key(), database.clone());
     let validation_middleware = ValidationMiddleware::new(relay_keys.public_key());
     let nip_09 = Nip09Middleware::new(database.clone());
+    let error_handler = ErrorHandlingMiddleware;
 
     let connection_state_factory = NostrConnectionFactory::new(relay_url)?;
 
@@ -69,7 +70,10 @@ pub fn build_websocket_handler(
         builder = builder.with_max_connections(max_conns);
     }
 
+    // Add middlewares in order of execution
+    // Error handler must be first to catch all errors
     Ok(builder
+        .with_middleware(error_handler)
         .with_middleware(logger)
         .with_middleware(nip_42)
         .with_middleware(validation_middleware)
