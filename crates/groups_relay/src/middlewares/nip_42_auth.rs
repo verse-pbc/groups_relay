@@ -5,7 +5,9 @@ use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, error};
-use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage};
+use websocket_builder::{
+    ConnectionContext, InboundContext, Middleware, OutboundContext, SendMessage,
+};
 
 #[derive(Debug, Clone)]
 pub struct Nip42Middleware {
@@ -150,13 +152,48 @@ impl Middleware for Nip42Middleware {
     ) -> Result<(), anyhow::Error> {
         ctx.next().await
     }
+
+    async fn on_connect(
+        &self,
+        ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
+        debug!(
+            target: "auth",
+            "[{}] New connection, sending auth challenge",
+            ctx.connection_id
+        );
+        let challenge_event = ctx.state.get_challenge_event();
+        debug!(
+            target: "auth",
+            "[{}] Generated challenge event: {:?}",
+            ctx.connection_id,
+            challenge_event
+        );
+        ctx.send_message(challenge_event).await?;
+        ctx.next().await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_utils::create_test_state;
+    use std::sync::Arc;
     use std::time::Instant;
+
+    fn create_middleware_chain() -> Vec<
+        Arc<
+            dyn Middleware<
+                State = NostrConnectionState,
+                IncomingMessage = ClientMessage,
+                OutgoingMessage = RelayMessage,
+            >,
+        >,
+    > {
+        vec![Arc::new(Nip42Middleware::new(
+            "wss://test.relay".to_string(),
+        ))]
+    }
 
     #[tokio::test]
     async fn test_authed_pubkey_valid_auth() {
@@ -343,5 +380,18 @@ mod tests {
 
         assert!(middleware.process_inbound(&mut ctx).await.is_err());
         assert_eq!(state.authed_pubkey, None);
+    }
+
+    #[tokio::test]
+    async fn test_on_connect_sends_challenge() {
+        let auth_url = "wss://test.relay".to_string();
+        let middleware = Nip42Middleware::new(auth_url.clone());
+        let mut state = create_test_state(None);
+        let chain = create_middleware_chain();
+
+        let mut ctx = ConnectionContext::new("test_conn".to_string(), None, &mut state, &chain, 0);
+
+        assert!(middleware.on_connect(&mut ctx).await.is_ok());
+        assert!(state.challenge.is_some());
     }
 }
