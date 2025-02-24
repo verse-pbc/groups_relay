@@ -195,10 +195,10 @@ impl EventStoreConnection {
 
     /// Returns the capacity of the outgoing sender
     pub fn sender_capacity(&self) -> usize {
-        match &self.outgoing_sender {
-            Some(sender) => sender.capacity(),
-            None => 0,
-        }
+        let Some(sender) = &self.outgoing_sender else {
+            return 0;
+        };
+        sender.capacity()
     }
 
     pub fn set_outgoing_sender(&mut self, sender: MessageSender<RelayMessage>) {

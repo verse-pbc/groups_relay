@@ -197,22 +197,21 @@ impl<
             Some(message)
         };
 
-        match message {
-            Some(message) => {
-                let Ok(string_message) = self.message_converter.outbound_to_string(message) else {
-                    error!(
-                        "[{}] Failed to convert outbound message to string",
-                        connection_id
-                    );
-                    return Err(WebsocketError::OutboundMessageConversionError(
-                        "Failed to convert outbound message to string".to_string(),
-                        state,
-                    ));
-                };
-                Ok((state, Some(string_message)))
-            }
-            None => Ok((state, None)),
-        }
+        let Some(message) = message else {
+            return Ok((state, None));
+        };
+
+        let Ok(string_message) = self.message_converter.outbound_to_string(message) else {
+            error!(
+                "[{}] Failed to convert outbound message to string",
+                connection_id
+            );
+            return Err(WebsocketError::OutboundMessageConversionError(
+                "Failed to convert outbound message to string".to_string(),
+                state,
+            ));
+        };
+        Ok((state, Some(string_message)))
     }
 
     /// Handles connection establishment.

@@ -363,23 +363,25 @@ impl Nip29Middleware {
             self.verify_filter(authed_pubkey, filter)?;
         }
 
-        if let Some(conn) = connection {
-            if let Some(relay_conn) = &conn.relay_connection {
-                relay_conn
-                    .handle_subscription_request(subscription_id.clone(), filters)
-                    .await?;
-            } else {
-                error!(
-                    "No relay connection available for subscription {}",
-                    subscription_id
-                );
-            }
-        } else {
+        let Some(conn) = connection else {
             error!(
                 "No connection available for subscription {}",
                 subscription_id
             );
-        }
+            return Ok(());
+        };
+
+        let Some(relay_conn) = &conn.relay_connection else {
+            error!(
+                "No relay connection available for subscription {}",
+                subscription_id
+            );
+            return Ok(());
+        };
+
+        relay_conn
+            .handle_subscription_request(subscription_id.clone(), filters)
+            .await?;
 
         Ok(())
     }
@@ -443,18 +445,18 @@ impl Middleware for Nip29Middleware {
             ClientMessage::Close(subscription_id) => {
                 let subscription_id = subscription_id.clone();
 
-                let unsubscribe_result =
-                    if let Some(connection) = ctx.state.relay_connection.as_ref() {
-                        connection.handle_unsubscribe(subscription_id.clone()).await
-                    } else {
-                        error!(
-                            "No connection available for unsubscribing {}",
-                            subscription_id
-                        );
-                        Ok(()) // Not having a connection is not an error for unsubscribe
-                    };
+                let Some(connection) = ctx.state.relay_connection.as_ref() else {
+                    error!(
+                        "No connection available for unsubscribing {}",
+                        subscription_id
+                    );
+                    // Send CLOSED message even without connection
+                    ctx.send_message(RelayMessage::closed(subscription_id.clone(), ""))
+                        .await?;
+                    return Ok(());
+                };
 
-                match unsubscribe_result {
+                match connection.handle_unsubscribe(subscription_id.clone()).await {
                     Ok(()) => {
                         ctx.send_message(RelayMessage::closed(subscription_id.clone(), ""))
                             .await?;
@@ -475,14 +477,22 @@ impl Middleware for Nip29Middleware {
         &self,
         ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        if let Some(RelayMessage::Event { event, .. }) = &ctx.message {
-            if let Some(group) = self.groups.find_group_from_event(event) {
-                match group.can_see_event(&ctx.state.authed_pubkey, &self.relay_pubkey, event) {
-                    Ok(false) => ctx.message = None,
-                    Err(_e) => ctx.message = None,
-                    _ => (),
-                }
-            }
+        let Some(RelayMessage::Event { event, .. }) = &ctx.message else {
+            return ctx.next().await;
+        };
+
+        let Some(group) = self.groups.find_group_from_event(event) else {
+            return ctx.next().await;
+        };
+
+        let Ok(can_see) = group.can_see_event(&ctx.state.authed_pubkey, &self.relay_pubkey, event)
+        else {
+            ctx.message = None;
+            return ctx.next().await;
+        };
+
+        if !can_see {
+            ctx.message = None;
         }
 
         ctx.next().await
@@ -492,13 +502,14 @@ impl Middleware for Nip29Middleware {
         &self,
         ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        if let Some(sender) = ctx.sender.clone() {
-            ctx.state
-                .setup_connection(ctx.connection_id.clone(), self.database.clone(), sender)
-                .await?;
-        } else {
+        let Some(sender) = ctx.sender.clone() else {
             error!("No sender available for connection setup in Nip29Middleware");
-        }
+            return Ok(());
+        };
+
+        ctx.state
+            .setup_connection(ctx.connection_id.clone(), self.database.clone(), sender)
+            .await?;
 
         Ok(())
     }
