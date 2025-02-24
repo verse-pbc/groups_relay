@@ -7,6 +7,7 @@ use anyhow::Result;
 use clap::Parser; // For command-line argument parsing
 use nostr_sdk::prelude::*;
 use rand::Rng;
+use scopeguard;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -498,21 +499,38 @@ async fn spawn_clients(
 
 /// Wait for completion or timeout
 async fn wait_for_completion(
-    _metrics: Arc<Mutex<Metrics>>,
+    metrics: Arc<Mutex<Metrics>>,
     duration: u64,
     shutdown: &CancellationToken,
 ) -> Result<()> {
     let timeout = tokio::time::sleep(Duration::from_secs(duration));
     tokio::pin!(timeout);
 
-    tokio::select! {
-        _ = &mut timeout => {
-            info!("Load test duration reached");
-        }
-        _ = shutdown.cancelled() => {
-            info!("Received shutdown signal");
+    let completion_check = tokio::time::interval(Duration::from_millis(100));
+    tokio::pin!(completion_check);
+
+    loop {
+        tokio::select! {
+            _ = &mut timeout => {
+                info!("Load test duration reached");
+                break;
+            }
+            _ = shutdown.cancelled() => {
+                info!("Received shutdown signal");
+                break;
+            }
+            _ = completion_check.tick() => {
+                let metrics = metrics.lock().await;
+                if metrics.finished_clients > 0 && metrics.finished_clients >= metrics.active_clients {
+                    info!("All clients completed their operations");
+                    break;
+                }
+            }
         }
     }
+
+    // Give a small grace period for final cleanup
+    tokio::time::sleep(Duration::from_secs(1)).await;
     Ok(())
 }
 
@@ -689,6 +707,14 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
     client.add_relay(&config.url).await?;
     client.connect().await;
 
+    // Use defer pattern to ensure cleanup happens
+    let metrics_clone = metrics.clone();
+    let _cleanup = scopeguard::guard((), move |_| {
+        if let Ok(mut metrics) = metrics_clone.try_lock() {
+            metrics.mark_client_finished();
+        }
+    });
+
     // Authenticate before any operations
     authenticate_client(&client).await?;
 
@@ -779,9 +805,11 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
     metrics.lock().await.events_sent += 1;
 
     // Wait for remove_user event to confirm removal
+    let since_timestamp = Timestamp::now() - 5; // Look at events from the last 5 seconds
     let filter = Filter::new()
         .kinds(vec![Kind::Custom(39002)]) // Monitor members list events
-        .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id);
+        .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id)
+        .since(since_timestamp);
 
     let event = wait_for_event(&client, filter, Duration::from_secs(30), |event| {
         // Check that our pubkey is NOT in the members list anymore
@@ -803,6 +831,9 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
 
     // Update client state to left
     config.state = ClientState::Left;
+
+    // Ensure we disconnect cleanly
+    client.disconnect().await;
 
     Ok(())
 }
