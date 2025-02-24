@@ -26,6 +26,29 @@ pub struct Nip29Middleware {
     database: Arc<RelayDatabase>,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum MiddlewareError {
+    #[error("Group not found: {0}")]
+    GroupNotFound(String),
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
+    #[error("Authentication required: {0}")]
+    AuthRequired(String),
+    #[error("Internal error: {0}")]
+    Internal(#[from] anyhow::Error),
+}
+
+impl From<MiddlewareError> for Error {
+    fn from(err: MiddlewareError) -> Self {
+        match err {
+            MiddlewareError::GroupNotFound(msg) => Error::notice(msg),
+            MiddlewareError::PermissionDenied(msg) => Error::restricted(msg),
+            MiddlewareError::AuthRequired(msg) => Error::auth_required(msg),
+            MiddlewareError::Internal(err) => Error::notice(err.to_string()),
+        }
+    }
+}
+
 impl Nip29Middleware {
     pub fn new(groups: Arc<Groups>, relay_pubkey: PublicKey, database: Arc<RelayDatabase>) -> Self {
         Self {
@@ -35,34 +58,216 @@ impl Nip29Middleware {
         }
     }
 
+    /// Checks if a filter is querying group-related data
+    fn is_group_query(&self, filter: &Filter) -> bool {
+        filter
+            .generic_tags
+            .contains_key(&SingleLetterTag::lowercase(Alphabet::H))
+            || filter
+                .generic_tags
+                .contains_key(&SingleLetterTag::lowercase(Alphabet::D))
+    }
+
+    /// Checks if a filter is querying addressable event kinds
+    fn is_addressable_query(&self, filter: &Filter) -> bool {
+        filter
+            .kinds
+            .as_ref()
+            .is_some_and(|kinds| kinds.iter().any(|k| ADDRESSABLE_EVENT_KINDS.contains(k)))
+    }
+
+    /// Gets all group tags from a filter
+    fn get_group_tags<'a>(&self, filter: &'a Filter) -> impl Iterator<Item = String> + 'a {
+        filter
+            .generic_tags
+            .iter()
+            .filter(|(k, _)| k == &&SingleLetterTag::lowercase(Alphabet::H))
+            .flat_map(|(_, tag_set)| tag_set.iter())
+            .cloned()
+    }
+
+    /// Handles group creation events (KIND_GROUP_CREATE_9007).
+    /// Creates a group and generates associated metadata and membership events.
+    async fn handle_group_create(&self, event: &Event) -> Result<Option<Vec<StoreCommand>>, Error> {
+        let group = self.groups.handle_group_create(event).await?;
+        metrics::groups_created().increment(1);
+
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event.clone())];
+        commands.extend(
+            group
+                .generate_all_state_events(&self.relay_pubkey)
+                .into_iter()
+                .map(StoreCommand::SaveUnsignedEvent),
+        );
+
+        Ok(Some(commands))
+    }
+
+    /// Handles metadata edit events (KIND_GROUP_EDIT_METADATA_9002).
+    /// Updates group metadata and generates a new metadata event.
+    async fn handle_edit_metadata(
+        &self,
+        event: &Event,
+    ) -> Result<Option<Vec<StoreCommand>>, Error> {
+        self.groups.handle_edit_metadata(event)?;
+        let group = self
+            .groups
+            .find_group_from_event(event)
+            .ok_or_else(|| Error::notice("Group not found for this group content"))?;
+
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event.clone())];
+        commands.extend(
+            group
+                .generate_metadata_events(&self.relay_pubkey)
+                .into_iter()
+                .map(StoreCommand::SaveUnsignedEvent),
+        );
+
+        Ok(Some(commands))
+    }
+
+    /// Handles join request events (KIND_GROUP_USER_JOIN_REQUEST_9021).
+    async fn handle_join_request(&self, event: &Event) -> Result<Option<Vec<StoreCommand>>, Error> {
+        let auto_joined = self.groups.handle_join_request(event)?;
+
+        if auto_joined {
+            let group = self
+                .groups
+                .find_group_from_event(event)
+                .ok_or_else(|| Error::notice("[JoinRequest-AutoJoin] Group not found"))?;
+
+            let mut commands = vec![StoreCommand::SaveSignedEvent(event.clone())];
+            commands.extend(
+                group
+                    .generate_membership_events(&self.relay_pubkey)
+                    .into_iter()
+                    .map(StoreCommand::SaveUnsignedEvent),
+            );
+
+            Ok(Some(commands))
+        } else {
+            Ok(Some(vec![StoreCommand::SaveSignedEvent(event.clone())]))
+        }
+    }
+
+    /// Handles leave request events (KIND_GROUP_USER_LEAVE_REQUEST_9022).
+    /// Returns updated group events if the leave request was successful.
+    async fn handle_leave_request(
+        &self,
+        event: &Event,
+    ) -> Result<Option<Vec<StoreCommand>>, Error> {
+        if self.groups.handle_leave_request(event)? {
+            let group = self
+                .groups
+                .find_group_from_event(event)
+                .ok_or_else(|| Error::notice("[LeaveRequest-MemberUpdate] Group not found"))?;
+            let members_event = group.generate_members_event(&self.relay_pubkey);
+            Ok(Some(vec![
+                StoreCommand::SaveSignedEvent(event.clone()),
+                StoreCommand::SaveUnsignedEvent(members_event),
+            ]))
+        } else {
+            Ok(Some(vec![]))
+        }
+    }
+
+    /// Handles group management events (add/remove users).
+    /// Returns updated group events if the management action was successful.
+    async fn handle_group_management(
+        &self,
+        event: &Event,
+    ) -> Result<Option<Vec<StoreCommand>>, Error> {
+        let mut group = self
+            .groups
+            .find_group_from_event_mut(event)?
+            .ok_or(Error::notice("Group not found for this group content"))?;
+
+        let is_member = group.is_member(&event.pubkey);
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event.clone())];
+
+        // For private and closed groups, only members can post
+        if group.metadata.private && group.metadata.closed && !is_member {
+            return Err(Error::notice("User is not a member of this group"));
+        }
+
+        // Open groups auto-join the author when posting
+        if !group.metadata.closed && !is_member {
+            group.add_pubkey(event.pubkey)?;
+            commands.extend(
+                group
+                    .generate_membership_events(&self.relay_pubkey)
+                    .into_iter()
+                    .map(StoreCommand::SaveUnsignedEvent),
+            );
+        } else if !is_member {
+            // For closed groups, non-members can't post
+            return Err(Error::notice("User is not a member of this group"));
+        }
+
+        Ok(Some(commands))
+    }
+
+    /// Handles set roles events (KIND_GROUP_SET_ROLES_9006).
+    /// Updates group roles but does not generate any additional events.
+    async fn handle_set_roles(&self, event: &Event) -> Result<Option<Vec<StoreCommand>>, Error> {
+        self.groups.handle_set_roles(event)?;
+        Ok(Some(vec![]))
+    }
+
+    /// Handles delete group events (KIND_GROUP_DELETE_9008).
+    /// Verifies permissions and returns delete commands if authorized.
+    async fn handle_delete_group(
+        &self,
+        event: &Event,
+        authed_pubkey: &Option<PublicKey>,
+    ) -> Result<Option<Vec<StoreCommand>>, Error> {
+        let group = self
+            .groups
+            .find_group_from_event(event)
+            .ok_or_else(|| Error::notice("[DeleteGroup] Group not found"))?;
+
+        let commands = group.delete_group_request(event, &self.relay_pubkey, authed_pubkey)?;
+        Ok(Some(commands))
+    }
+
+    /// Handles delete event requests (KIND_GROUP_DELETE_EVENT_9005).
+    /// Verifies permissions and returns delete commands if authorized.
+    async fn handle_delete_event(
+        &self,
+        event: &Event,
+        authed_pubkey: &Option<PublicKey>,
+    ) -> Result<Option<Vec<StoreCommand>>, Error> {
+        let mut group = self
+            .groups
+            .find_group_from_event_mut(event)?
+            .ok_or_else(|| Error::notice("Group not found for this group content"))?;
+
+        let commands = group.delete_event_request(event, &self.relay_pubkey, authed_pubkey)?;
+        Ok(Some(commands))
+    }
+
+    /// Handles create invite events (KIND_GROUP_CREATE_INVITE_9009).
+    /// Verifies and stores the invite event.
+    async fn handle_create_invite(
+        &self,
+        event: &Event,
+    ) -> Result<Option<Vec<StoreCommand>>, Error> {
+        self.groups.handle_create_invite(event)?;
+        Ok(Some(vec![StoreCommand::SaveSignedEvent(event.clone())]))
+    }
+
     async fn handle_event(
         &self,
         event: &Event,
         authed_pubkey: &Option<PublicKey>,
     ) -> Result<Option<Vec<StoreCommand>>, Error> {
         if event.kind == KIND_GROUP_CREATE_9007 {
-            let group = self.groups.handle_group_create(event).await?;
-
-            // Increment the groups created counter
-            metrics::groups_created().increment(1);
-
-            let metadata_event = group.generate_metadata_event(&self.relay_pubkey);
-            let put_user_event = group.generate_put_user_event(&self.relay_pubkey);
-            let admins_event = group.generate_admins_event(&self.relay_pubkey);
-            let members_event = group.generate_members_event(&self.relay_pubkey);
-            let roles_event = group.generate_roles_event(&self.relay_pubkey);
-
-            return Ok(Some(vec![
-                StoreCommand::SaveSignedEvent(event.clone()),
-                StoreCommand::SaveUnsignedEvent(metadata_event),
-                StoreCommand::SaveUnsignedEvent(put_user_event),
-                StoreCommand::SaveUnsignedEvent(admins_event),
-                StoreCommand::SaveUnsignedEvent(members_event),
-                StoreCommand::SaveUnsignedEvent(roles_event),
-            ]));
+            return self.handle_group_create(event).await;
         }
 
-        // For events with h tags that are not management events, allow them through only if no managed group exists
+        // Allow events through for unmanaged groups (groups not in relay state)
+        // Per NIP-29: In unmanaged groups, everyone is considered a member
+        // These groups can later be converted to managed groups by the relay admin
         if event.tags.find(TagKind::h()).is_some()
             && !Group::is_group_management_kind(event.kind)
             && self.groups.find_group_from_event(event).is_none()
@@ -72,216 +277,108 @@ impl Nip29Middleware {
 
         let events_to_save = match event.kind {
             k if k == KIND_GROUP_EDIT_METADATA_9002 => {
-                self.groups.handle_edit_metadata(event)?;
-                let Some(group) = self.groups.find_group_from_event(event) else {
-                    return Err(Error::notice("Group not found for this group content"));
-                };
-                let metadata_event = group.generate_metadata_event(&self.relay_pubkey);
-                vec![
-                    StoreCommand::SaveSignedEvent(event.clone()),
-                    StoreCommand::SaveUnsignedEvent(metadata_event),
-                ]
+                return self.handle_edit_metadata(event).await;
             }
 
             k if k == KIND_GROUP_USER_JOIN_REQUEST_9021 => {
-                let auto_joined = self.groups.handle_join_request(event)?;
-                if auto_joined {
-                    let Some(group) = self.groups.find_group_from_event(event) else {
-                        return Err(Error::notice("[JoinRequest-AutoJoin] Group not found"));
-                    };
-                    let put_user_event = group.generate_put_user_event(&self.relay_pubkey);
-                    let members_event = group.generate_members_event(&self.relay_pubkey);
-                    vec![
-                        StoreCommand::SaveSignedEvent(event.clone()),
-                        StoreCommand::SaveUnsignedEvent(put_user_event),
-                        StoreCommand::SaveUnsignedEvent(members_event),
-                    ]
-                } else {
-                    vec![StoreCommand::SaveSignedEvent(event.clone())]
-                }
+                return self.handle_join_request(event).await;
             }
 
             k if k == KIND_GROUP_USER_LEAVE_REQUEST_9022 => {
-                if self.groups.handle_leave_request(event)? {
-                    let Some(group) = self.groups.find_group_from_event(event) else {
-                        return Err(Error::notice("[LeaveRequest-MemberUpdate] Group not found"));
-                    };
-                    let members_event = group.generate_members_event(&self.relay_pubkey);
-                    vec![
-                        StoreCommand::SaveSignedEvent(event.clone()),
-                        StoreCommand::SaveUnsignedEvent(members_event),
-                    ]
-                } else {
-                    vec![]
-                }
+                return self.handle_leave_request(event).await;
             }
 
             k if k == KIND_GROUP_SET_ROLES_9006 => {
-                self.groups.handle_set_roles(event)?;
-                vec![]
+                return self.handle_set_roles(event).await;
             }
 
-            k if k == KIND_GROUP_ADD_USER_9000 => {
-                self.groups.handle_put_user(event)?;
-                let Some(group) = self.groups.find_group_from_event(event) else {
-                    return Err(Error::notice("[AddUser-MemberUpdate] Group not found"));
-                };
-                let mut events = vec![StoreCommand::SaveSignedEvent(event.clone())];
-
-                let admins_event = group.generate_admins_event(&self.relay_pubkey);
-                events.push(StoreCommand::SaveUnsignedEvent(admins_event));
-
-                let members_event = group.generate_members_event(&self.relay_pubkey);
-                events.push(StoreCommand::SaveUnsignedEvent(members_event));
-
-                events
-            }
-
-            k if k == KIND_GROUP_REMOVE_USER_9001 => {
-                let removed_admins = self.groups.handle_remove_user(event)?;
-                let Some(group) = self.groups.find_group_from_event(event) else {
-                    return Err(Error::notice("[RemoveUser-MemberUpdate] Group not found"));
-                };
-                let mut events = vec![StoreCommand::SaveSignedEvent(event.clone())];
-                if removed_admins {
-                    let admins_event = group.generate_admins_event(&self.relay_pubkey);
-                    events.push(StoreCommand::SaveUnsignedEvent(admins_event));
-                }
-                let members_event = group.generate_members_event(&self.relay_pubkey);
-                events.push(StoreCommand::SaveUnsignedEvent(members_event));
-
-                events
+            k if k == KIND_GROUP_ADD_USER_9000 || k == KIND_GROUP_REMOVE_USER_9001 => {
+                return self.handle_group_management(event).await;
             }
 
             k if k == KIND_GROUP_DELETE_9008 => {
-                let Some(group) = self.groups.find_group_from_event(event) else {
-                    return Err(Error::notice("[DeleteGroup] Group not found"));
-                };
-
-                match group.delete_group_request(event, &self.relay_pubkey, authed_pubkey) {
-                    Ok(commands) => commands,
-                    Err(e) => return Err(e),
-                }
+                return self.handle_delete_group(event, authed_pubkey).await;
             }
 
             k if k == KIND_GROUP_DELETE_EVENT_9005 => {
-                let mut group = self
-                    .groups
-                    .find_group_from_event_mut(event)?
-                    .ok_or(Error::notice("Group not found for this group content"))?;
-
-                match group.delete_event_request(event, &self.relay_pubkey, authed_pubkey) {
-                    Ok(commands) => commands,
-                    Err(e) => return Err(e),
-                }
+                return self.handle_delete_event(event, authed_pubkey).await;
             }
 
             k if k == KIND_GROUP_CREATE_INVITE_9009 => {
-                self.groups.handle_create_invite(event)?;
-                vec![StoreCommand::SaveSignedEvent(event.clone())]
+                return self.handle_create_invite(event).await;
             }
 
             k if !NON_GROUP_ALLOWED_KINDS.contains(&k) => {
-                let mut group = self
-                    .groups
-                    .find_group_from_event_mut(event)?
-                    .ok_or(Error::notice("Group not found for this group content"))?;
-
-                let is_member = group.is_member(&event.pubkey);
-                let mut events_to_save = vec![StoreCommand::SaveSignedEvent(event.clone())];
-
-                // For private and closed groups, only members can post
-                if group.metadata.private && group.metadata.closed && !is_member {
-                    return Err(Error::notice("User is not a member of this group"));
-                }
-
-                // Open groups auto-join the author when posting
-                if !group.metadata.closed {
-                    // For open groups, non-members are automatically added
-                    if !is_member {
-                        group.add_pubkey(event.pubkey)?;
-
-                        let put_user_event = group.generate_put_user_event(&self.relay_pubkey);
-                        let members_event = group.generate_members_event(&self.relay_pubkey);
-
-                        events_to_save.push(StoreCommand::SaveUnsignedEvent(put_user_event));
-                        events_to_save.push(StoreCommand::SaveUnsignedEvent(members_event));
-                    }
-                } else if !is_member {
-                    // For closed groups, non-members can't post
-                    return Err(Error::notice("User is not a member of this group"));
-                }
-
-                events_to_save
+                return self.handle_group_management(event).await;
             }
 
-            _ => {
-                // We always save allowed non-group events
-                vec![StoreCommand::SaveSignedEvent(event.clone())]
-            }
+            _ => vec![StoreCommand::SaveSignedEvent(event.clone())],
         };
 
         Ok(Some(events_to_save))
     }
 
+    /// Verifies if a filter has access to the requested groups.
+    ///
+    /// The verification follows these rules:
+    /// 1. Non-group queries (no 'h' or 'd' tags) are always allowed
+    /// 2. Addressable event kinds (39xxx) are always allowed
+    /// 3. For unmanaged groups (groups that don't exist in relay state):
+    ///    - Access is always granted as everyone is considered a member
+    ///    - Groups can form organically before becoming managed
+    ///    - Can be converted to managed groups by relay admin later
+    /// 4. For managed groups:
+    ///    - Public groups are accessible to everyone
+    ///    - Private groups require authentication and membership
+    ///    - The relay pubkey always has access
     fn verify_filter(
         &self,
         authed_pubkey: Option<PublicKey>,
         filter: &Filter,
     ) -> Result<(), Error> {
-        // Check for group-related tags
-        let has_h_tag = filter
-            .generic_tags
-            .contains_key(&SingleLetterTag::lowercase(Alphabet::H));
-        let has_d_tag = filter
-            .generic_tags
-            .contains_key(&SingleLetterTag::lowercase(Alphabet::D));
-
-        // If this isn't a group query (no h or d tags), allow it
-        if !has_h_tag && !has_d_tag {
+        if !self.is_group_query(filter) {
+            return Ok(());
+        }
+        if self.is_addressable_query(filter) {
             return Ok(());
         }
 
-        // For addressable event kinds (metadata queries), just allow them
-        if let Some(kinds) = &filter.kinds {
-            if kinds.iter().any(|k| ADDRESSABLE_EVENT_KINDS.contains(k)) {
-                return Ok(());
+        for tag in self.get_group_tags(filter) {
+            if let Some(group_ref) = self.groups.get_group(&tag) {
+                self.groups.verify_group_access(&group_ref, authed_pubkey)?;
             }
         }
+        Ok(())
+    }
 
-        // At this point we have a group query with an 'h' tag
-        // Check each group referenced in the filter
-        for tag in filter
-            .generic_tags
-            .iter()
-            .filter(|(k, _)| k == &&SingleLetterTag::lowercase(Alphabet::H))
-            .flat_map(|(_, tag_set)| tag_set.iter())
-        {
-            let Some(group) = self.groups.get_group(tag) else {
-                return Ok(());
-            };
+    /// Verifies filters and handles subscription requests for a given subscription ID.
+    async fn handle_subscription(
+        &self,
+        subscription_id: SubscriptionId,
+        filters: Vec<Filter>,
+        authed_pubkey: Option<PublicKey>,
+        connection: Option<&NostrConnectionState>,
+    ) -> Result<(), Error> {
+        for filter in &filters {
+            self.verify_filter(authed_pubkey, filter)?;
+        }
 
-            if !group.metadata.private {
-                return Ok(());
+        if let Some(conn) = connection {
+            if let Some(relay_conn) = &conn.relay_connection {
+                relay_conn
+                    .handle_subscription_request(subscription_id.clone(), filters)
+                    .await?;
+            } else {
+                error!(
+                    "No relay connection available for subscription {}",
+                    subscription_id
+                );
             }
-
-            match authed_pubkey {
-                Some(authed_pubkey) => {
-                    // relay pubkey can always read private groups
-                    if authed_pubkey == self.relay_pubkey {
-                        return Ok(());
-                    }
-
-                    if !group.is_member(&authed_pubkey) {
-                        return Err(Error::restricted(
-                            "authed user is not a member of this group",
-                        ));
-                    }
-                }
-                None => {
-                    return Err(Error::auth_required("trying to read from a private group"));
-                }
-            }
+        } else {
+            error!(
+                "No connection available for subscription {}",
+                subscription_id
+            );
         }
 
         Ok(())
@@ -300,9 +397,7 @@ impl Middleware for Nip29Middleware {
     ) -> Result<(), anyhow::Error> {
         match &ctx.message {
             ClientMessage::Event(event) => {
-                // Increment the inbound events processed counter
-                crate::metrics::inbound_events_processed().increment(1);
-
+                metrics::inbound_events_processed().increment(1);
                 match self.handle_event(event, &ctx.state.authed_pubkey).await {
                     Ok(Some(events_to_save)) => {
                         let event_id = event.id;
@@ -323,55 +418,31 @@ impl Middleware for Nip29Middleware {
                 subscription_id,
                 filter,
             } => {
-                // First verify the filter
-                self.verify_filter(ctx.state.authed_pubkey, filter)?;
-
-                // Then handle the subscription
-                let connection = ctx.state.relay_connection.as_ref();
-                if let Some(connection) = connection {
-                    connection
-                        .handle_subscription_request(
-                            subscription_id.clone(),
-                            vec![(**filter).clone()],
-                        )
-                        .await?;
-                } else {
-                    error!(
-                        "No connection available for subscription {}",
-                        subscription_id
-                    );
-                }
-
+                self.handle_subscription(
+                    subscription_id.clone(),
+                    vec![filter.as_ref().clone()],
+                    ctx.state.authed_pubkey,
+                    Some(ctx.state),
+                )
+                .await?;
                 Ok(())
             }
             ClientMessage::ReqMultiFilter {
                 subscription_id,
                 filters,
             } => {
-                // Verify each filter
-                for filter in filters.iter() {
-                    self.verify_filter(ctx.state.authed_pubkey, filter)?;
-                }
-
-                // Then handle the subscription
-                let connection = ctx.state.relay_connection.as_ref();
-                if let Some(connection) = connection {
-                    connection
-                        .handle_subscription_request(subscription_id.clone(), filters.clone())
-                        .await?;
-                } else {
-                    error!(
-                        "No connection available for subscription {}",
-                        subscription_id
-                    );
-                }
-
+                self.handle_subscription(
+                    subscription_id.clone(),
+                    filters.clone(),
+                    ctx.state.authed_pubkey,
+                    Some(ctx.state),
+                )
+                .await?;
                 Ok(())
             }
             ClientMessage::Close(subscription_id) => {
                 let subscription_id = subscription_id.clone();
 
-                // First handle the unsubscribe
                 let unsubscribe_result =
                     if let Some(connection) = ctx.state.relay_connection.as_ref() {
                         connection.handle_unsubscribe(subscription_id.clone()).await
@@ -383,10 +454,8 @@ impl Middleware for Nip29Middleware {
                         Ok(()) // Not having a connection is not an error for unsubscribe
                     };
 
-                // Then handle any errors and send the response
                 match unsubscribe_result {
                     Ok(()) => {
-                        // Send CLOSED message to confirm unsubscription
                         ctx.send_message(RelayMessage::closed(subscription_id.clone(), ""))
                             .await?;
                     }
@@ -455,6 +524,27 @@ mod tests {
         InboundContext, MessageConverter, MessageSender, OutboundContext, StateFactory,
         WebSocketBuilder, WebSocketHandler,
     };
+
+    #[derive(Clone)]
+    struct NostrMessageConverter;
+
+    impl MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
+        fn outbound_to_string(&self, message: RelayMessage) -> anyhow::Result<String> {
+            debug!("Converting outbound message to string: {:?}", message);
+            Ok(message.as_json())
+        }
+
+        fn inbound_from_string(&self, message: String) -> anyhow::Result<Option<ClientMessage>> {
+            // Parse synchronously since JSON parsing doesn't need to be async
+            if let Ok(client_message) = ClientMessage::from_json(&message) {
+                debug!("Successfully parsed inbound message: {}", message);
+                Ok(Some(client_message))
+            } else {
+                error!("Ignoring invalid inbound message: {}", message);
+                Ok(None)
+            }
+        }
+    }
 
     struct TestClient {
         write: futures_util::stream::SplitSink<
@@ -659,27 +749,6 @@ mod tests {
             }
 
             debug!(target: "test_client", "Close complete");
-        }
-    }
-
-    #[derive(Clone)]
-    struct NostrMessageConverter;
-
-    impl MessageConverter<ClientMessage, RelayMessage> for NostrMessageConverter {
-        fn outbound_to_string(&self, message: RelayMessage) -> Result<String> {
-            debug!("Converting outbound message to string: {:?}", message);
-            Ok(message.as_json())
-        }
-
-        fn inbound_from_string(&self, message: String) -> Result<Option<ClientMessage>> {
-            // Parse synchronously since JSON parsing doesn't need to be async
-            if let Ok(client_message) = ClientMessage::from_json(&message) {
-                debug!("Successfully parsed inbound message: {}", message);
-                Ok(Some(client_message))
-            } else {
-                error!("Ignoring invalid inbound message: {}", message);
-                Ok(None)
-            }
         }
     }
 

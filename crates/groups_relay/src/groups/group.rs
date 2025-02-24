@@ -8,6 +8,32 @@ use std::str::FromStr;
 use strum::{Display, EnumIter, IntoEnumIterator};
 use tracing::{debug, error, info, warn};
 
+#[derive(Debug, thiserror::Error)]
+pub enum GroupError {
+    #[error("Group not found: {0}")]
+    NotFound(String),
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
+    #[error("Validation failed: {0}")]
+    ValidationFailed(String),
+    #[error("Invalid state: {0}")]
+    InvalidState(String),
+    #[error("Internal error: {0}")]
+    Internal(#[from] anyhow::Error),
+}
+
+impl From<GroupError> for Error {
+    fn from(err: GroupError) -> Self {
+        match err {
+            GroupError::NotFound(msg) => Error::notice(msg),
+            GroupError::PermissionDenied(msg) => Error::restricted(msg),
+            GroupError::ValidationFailed(msg) => Error::notice(msg),
+            GroupError::InvalidState(msg) => Error::notice(msg),
+            GroupError::Internal(err) => Error::notice(err.to_string()),
+        }
+    }
+}
+
 // NIP-60 Cashu Wallet kinds
 pub const KIND_WALLET_17375: Kind = Kind::Custom(17375);
 pub const KIND_TOKEN_7375: Kind = Kind::Custom(7375);
@@ -929,6 +955,30 @@ impl Group {
         }
         // Always update updated_at to the latest timestamp
         self.updated_at = std::cmp::max(self.updated_at, event.created_at);
+    }
+
+    /// Generates all membership-related events for the group
+    pub fn generate_membership_events(&self, relay_pubkey: &PublicKey) -> Vec<UnsignedEvent> {
+        vec![
+            self.generate_put_user_event(relay_pubkey),
+            self.generate_admins_event(relay_pubkey),
+            self.generate_members_event(relay_pubkey),
+        ]
+    }
+
+    /// Generates all metadata-related events for the group
+    pub fn generate_metadata_events(&self, relay_pubkey: &PublicKey) -> Vec<UnsignedEvent> {
+        vec![
+            self.generate_metadata_event(relay_pubkey),
+            self.generate_roles_event(relay_pubkey),
+        ]
+    }
+
+    /// Generates all group state events
+    pub fn generate_all_state_events(&self, relay_pubkey: &PublicKey) -> Vec<UnsignedEvent> {
+        let mut events = self.generate_metadata_events(relay_pubkey);
+        events.extend(self.generate_membership_events(relay_pubkey));
+        events
     }
 }
 

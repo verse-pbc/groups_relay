@@ -3,13 +3,10 @@
 !/.gitignore  # except `gitignore` :)
 !crates/groups_relay/db/.gitkeep
 
-# Rust build artifacts
 /target
 /crates/*/target
 
-# Database files
 crates/groups_relay/db/*
 
-# Frontend build artifacts
 frontend/node_modules/*
 frontend/dist/*

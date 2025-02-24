@@ -8,7 +8,7 @@ use dashmap::{
     DashMap,
 };
 pub use group::{
-    Group, GroupMember, GroupMetadata, GroupRole, Invite, ADDRESSABLE_EVENT_KINDS,
+    Group, GroupError, GroupMember, GroupMetadata, GroupRole, Invite, ADDRESSABLE_EVENT_KINDS,
     KIND_GROUP_ADD_USER_9000, KIND_GROUP_ADMINS_39001, KIND_GROUP_CREATE_9007,
     KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_DELETE_9008, KIND_GROUP_DELETE_EVENT_9005,
     KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_MEMBERS_39002, KIND_GROUP_METADATA_39000,
@@ -379,6 +379,43 @@ impl Groups {
     pub async fn count_active_groups(&self) -> Result<usize, Error> {
         let counts = self.count_active_groups_by_privacy().await?;
         Ok(counts.iter().map(|(_, _, count)| count).sum())
+    }
+
+    /// Verifies if a user has access to a group
+    /// Returns Ok(()) if access is allowed, or an appropriate error if not
+    pub fn verify_group_access(
+        &self,
+        group: &Group,
+        pubkey: Option<PublicKey>,
+    ) -> Result<(), GroupError> {
+        if !group.metadata.private {
+            return Ok(());
+        }
+
+        let pubkey = pubkey.ok_or_else(|| {
+            GroupError::PermissionDenied("Authentication required for private group".to_string())
+        })?;
+
+        if pubkey == self.relay_pubkey || group.is_member(&pubkey) {
+            Ok(())
+        } else {
+            Err(GroupError::PermissionDenied(
+                "Not a member of this private group".to_string(),
+            ))
+        }
+    }
+
+    /// Verifies if a user has access to a group by ID
+    /// Returns Ok(()) if access is allowed, or an appropriate error if not
+    pub fn verify_group_access_by_id(
+        &self,
+        group_id: &str,
+        pubkey: Option<PublicKey>,
+    ) -> Result<(), GroupError> {
+        let group = self
+            .get_group(group_id)
+            .ok_or_else(|| GroupError::NotFound(format!("Group {} not found", group_id)))?;
+        self.verify_group_access(&group, pubkey)
     }
 }
 

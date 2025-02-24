@@ -1,3 +1,4 @@
+#[cfg(test)]
 mod utils;
 
 use anyhow::Result;
@@ -8,7 +9,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
-use utils::create_websocket_client;
+use utils::{create_test_server, create_websocket_client};
 use websocket_builder::{
     InboundContext, MessageConverter, Middleware, OutboundContext, SendMessage, StateFactory,
     WebSocketBuilder,
@@ -160,14 +161,12 @@ impl Middleware for FloodMiddleware {
 
 #[tokio::test]
 async fn test_message_conversion_error() -> Result<(), anyhow::Error> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8087));
-
     // Test inbound conversion error
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(true, false))
         .with_middleware(ErrorMiddleware::new(false, false))
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message - it should fail at conversion
@@ -186,14 +185,12 @@ async fn test_message_conversion_error() -> Result<(), anyhow::Error> {
 
 #[tokio::test]
 async fn test_middleware_error() -> Result<(), anyhow::Error> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8088));
-
     // Test middleware processing error
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(false, false))
         .with_middleware(ErrorMiddleware::new(true, false))
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message - it should fail in middleware
@@ -206,23 +203,19 @@ async fn test_middleware_error() -> Result<(), anyhow::Error> {
         assert!(msg.is_err() || matches!(msg.unwrap(), Message::Close(_)));
     }
 
-    // TODO: Verify error count was incremented
-
     server.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_channel_capacity() -> Result<(), Error> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8089));
-
     // Create a handler with very small channel size
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(false, false))
         .with_middleware(ErrorMiddleware::new(false, false))
         .with_channel_size(1)
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Rapidly send multiple messages to test channel capacity
@@ -241,13 +234,11 @@ async fn test_channel_capacity() -> Result<(), Error> {
 
 #[tokio::test]
 async fn test_cancellation() -> Result<(), Error> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8090));
-
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(false, false))
         .with_middleware(ErrorMiddleware::new(false, false))
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message
@@ -279,14 +270,11 @@ async fn test_cancellation() -> Result<(), Error> {
 
 #[tokio::test]
 async fn test_outbound_message_conversion_error() -> Result<(), Error> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8091));
-
-    // Test outbound conversion error
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(false, true))
         .with_middleware(ErrorMiddleware::new(false, false))
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message - it should fail at outbound conversion
@@ -317,15 +305,12 @@ async fn test_outbound_message_conversion_error() -> Result<(), Error> {
 /// - The handler should detect this condition and reset the connection rather than deadlock
 #[tokio::test]
 async fn test_channel_overflow() -> Result<(), Error> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8092));
-
-    // Create a handler with minimal channel size to force the outgoing queue to fill up
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(false, false))
         .with_middleware(FloodMiddleware)
         .with_channel_size(10) // Small channel size to force overflow
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message to trigger the flood middleware
@@ -383,13 +368,11 @@ async fn test_channel_overflow() -> Result<(), Error> {
 
 #[tokio::test]
 async fn test_connection_handling() -> Result<(), Error> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8093));
-
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(false, false))
         .with_middleware(ErrorMiddleware::new(false, false))
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
 
     // Create multiple clients
     let mut clients = vec![];
@@ -417,13 +400,11 @@ async fn test_connection_handling() -> Result<(), Error> {
 
 #[tokio::test]
 async fn test_graceful_shutdown() -> Result<(), Error> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8094));
-
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(false, false))
         .with_middleware(ErrorMiddleware::new(false, false))
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message
@@ -454,15 +435,12 @@ async fn test_graceful_shutdown() -> Result<(), Error> {
 
 #[tokio::test]
 async fn test_error_handling_in_subscription_management() -> Result<(), Error> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8095));
-
-    // Create a handler that will generate subscription management errors
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(false, false))
         .with_middleware(ErrorMiddleware::new(true, false))
         .with_channel_size(1) // Small channel size to force errors
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send multiple messages to trigger subscription errors
@@ -505,14 +483,11 @@ async fn test_error_handling_in_subscription_management() -> Result<(), Error> {
 
 #[tokio::test]
 async fn test_error_handling_in_message_conversion() -> Result<(), Error> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8096));
-
-    // Create a handler with a converter that fails
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(true, true))
         .with_middleware(ErrorMiddleware::new(false, false))
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message that should fail conversion
@@ -555,15 +530,12 @@ async fn test_error_handling_in_message_conversion() -> Result<(), Error> {
 
 #[tokio::test]
 async fn test_error_handling_in_middleware_chain() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8097));
-
-    // Create a handler with multiple failing middlewares
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(false, false))
         .with_middleware(ErrorMiddleware::new(true, false))
         .with_middleware(ErrorMiddleware::new(false, true))
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send a message that should trigger middleware errors
@@ -605,15 +577,12 @@ async fn test_error_handling_in_middleware_chain() -> Result<(), Box<dyn std::er
 
 #[tokio::test]
 async fn test_error_handling_in_event_store() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8098));
-
-    // Create a handler that simulates event store errors
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(false, false))
         .with_middleware(ErrorMiddleware::new(true, false)) // Force middleware errors
         .with_channel_size(1) // Small channel to force buffer errors
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send messages rapidly to trigger event store errors
@@ -662,14 +631,11 @@ async fn test_error_handling_in_event_store() -> Result<(), Box<dyn std::error::
 
 #[tokio::test]
 async fn test_error_handling_in_replaceable_events() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8099));
-
-    // Create a handler for testing replaceable events with forced errors
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(false, false))
         .with_middleware(ErrorMiddleware::new(true, false)) // Force middleware errors
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Send replaceable events rapidly
@@ -720,14 +686,11 @@ async fn test_error_handling_in_replaceable_events() -> Result<(), Box<dyn std::
 
 #[tokio::test]
 async fn test_error_handling_in_connection_state() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8100));
-
-    // Create a handler for testing connection state errors
     let ws_handler = WebSocketBuilder::new(ErrorStateFactory, ErrorConverter::new(false, false))
         .with_middleware(ErrorMiddleware::new(false, false))
         .build();
 
-    let server = utils::TestServer::start(addr.to_string(), ws_handler).await?;
+    let (server, addr) = create_test_server(ws_handler).await?;
     let mut client = create_websocket_client(addr.to_string().as_str()).await?;
 
     // Trigger connection state changes

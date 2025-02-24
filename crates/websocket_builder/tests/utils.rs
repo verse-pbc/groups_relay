@@ -1,12 +1,22 @@
+#[cfg(test)]
 use anyhow::Result;
+#[cfg(test)]
 use axum::{extract::ws::WebSocketUpgrade, routing::get, Router};
+#[cfg(test)]
 use futures_util::{SinkExt, StreamExt};
+#[cfg(test)]
 use std::sync::Arc;
+#[cfg(test)]
 use tokio::net::{TcpListener, TcpStream};
+#[cfg(test)]
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+#[cfg(test)]
 use tokio_util::sync::CancellationToken;
+#[cfg(test)]
 use websocket_builder::{MessageConverter, StateFactory, WebSocketHandler};
 
+#[cfg(test)]
+#[allow(dead_code)]
 pub async fn create_websocket_client(
     proxy_addr: &str,
 ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>> {
@@ -15,6 +25,7 @@ pub async fn create_websocket_client(
     Ok(ws_stream)
 }
 
+#[cfg(test)]
 #[allow(dead_code)]
 pub async fn assert_proxy_response(
     client: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
@@ -33,37 +44,8 @@ pub async fn assert_proxy_response(
     }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 #[derive(Clone)]
-pub struct ServerState<T, I, O, Converter, Factory>
-where
-    T: Send + Sync + Clone + 'static,
-    I: Send + Sync + Clone + 'static,
-    O: Send + Sync + Clone + 'static,
-    Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
-    Factory: StateFactory<T> + Send + Sync + Clone + 'static,
-{
-    ws_handler: WebSocketHandler<T, I, O, Converter, Factory>,
-    shutdown: CancellationToken,
-}
-
-#[allow(dead_code)]
-impl<T, I, O, Converter, Factory> ServerState<T, I, O, Converter, Factory>
-where
-    T: Send + Sync + Clone + 'static,
-    I: Send + Sync + Clone + 'static,
-    O: Send + Sync + Clone + 'static,
-    Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
-    Factory: StateFactory<T> + Send + Sync + Clone + 'static,
-{
-    pub fn new(ws_handler: WebSocketHandler<T, I, O, Converter, Factory>) -> Self {
-        Self {
-            ws_handler,
-            shutdown: CancellationToken::new(),
-        }
-    }
-}
-
 pub struct TestServer<T, I, O, Converter, Factory>
 where
     T: Send + Sync + Clone + 'static,
@@ -76,6 +58,7 @@ where
     shutdown: CancellationToken,
 }
 
+#[cfg(test)]
 impl<T, I, O, Converter, Factory> TestServer<T, I, O, Converter, Factory>
 where
     T: Send + Sync + Clone + 'static,
@@ -130,18 +113,37 @@ where
     }
 }
 
-impl<T, I, O, Converter, Factory> Clone for TestServer<T, I, O, Converter, Factory>
+#[cfg(test)]
+#[allow(dead_code)]
+/// Creates a test server with a dynamically assigned port.
+/// Returns the server instance and the assigned address.
+pub async fn create_test_server<T, I, O, Converter, TestStateFactory>(
+    ws_handler: WebSocketHandler<T, I, O, Converter, TestStateFactory>,
+) -> Result<
+    (
+        TestServer<T, I, O, Converter, TestStateFactory>,
+        std::net::SocketAddr,
+    ),
+    anyhow::Error,
+>
 where
-    T: Send + Sync + Clone + 'static,
+    T: Send + Sync + Clone + 'static + std::fmt::Debug,
     I: Send + Sync + Clone + 'static,
     O: Send + Sync + Clone + 'static,
     Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
-    Factory: StateFactory<T> + Send + Sync + Clone + 'static,
+    TestStateFactory: StateFactory<T> + Send + Sync + Clone + 'static,
 {
-    fn clone(&self) -> Self {
-        Self {
-            ws_handler: self.ws_handler.clone(),
-            shutdown: self.shutdown.clone(),
-        }
-    }
+    // Create a socket with port 0 to let the OS assign a random available port
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    drop(listener); // Release the listener so our server can bind to this port
+
+    println!("Using dynamically assigned port: {}", addr.port());
+
+    let server = TestServer::start(addr.to_string(), ws_handler).await?;
+
+    // Wait a bit for the server to be ready
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    Ok((server, addr))
 }
