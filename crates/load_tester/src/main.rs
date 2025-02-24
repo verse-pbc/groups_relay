@@ -805,14 +805,12 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
     metrics.lock().await.events_sent += 1;
 
     // Wait for remove_user event to confirm removal
-    let since_timestamp = Timestamp::now() - 5; // Look at events from the last 5 seconds
     let filter = Filter::new()
         .kinds(vec![Kind::Custom(39002)]) // Monitor members list events
-        .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id)
-        .since(since_timestamp);
+        .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id);
 
     let event = wait_for_event(&client, filter, Duration::from_secs(30), |event| {
-        // Check that our pubkey is NOT in the members list anymore
+        // Check that our pubkey is NOT in the members list
         !event.tags.iter().any(|tag| {
             tag.kind() == TagKind::p()
                 && tag
@@ -829,8 +827,7 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
         ));
     }
 
-    // Update client state to left
-    config.state = ClientState::Left;
+    info!("Client {} confirmed left group", config.keys.public_key());
 
     // Ensure we disconnect cleanly
     client.disconnect().await;

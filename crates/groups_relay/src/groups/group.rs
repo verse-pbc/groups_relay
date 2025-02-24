@@ -500,7 +500,7 @@ impl Group {
         &mut self,
         members_event: &Event,
         relay_pubkey: &PublicKey,
-    ) -> Result<bool, Error> {
+    ) -> Result<Vec<StoreCommand>, Error> {
         if !self.can_edit_members(&members_event.pubkey, relay_pubkey) {
             error!(
                 "User {} is not authorized to add users to this group",
@@ -519,7 +519,14 @@ impl Group {
             .filter_map(Result::ok);
 
         self.add_members(group_members)?;
-        Ok(true)
+
+        let mut events = vec![StoreCommand::SaveSignedEvent(members_event.clone())];
+        let admins_event = self.generate_admins_event(&relay_pubkey);
+        events.push(StoreCommand::SaveUnsignedEvent(admins_event));
+        let members_event = self.generate_members_event(&relay_pubkey);
+        events.push(StoreCommand::SaveUnsignedEvent(members_event));
+
+        Ok(events)
     }
 
     pub fn add_members(
@@ -565,7 +572,7 @@ impl Group {
         &mut self,
         members_event: &Event,
         relay_pubkey: &PublicKey,
-    ) -> Result<bool, Error> {
+    ) -> Result<Vec<StoreCommand>, Error> {
         if !self.can_edit_members(&members_event.pubkey, relay_pubkey) {
             error!(
                 "User {} is not authorized to remove users from this group",
@@ -605,7 +612,15 @@ impl Group {
         self.update_roles();
         self.update_state();
 
-        Ok(removed_admins)
+        let mut events = vec![StoreCommand::SaveSignedEvent(members_event.clone())];
+        if removed_admins {
+            let admins_event = self.generate_admins_event(&relay_pubkey);
+            events.push(StoreCommand::SaveUnsignedEvent(admins_event));
+        }
+        let members_event = self.generate_members_event(&relay_pubkey);
+        events.push(StoreCommand::SaveUnsignedEvent(members_event));
+
+        Ok(events)
     }
 
     pub fn set_metadata(&mut self, event: &Event, relay_pubkey: &PublicKey) -> Result<(), Error> {
@@ -666,7 +681,11 @@ impl Group {
     ///   - The user is not authorized to change roles
     ///   - Attempting to remove the last admin
     ///   - Invalid tag format
-    pub fn set_roles(&mut self, event: &Event, relay_pubkey: &PublicKey) -> Result<(), Error> {
+    pub fn set_roles(
+        &mut self,
+        event: &Event,
+        relay_pubkey: &PublicKey,
+    ) -> Result<Vec<StoreCommand>, Error> {
         if !self.can_edit_members(&event.pubkey, relay_pubkey) {
             return Err(Error::notice("User is not authorized to set roles"));
         }
@@ -691,7 +710,15 @@ impl Group {
 
         self.update_roles();
         self.update_state();
-        Ok(())
+
+        let roles_event = self.generate_roles_event(relay_pubkey);
+        let members_event = self.generate_members_event(relay_pubkey);
+
+        Ok(vec![
+            StoreCommand::SaveSignedEvent(event.clone()),
+            StoreCommand::SaveUnsignedEvent(roles_event),
+            StoreCommand::SaveUnsignedEvent(members_event),
+        ])
     }
 
     /// Processes a join request for the group.
@@ -711,7 +738,11 @@ impl Group {
     /// * `Ok(true)` - User was successfully added as a member
     /// * `Ok(false)` - User was added to join requests or is already a member
     /// * `Err` - Invalid event kind or other error
-    pub fn join_request(&mut self, event: &Event) -> Result<bool, Error> {
+    pub fn join_request(
+        &mut self,
+        event: &Event,
+        relay_pubkey: &PublicKey,
+    ) -> Result<Vec<StoreCommand>, Error> {
         if event.kind != KIND_GROUP_USER_JOIN_REQUEST_9021 {
             return Err(Error::notice(format!(
                 "Invalid event kind for join request {}",
@@ -722,7 +753,7 @@ impl Group {
         // If user is already a member, do nothing
         if self.members.contains_key(&event.pubkey) {
             info!("User {} is already a member", event.pubkey);
-            return Ok(false);
+            return Err(Error::notice("User is already a member"));
         }
 
         if !self.metadata.closed {
@@ -732,7 +763,7 @@ impl Group {
                 .or_insert(GroupMember::new_member(event.pubkey));
             self.join_requests.remove(&event.pubkey);
             self.update_state();
-            return Ok(true);
+            return Ok(self.create_join_request_commands(true, event, relay_pubkey));
         }
 
         let code = event
@@ -745,7 +776,7 @@ impl Group {
             info!("Invite not found, adding join request for {}", event.pubkey);
             self.join_requests.insert(event.pubkey);
             self.update_state();
-            return Ok(false);
+            return Ok(self.create_join_request_commands(false, event, relay_pubkey));
         };
 
         info!("Invite code matched, adding member {}", event.pubkey);
@@ -755,7 +786,58 @@ impl Group {
 
         self.join_requests.remove(&event.pubkey);
         self.update_state();
-        Ok(true)
+        Ok(self.create_join_request_commands(true, event, relay_pubkey))
+    }
+
+    /// Handles group management events (add/remove users).
+    /// Returns updated group events if the management action was successful.
+    pub fn handle_group_content(
+        &mut self,
+        event: &Event,
+        relay_pubkey: &PublicKey,
+    ) -> Result<Vec<StoreCommand>, Error> {
+        let is_member = self.is_member(&event.pubkey);
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event.clone())];
+
+        // For private and closed groups, only members can post
+        if self.metadata.private && self.metadata.closed && !is_member {
+            return Err(Error::notice("User is not a member of this group"));
+        }
+
+        // Open groups auto-join the author when posting
+        if !self.metadata.closed && !is_member {
+            self.add_pubkey(event.pubkey)?;
+            commands.extend(
+                self.generate_membership_events(relay_pubkey)
+                    .into_iter()
+                    .map(StoreCommand::SaveUnsignedEvent),
+            );
+        } else if !is_member {
+            // For closed groups, non-members can't post
+            return Err(Error::notice("User is not a member of this group"));
+        }
+
+        Ok(commands)
+    }
+
+    fn create_join_request_commands(
+        &self,
+        auto_joined: bool,
+        event: &Event,
+        relay_pubkey: &PublicKey,
+    ) -> Vec<StoreCommand> {
+        if auto_joined {
+            let mut commands = vec![StoreCommand::SaveSignedEvent(event.clone())];
+            commands.extend(
+                self.generate_membership_events(relay_pubkey)
+                    .into_iter()
+                    .map(StoreCommand::SaveUnsignedEvent),
+            );
+
+            commands
+        } else {
+            vec![StoreCommand::SaveSignedEvent(event.clone())]
+        }
     }
 
     pub fn create_invite(
@@ -793,7 +875,11 @@ impl Group {
         Ok(true)
     }
 
-    pub fn leave_request(&mut self, event: &Event) -> Result<bool, Error> {
+    pub fn leave_request(
+        &mut self,
+        event: &Event,
+        relay_pubkey: &PublicKey,
+    ) -> Result<Vec<StoreCommand>, Error> {
         if event.kind != KIND_GROUP_USER_LEAVE_REQUEST_9022 {
             return Err(Error::notice(format!(
                 "Invalid event kind for leave request {}",
@@ -804,7 +890,15 @@ impl Group {
         self.join_requests.remove(&event.pubkey);
         let removed = self.members.remove(&event.pubkey).is_some();
         self.update_state();
-        Ok(removed)
+        if removed {
+            let members_event = self.generate_members_event(relay_pubkey);
+            Ok(vec![
+                StoreCommand::SaveSignedEvent(event.clone()),
+                StoreCommand::SaveUnsignedEvent(members_event),
+            ])
+        } else {
+            Ok(vec![])
+        }
     }
 
     pub fn is_admin(&self, pubkey: &PublicKey) -> bool {
@@ -1508,7 +1602,13 @@ mod tests {
         ];
         let join_event = create_test_event(&member_keys, 9021, join_tags).await;
 
-        assert!(group.join_request(&join_event).unwrap());
+        assert!(
+            group
+                .join_request(&join_event, &member_keys.public_key())
+                .unwrap()
+                .len()
+                > 0
+        );
         assert!(group.is_member(&member_keys.public_key()));
     }
 
@@ -1520,7 +1620,13 @@ mod tests {
         let tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let event = create_test_event(&member_keys, 9021, tags).await;
 
-        assert!(group.join_request(&event).is_ok());
+        assert!(
+            group
+                .join_request(&event, &member_keys.public_key())
+                .unwrap()
+                .len()
+                > 0
+        );
         assert_eq!(group.join_requests.len(), 1);
     }
 
@@ -1532,7 +1638,13 @@ mod tests {
         let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let join_event = create_test_event(&member_keys, 9021, join_tags).await;
 
-        assert!(!group.join_request(&join_event).unwrap());
+        assert!(
+            group
+                .join_request(&join_event, &member_keys.public_key())
+                .unwrap()
+                .len()
+                > 0
+        );
         assert!(group.join_requests.contains(&member_keys.public_key()));
     }
 
@@ -1552,8 +1664,14 @@ mod tests {
         let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let join_event = create_test_event(&member_keys, 9021, join_tags).await;
 
-        // Should return Ok(false) without changing membership
-        assert!(!group.join_request(&join_event).unwrap());
+        // Should return error with message "User is already a member"
+        assert_eq!(
+            group
+                .join_request(&join_event, &member_keys.public_key())
+                .unwrap_err()
+                .to_string(),
+            "User is already a member"
+        );
 
         // Verify member is still there with same role
         let member = group.members.get(&member_keys.public_key()).unwrap();
@@ -1563,19 +1681,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_leave_request() {
-        let (admin_keys, member_keys, _) = create_test_keys().await;
-        let (mut group, group_id) = create_test_group(&admin_keys).await;
-
-        let tags = vec![Tag::custom(TagKind::h(), [&group_id])];
-        let event = create_test_event(&member_keys, 9022, tags).await;
-
-        assert!(group.leave_request(&event).is_ok());
-    }
-
-    #[tokio::test]
     async fn test_leave_request_removes_member() {
-        let (admin_keys, member_keys, _) = create_test_keys().await;
+        let (admin_keys, member_keys, relay_pubkey) = create_test_keys().await;
         let (mut group, group_id) = create_test_group(&admin_keys).await;
 
         // Add member manually
@@ -1586,7 +1693,13 @@ mod tests {
         let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event = create_test_event(&member_keys, 9022, leave_tags).await;
 
-        assert!(group.leave_request(&leave_event).unwrap());
+        assert!(
+            group
+                .leave_request(&leave_event, &relay_pubkey.public_key())
+                .unwrap()
+                .len()
+                > 1
+        );
         assert!(!group.is_member(&member_keys.public_key()));
     }
 
@@ -1907,8 +2020,7 @@ mod tests {
 
         let result = group.remove_members(&remove_event, &relay_pubkey);
 
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), false);
+        assert!(result.unwrap().len() > 0);
         assert!(!group.is_member(&member_keys.public_key()));
     }
 

@@ -1768,6 +1768,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "nostr-sdk",
  "rand",
+ "scopeguard",
  "serde",
  "serde_json",
  "tokio",

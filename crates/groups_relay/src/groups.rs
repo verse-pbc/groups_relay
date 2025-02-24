@@ -1,7 +1,9 @@
 pub mod group;
 
 use crate::error::Error;
+use crate::metrics;
 use crate::nostr_database::RelayDatabase;
+use crate::StoreCommand;
 use anyhow::Result;
 use dashmap::{
     mapref::one::{Ref, RefMut},
@@ -152,7 +154,9 @@ impl Groups {
         let mut group_ref = self.get_group_mut(group_id);
 
         if let Some(ref mut group_ref) = group_ref {
-            if event.pubkey != self.relay_pubkey {
+            // If it's a leave request, we allow non members, so we can cleanup pending join requests
+            if event.pubkey != self.relay_pubkey && event.kind != KIND_GROUP_USER_LEAVE_REQUEST_9022
+            {
                 group_ref.verify_member_access(&event.pubkey, event.kind)?;
             }
         }
@@ -173,7 +177,9 @@ impl Groups {
         self.get_group(group_id)
     }
 
-    pub async fn handle_group_create(&self, event: &Event) -> Result<Group, Error> {
+    /// Handles group creation events (KIND_GROUP_CREATE_9007).
+    /// Creates a group and generates associated metadata and membership events.
+    pub async fn handle_group_create(&self, event: &Event) -> Result<Vec<StoreCommand>, Error> {
         let Some(group_id) = Group::extract_group_id(event) else {
             return Err(Error::notice("Group ID not found in event"));
         };
@@ -241,10 +247,21 @@ impl Groups {
         }
 
         self.groups.insert(group.id.to_string(), group.clone());
-        Ok(group)
+
+        metrics::groups_created().increment(1);
+
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event.clone())];
+        commands.extend(
+            group
+                .generate_all_state_events(&self.relay_pubkey)
+                .into_iter()
+                .map(StoreCommand::SaveUnsignedEvent),
+        );
+
+        Ok(commands)
     }
 
-    pub fn handle_set_roles(&self, event: &Event) -> Result<(), Error> {
+    pub fn handle_set_roles(&self, event: &Event) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("[SetRoles] Group not found"))?;
@@ -252,7 +269,7 @@ impl Groups {
         group.set_roles(event, &self.relay_pubkey)
     }
 
-    pub fn handle_put_user(&self, event: &Event) -> Result<bool, Error> {
+    pub fn handle_put_user(&self, event: &Event) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("[PutUser] Group not found"))?;
@@ -260,7 +277,7 @@ impl Groups {
         group.add_members_from_event(event, &self.relay_pubkey)
     }
 
-    pub fn handle_remove_user(&self, event: &Event) -> Result<bool, Error> {
+    pub fn handle_remove_user(&self, event: &Event) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("[RemoveUser] Group not found"))?;
@@ -268,37 +285,81 @@ impl Groups {
         group.remove_members(event, &self.relay_pubkey)
     }
 
-    pub fn handle_edit_metadata(&self, event: &Event) -> Result<(), Error> {
+    pub fn handle_group_content(&self, event: &Event) -> Result<Vec<StoreCommand>, Error> {
+        let mut group = self
+            .find_group_from_event_mut(event)?
+            .ok_or(Error::notice("[GroupManagement] Group not found"))?;
+
+        group.handle_group_content(event, &self.relay_pubkey)
+    }
+
+    pub fn handle_edit_metadata(&self, event: &Event) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("[EditMetadata] Group not found"))?;
 
-        group.set_metadata(event, &self.relay_pubkey)
+        group.set_metadata(event, &self.relay_pubkey)?;
+
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event.clone())];
+        commands.extend(
+            group
+                .generate_metadata_events(&self.relay_pubkey)
+                .into_iter()
+                .map(StoreCommand::SaveUnsignedEvent),
+        );
+
+        Ok(commands)
     }
 
-    pub fn handle_create_invite(&self, event: &Event) -> Result<(), Error> {
+    pub fn handle_create_invite(&self, event: &Event) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("[CreateInvite] Group not found"))?;
 
         group.create_invite(event, &self.relay_pubkey)?;
-        Ok(())
+        Ok(vec![StoreCommand::SaveSignedEvent(event.clone())])
     }
 
-    pub fn handle_join_request(&self, event: &Event) -> Result<bool, Error> {
+    pub fn handle_join_request(&self, event: &Event) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("[JoinRequest] Group not found"))?;
 
-        group.join_request(event)
+        group.join_request(event, &self.relay_pubkey)
     }
 
-    pub fn handle_leave_request(&self, event: &Event) -> Result<bool, Error> {
+    pub fn handle_leave_request(&self, event: &Event) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(event)?
             .ok_or(Error::notice("[LeaveRequest] Group not found"))?;
 
-        group.leave_request(event)
+        group.leave_request(event, &self.relay_pubkey)
+    }
+
+    pub fn handle_delete_event(
+        &self,
+        event: &Event,
+        authed_pubkey: &Option<PublicKey>,
+    ) -> Result<Vec<StoreCommand>, Error> {
+        let mut group = self
+            .find_group_from_event_mut(event)?
+            .ok_or_else(|| Error::notice("Group not found for this group content"))?;
+
+        let commands = group.delete_event_request(event, &self.relay_pubkey, authed_pubkey)?;
+        Ok(commands)
+    }
+
+    pub fn handle_delete_group(
+        &self,
+        event: &Event,
+        authed_pubkey: &Option<PublicKey>,
+    ) -> Result<Vec<StoreCommand>, Error> {
+        let group = self
+            .find_group_from_event(event)
+            .ok_or_else(|| Error::notice("[DeleteGroup] Group not found"))?;
+
+        let commands = group.delete_group_request(event, &self.relay_pubkey, authed_pubkey)?;
+        Ok(commands)
     }
 
     /// Returns counts of groups by their privacy settings
@@ -629,7 +690,7 @@ mod tests {
         .await;
 
         let result = groups.handle_put_user(&add_event).unwrap();
-        assert!(result);
+        assert!(result.len() > 0);
 
         let group = groups.get_group(TEST_GROUP_ID).unwrap();
         assert!(group.members.contains_key(&member_keys.public_key()));
@@ -700,8 +761,7 @@ mod tests {
         .await;
 
         let result = groups.handle_remove_user(&remove_event);
-        assert!(result.is_ok());
-        assert!(!result.unwrap());
+        assert!(result.unwrap().len() > 0);
 
         let group = groups.get_group(TEST_GROUP_ID).unwrap();
         assert!(!group.members.contains_key(&member_keys.public_key()));
@@ -867,7 +927,7 @@ mod tests {
         ];
         let join_event =
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
-        assert!(groups.handle_join_request(&join_event).unwrap());
+        assert!(groups.handle_join_request(&join_event).unwrap().len() > 0);
 
         // Verify member was added
         let group = groups.get_group(&group_id).unwrap();
@@ -919,7 +979,7 @@ mod tests {
         ];
         let join_event =
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
-        assert!(groups.handle_join_request(&join_event).unwrap());
+        assert!(groups.handle_join_request(&join_event).unwrap().len() > 0);
 
         let group = groups.get_group(&group_id).unwrap();
         assert!(group.is_member(&member_keys.public_key()));
@@ -936,7 +996,7 @@ mod tests {
         ];
         let join_event =
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
-        assert!(!groups.handle_join_request(&join_event).unwrap());
+        assert!(groups.handle_join_request(&join_event).unwrap().len() == 1);
 
         let group = groups.get_group(&group_id).unwrap();
         assert!(!group.is_member(&member_keys.public_key()));
@@ -950,7 +1010,7 @@ mod tests {
         let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let join_event =
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
-        assert!(!groups.handle_join_request(&join_event).unwrap());
+        assert!(groups.handle_join_request(&join_event).unwrap().len() == 1);
 
         let group = groups.get_group(&group_id).unwrap();
         assert!(!group.is_member(&member_keys.public_key()));
@@ -992,7 +1052,7 @@ mod tests {
             join_tags2,
         )
         .await;
-        assert!(groups.handle_join_request(&join_event2).unwrap());
+        assert!(groups.handle_join_request(&join_event2).unwrap().len() > 0);
 
         let group = groups.get_group(&group_id).unwrap();
         assert!(group.is_member(&non_member_keys.public_key()));
@@ -1014,8 +1074,34 @@ mod tests {
         let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event =
             create_test_event(&member_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
-        assert!(groups.handle_leave_request(&leave_event).unwrap());
 
+        // Get the store commands
+        let commands = groups.handle_leave_request(&leave_event).unwrap();
+
+        // Verify the commands
+        assert_eq!(
+            commands.len(),
+            2,
+            "Should have 2 commands: save leave event and update members"
+        );
+        match &commands[0] {
+            StoreCommand::SaveSignedEvent(event) => assert_eq!(event.id, leave_event.id),
+            _ => panic!("First command should be SaveSignedEvent"),
+        }
+        match &commands[1] {
+            StoreCommand::SaveUnsignedEvent(event) => {
+                assert_eq!(event.kind, KIND_GROUP_MEMBERS_39002);
+                // Verify the member is not in the members list
+                assert!(!event
+                    .tags
+                    .filter(TagKind::p())
+                    .filter_map(|t| t.content())
+                    .any(|t| t == &member_keys.public_key().to_string()));
+            }
+            _ => panic!("Second command should be SaveUnsignedEvent for members"),
+        }
+
+        // Also verify the state change
         let group = groups.get_group(&group_id).unwrap();
         assert!(!group.is_member(&member_keys.public_key()));
     }
@@ -1032,7 +1118,7 @@ mod tests {
             leave_tags,
         )
         .await;
-        assert!(groups.handle_leave_request(&leave_event).is_err());
+        assert!(groups.handle_leave_request(&leave_event).unwrap().len() == 0);
     }
 
     #[tokio::test]
@@ -1066,7 +1152,7 @@ mod tests {
         let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event =
             create_test_event(&admin_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
-        assert!(groups.handle_leave_request(&leave_event).unwrap());
+        assert!(groups.handle_leave_request(&leave_event).unwrap().len() > 0);
 
         let group = groups.get_group(&group_id).unwrap();
         assert!(!group.is_member(&admin_keys.public_key()));
@@ -1081,7 +1167,7 @@ mod tests {
         let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event =
             create_test_event(&admin_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
-        assert!(groups.handle_leave_request(&leave_event).unwrap());
+        assert!(groups.handle_leave_request(&leave_event).unwrap().len() > 0);
 
         let group = groups.get_group(&group_id).unwrap();
         assert!(!group.is_member(&admin_keys.public_key()));
@@ -1089,15 +1175,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_leave_request_removes_from_join_requests() {
-        let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
-
-        // Add member first
-        let add_tags = vec![
-            Tag::custom(TagKind::h(), [&group_id]),
-            Tag::public_key(member_keys.public_key()),
-        ];
-        let add_event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, add_tags).await;
-        groups.handle_put_user(&add_event).unwrap();
+        let (groups, _, member_keys, _, group_id) = setup_test_groups().await;
 
         // Add to join requests
         let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
@@ -1109,7 +1187,7 @@ mod tests {
         let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event =
             create_test_event(&member_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
-        assert!(groups.handle_leave_request(&leave_event).unwrap());
+        assert!(groups.handle_leave_request(&leave_event).unwrap().len() == 0);
 
         let group = groups.get_group(&group_id).unwrap();
         assert!(!group.join_requests.contains(&member_keys.public_key()));

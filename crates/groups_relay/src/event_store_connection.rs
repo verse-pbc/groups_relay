@@ -267,9 +267,10 @@ impl EventStoreConnection {
                     Ok(event) => {
                         info!(
                             target: "event_store",
-                            "[{}] Saved unsigned event: kind={}",
+                            "[{}] Saved unsigned event: kind={}, content={}",
                             self.id,
-                            event.kind
+                            event.kind,
+                            event.content
                         );
                     }
                     Err(e) => {
@@ -295,10 +296,11 @@ impl EventStoreConnection {
                 }
                 info!(
                     target: "event_store",
-                    "[{}] Saved signed event: kind={} {}",
+                    "[{}] Saved signed event: kind={} {} content={}",
                     self.id,
                     event.kind,
-                    event.id
+                    event.id,
+                    event.content
                 );
             }
             StoreCommand::DeleteEvents(filter) => {
