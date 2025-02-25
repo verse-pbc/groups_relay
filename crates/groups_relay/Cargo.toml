@@ -39,7 +39,16 @@ humantime-serde = "1.1.1"
 console = ["dep:console-subscriber"]
 
 [dev-dependencies]
+criterion = { version = "0.5.1", features = ["async_tokio"] }
 futures-util = "0.3.31"
 pretty_assertions = "1.4.1"
 tempfile = "3.14.0"
 tokio-tungstenite.workspace = true
+
+[[bench]]
+name = "event_verify"
+harness = false
+
+[[bench]]
+name = "event_sign"
+harness = false

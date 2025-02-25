@@ -52,7 +52,7 @@ pub async fn run_server(
         settings.local_addr
     );
     info!("Frontend URL: {}", settings.local_addr);
-    info!("Proxied relay URL: {}", settings.relay_url);
+    info!("Relay URL: {}", settings.relay_url);
     info!("Auth requests must match this URL: {}", settings.auth_url);
 
     let ws_handler = Arc::new(websocket_server::build_websocket_handler(

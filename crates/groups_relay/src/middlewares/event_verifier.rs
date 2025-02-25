@@ -2,6 +2,7 @@ use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
+use tokio::task::spawn_blocking;
 use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage};
 
 #[derive(Debug)]
@@ -30,13 +31,21 @@ impl Middleware for EventVerifierMiddleware {
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<()> {
         if let ClientMessage::Event(event) = &ctx.message {
-            if event.verify().is_err() {
+            let event_id = event.id;
+            let event_owned = event.clone(); // Clone to own the Box<Event>
+
+            // Verifying is CPU-intensive and blocks, so we offload it to a blocking thread.
+            // For synchronous operations like verify(), we don't need to use the shared runtime.
+            let verify_result = spawn_blocking(move || event_owned.verify()).await;
+
+            if let Err(_e) = verify_result {
                 ctx.send_message(RelayMessage::ok(
-                    event.id,
+                    event_id,
                     false,
                     "invalid: event signature verification failed",
                 ))
                 .await?;
+
                 return Ok(());
             }
         }

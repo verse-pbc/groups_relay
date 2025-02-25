@@ -68,6 +68,13 @@ impl Error {
             backtrace: Backtrace::capture(),
         }
     }
+
+    pub fn internal<S: Into<String>>(message: S) -> Self {
+        Error::Internal {
+            message: message.into(),
+            backtrace: Backtrace::capture(),
+        }
+    }
 }
 
 impl From<NostrSdkError> for Error {

@@ -111,7 +111,7 @@ impl NostrConnectionState {
         };
 
         for event in events {
-            if let Err(e) = connection.save_event(event).await {
+            if let Err(e) = connection.save_and_broadcast(event).await {
                 error!("Failed to save event: {}", e);
                 return Err(e);
             }

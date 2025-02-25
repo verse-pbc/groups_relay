@@ -340,9 +340,6 @@ impl Middleware for Nip29Middleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::groups::{
-        KIND_GROUP_ADD_USER_9000, KIND_GROUP_MEMBERS_39002, KIND_GROUP_USER_LEAVE_REQUEST_9022,
-    };
     use crate::test_utils::{create_test_event, create_test_keys, create_test_state, setup_test};
     use axum::{
         extract::{ConnectInfo, State, WebSocketUpgrade},
@@ -353,6 +350,7 @@ mod tests {
     use futures_util::{SinkExt, StreamExt};
     use std::{net::SocketAddr, time::Duration};
     use tokio::net::TcpListener;
+    use tokio::time::sleep;
     use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
     use tokio_util::sync::CancellationToken;
     use tracing::{debug, error, warn};
@@ -1206,7 +1204,12 @@ mod tests {
         .await;
 
         // Save the unmanaged event
-        database.save_signed_event(&unmanaged_event).await.unwrap();
+        database
+            .save_signed_event(unmanaged_event.clone())
+            .await
+            .unwrap();
+
+        sleep(Duration::from_millis(30)).await;
 
         // Try to create a managed group with non-admin key - should fail
         let create_event_non_admin = create_test_event(

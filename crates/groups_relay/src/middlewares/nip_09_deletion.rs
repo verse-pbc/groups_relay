@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::event_store_connection::StoreCommand;
 use crate::nostr_database::RelayDatabase;
 use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
@@ -33,7 +34,7 @@ impl Nip09Middleware {
 
         // First save the deletion request event itself
         self.database
-            .save_signed_event(event)
+            .save_signed_event(event.clone())
             .await
             .map_err(|e| Error::notice(format!("Failed to save deletion request: {}", e)))?;
 
@@ -80,8 +81,12 @@ impl Nip09Middleware {
                             event_id,
                             event.id
                         );
-                        self.database
-                            .delete(filter)
+
+                        let delete_command = StoreCommand::DeleteEvents(filter);
+
+                        let _ = self
+                            .database
+                            .save_store_command(delete_command)
                             .await
                             .map_err(|e| Error::notice(format!("Failed to delete event: {}", e)))?;
                     } else {
@@ -121,9 +126,15 @@ impl Nip09Middleware {
                             .author(pubkey)
                             .custom_tag(SingleLetterTag::lowercase(Alphabet::D), d_tag);
 
-                        self.database.delete(filter).await.map_err(|e| {
-                            Error::notice(format!("Failed to delete events by address: {}", e))
-                        })?;
+                        let delete_command = StoreCommand::DeleteEvents(filter);
+
+                        let _ = self
+                            .database
+                            .save_store_command(delete_command)
+                            .await
+                            .map_err(|e| {
+                                Error::notice(format!("Failed to delete events by address: {}", e))
+                            })?;
                     } else {
                         debug!(
                             target: "nip09",
@@ -197,7 +208,12 @@ mod tests {
 
         // Create and save an event
         let event_to_delete = create_test_event(&keys, 1, vec![]).await;
-        database.save_signed_event(&event_to_delete).await.unwrap();
+        database
+            .save_signed_event(event_to_delete.clone())
+            .await
+            .unwrap();
+
+        sleep(Duration::from_millis(30)).await;
 
         // Create deletion request
         let deletion_request =
@@ -217,7 +233,7 @@ mod tests {
         middleware.process_inbound(&mut ctx).await.unwrap();
 
         // Verify event is deleted
-        sleep(Duration::from_millis(100)).await; // Give time for async deletion
+        sleep(Duration::from_millis(30)).await; // Give time for async deletion
         let filter = Filter::new().id(event_to_delete.id);
         let events = database.query(vec![filter]).await.unwrap();
         assert!(events.is_empty(), "Event should have been deleted");
@@ -236,7 +252,10 @@ mod tests {
 
         // Create and save an event from keys2
         let event_to_delete = create_test_event(&keys2, 1, vec![]).await;
-        database.save_signed_event(&event_to_delete).await.unwrap();
+        database
+            .save_signed_event(event_to_delete.clone())
+            .await
+            .unwrap();
 
         // Create deletion request from keys1
         let deletion_request =
@@ -256,7 +275,7 @@ mod tests {
         middleware.process_inbound(&mut ctx).await.unwrap();
 
         // Verify event is not deleted
-        sleep(Duration::from_millis(100)).await;
+        sleep(Duration::from_millis(30)).await;
         let filter = Filter::new().id(event_to_delete.id);
         let events = database.query(vec![filter]).await.unwrap();
         assert_eq!(events.len(), 1, "Event should not have been deleted");
@@ -275,7 +294,7 @@ mod tests {
         )
         .await;
         database
-            .save_signed_event(&replaceable_event)
+            .save_signed_event(replaceable_event.clone())
             .await
             .unwrap();
 
@@ -298,7 +317,7 @@ mod tests {
         middleware.process_inbound(&mut ctx).await.unwrap();
 
         // Verify replaceable event is deleted
-        sleep(Duration::from_millis(100)).await;
+        sleep(Duration::from_millis(30)).await;
         let filter = Filter::new().id(replaceable_event.id);
         let events = database.query(vec![filter]).await.unwrap();
         assert!(
@@ -314,7 +333,9 @@ mod tests {
 
         // Create and save an event with a 'd' tag
         let event = create_test_event(&keys, 5, vec![Tag::parse(vec!["d", "test"]).unwrap()]).await;
-        database.save_signed_event(&event).await.unwrap();
+        database.save_signed_event(event.clone()).await.unwrap();
+
+        sleep(Duration::from_millis(30)).await;
 
         // Process the event
         let mut state = NostrConnectionState::default();
@@ -344,9 +365,11 @@ mod tests {
         let replaceable_event =
             create_test_event(&keys, 10002, vec![Tag::parse(vec!["d", "test"]).unwrap()]).await;
         database
-            .save_signed_event(&replaceable_event)
+            .save_signed_event(replaceable_event.clone())
             .await
             .unwrap();
+
+        sleep(Duration::from_millis(30)).await;
 
         // Create and process deletion event with 'a' tag
         let addr = format!("10002:{}:test", keys.public_key());
@@ -365,13 +388,15 @@ mod tests {
 
         middleware.process_inbound(&mut ctx).await.unwrap();
 
+        sleep(Duration::from_millis(30)).await;
+
         // Verify deletion event is saved
         let filter = Filter::new().id(deletion_event.id);
         let events = database.query(vec![filter]).await.unwrap();
         assert_eq!(events.len(), 1, "Deletion event should have been saved");
 
         // Verify replaceable event is deleted
-        sleep(Duration::from_millis(100)).await;
+        sleep(Duration::from_millis(30)).await;
         let filter = Filter::new().id(replaceable_event.id);
         let events = database.query(vec![filter]).await.unwrap();
         assert!(

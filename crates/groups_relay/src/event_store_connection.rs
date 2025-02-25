@@ -1,14 +1,17 @@
 use crate::error::Error;
-use crate::nostr_database::RelayDatabase;
+use crate::nostr_database::{RelayDatabase, StoreMessage};
 use anyhow::Result;
 use nostr_sdk::prelude::*;
 use snafu::Backtrace;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{
+    mpsc::{self, error::TrySendError},
+    oneshot,
+};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use websocket_builder::MessageSender;
 
 // Message types for subscription management
@@ -42,11 +45,12 @@ impl EventStoreConnection {
         outgoing_sender: MessageSender<RelayMessage>,
     ) -> Result<Self> {
         let id_clone = id.clone();
-        debug!(
+        info!(
             target: "event_store",
-            "[{}] Creating new connection for {}",
+            "[{}] Creating new connection for {} with sender capacity {}",
             id_clone,
-            db_connection
+            db_connection,
+            outgoing_sender.capacity()
         );
 
         let (subscription_sender, subscription_receiver) = mpsc::unbounded_channel();
@@ -69,7 +73,7 @@ impl EventStoreConnection {
             let mut subscriptions: HashMap<SubscriptionId, Vec<Filter>> = HashMap::new();
             let mut subscription_receiver = subscription_receiver;
 
-            debug!(
+            info!(
                 target: "event_store",
                 "[{}] Starting subscription manager",
                 id_clone2
@@ -78,26 +82,27 @@ impl EventStoreConnection {
             loop {
                 tokio::select! {
                     _ = token.cancelled() => {
-                        debug!(
+                        info!(
                             target: "event_store",
-                            "[{}] Subscription manager shutting down",
-                            id_clone2
+                            "[{}] Subscription manager shutting down with {} active subscriptions",
+                            id_clone2,
+                            subscriptions.len()
                         );
                         break;
                     }
                     Some(msg) = subscription_receiver.recv() => {
                         match msg {
                             SubscriptionMessage::Add(subscription_id, filters) => {
-                                debug!(
+                                info!(
                                     target: "event_store",
-                                    "[{}] Adding subscription {} (current count: {})",
-                                    id_clone2, subscription_id, subscriptions.len()
+                                    "[{}] Adding subscription {} with filters {:?} (current count: {})",
+                                    id_clone2, subscription_id, filters, subscriptions.len()
                                 );
                                 subscriptions.insert(subscription_id, filters);
                             }
                             SubscriptionMessage::Remove(subscription_id) => {
                                 if subscriptions.remove(&subscription_id).is_some() {
-                                    debug!(
+                                    info!(
                                         target: "event_store",
                                         "[{}] Removed subscription {} (remaining count: {})",
                                         id_clone2,
@@ -110,14 +115,17 @@ impl EventStoreConnection {
                             }
                             SubscriptionMessage::CheckEvent { event, sender } => {
                                 let mut sender = sender;
+                                let mut matched_count = 0;
                                 for (subscription_id, filters) in subscriptions.iter() {
                                     let matches = filters.iter().any(|filter| filter.match_event(&event));
                                     if matches {
-                                        debug!(
+                                        matched_count += 1;
+                                        info!(
                                             target: "event_store",
-                                            "[{}] Matched event {} to subscription {}",
+                                            "[{}] Matched event {} (kind: {}) to subscription {}",
                                             id_clone2,
                                             event.id,
+                                            event.kind,
                                             subscription_id
                                         );
                                         let message = RelayMessage::Event {
@@ -128,56 +136,30 @@ impl EventStoreConnection {
                                         if let Err(e) = sender.send(message).await {
                                             error!(
                                                 target: "event_store",
-                                                "[{}] Failed to send event {} to subscription {}: {:?}",
+                                                "[{}] Failed to send event {} to subscription {}: {}. Sender capacity: {}",
                                                 id_clone2,
                                                 event.id,
                                                 subscription_id,
-                                                e
+                                                match e {
+                                                    TrySendError::Full(_) => "Channel is full",
+                                                    TrySendError::Closed(_) => "Channel is closed (receiver dropped)",
+                                                },
+                                                sender.capacity()
                                             );
                                         }
                                     }
                                 }
+                                if matched_count == 0 {
+                                    debug!(
+                                        target: "event_store",
+                                        "[{}] Event {} (kind: {}) did not match any of {} subscriptions",
+                                        id_clone2,
+                                        event.id,
+                                        event.kind,
+                                        subscriptions.len()
+                                    );
+                                }
                             }
-                        }
-                    }
-                }
-            }
-        }));
-
-        // Spawn broadcast handler
-        let token_clone = connection.connection_token.clone();
-        let subscription_sender_clone = connection.subscription_sender.clone();
-        let id_clone3 = id_clone.clone();
-        let outgoing_sender = outgoing_sender.clone();
-        let mut broadcast_receiver = database.subscribe();
-        tokio::spawn(Box::pin(async move {
-            debug!(
-                target: "event_store",
-                "[{}] Starting broadcast event handler",
-                id_clone3
-            );
-
-            loop {
-                tokio::select! {
-                    _ = token_clone.cancelled() => {
-                        debug!(
-                            target: "event_store",
-                            "[{}] Broadcast event handler shutting down",
-                            id_clone3
-                        );
-                        break;
-                    }
-                    Ok(event) = broadcast_receiver.recv() => {
-                        if let Err(e) = subscription_sender_clone.send(SubscriptionMessage::CheckEvent {
-                            event,
-                            sender: outgoing_sender.clone(),
-                        }) {
-                            error!(
-                                target: "event_store",
-                                "[{}] Failed to send event to subscription manager: {:?}",
-                                id_clone3,
-                                e
-                            );
                         }
                     }
                 }
@@ -206,34 +188,59 @@ impl EventStoreConnection {
     }
 
     pub fn add_subscription(&self, subscription_id: SubscriptionId, filters: Vec<Filter>) {
-        if let Err(e) = self
+        if let Err(_e) = self
             .subscription_sender
-            .send(SubscriptionMessage::Add(subscription_id, filters))
+            .send(SubscriptionMessage::Add(subscription_id.clone(), filters))
         {
             error!(
                 target: "event_store",
-                "[{}] Failed to send add subscription message: {:?}",
+                "[{}] Failed to send add subscription message for {}: Channel closed (manager likely stopped)",
                 self.id,
-                e
+                subscription_id,
             );
         }
     }
 
     pub fn remove_subscription(&self, subscription_id: &SubscriptionId) {
-        if let Err(e) = self
+        if let Err(_) = self
             .subscription_sender
             .send(SubscriptionMessage::Remove(subscription_id.clone()))
         {
             error!(
                 target: "event_store",
-                "[{}] Failed to send remove subscription message: {:?}",
+                "[{}] Failed to send remove subscription message for {}: Channel closed (manager likely stopped)",
                 self.id,
-                e
+                subscription_id,
             );
         }
     }
 
-    pub async fn handle_broadcast_event(&self, event: &Event) -> Result<(), Error> {
+    pub async fn save_and_broadcast(&self, store_command: StoreCommand) -> Result<(), Error> {
+        let store_sender = self.database.get_store_sender();
+
+        let (reply_to_sender, reply_to_receiver) = oneshot::channel();
+
+        let store_message = StoreMessage {
+            command: store_command,
+            reply_to: reply_to_sender,
+        };
+
+        store_sender
+            .send(store_message)
+            .map_err(|e| Error::Internal {
+                message: format!("Failed to queue store command: {}", e),
+                backtrace: Backtrace::capture(),
+            })?;
+
+        let Ok(stored_event) = reply_to_receiver.await else {
+            warn!(
+                target: "event_store",
+                "[{}] Failed to receive stored event: Channel closed (manager likely stopped)",
+                self.id
+            );
+            return Ok(());
+        };
+
         let Some(sender) = &self.outgoing_sender else {
             error!(
                 target: "event_store",
@@ -242,83 +249,24 @@ impl EventStoreConnection {
             return Ok(());
         };
 
+        let stored_event_id = stored_event.id;
+
         if let Err(e) = self
             .subscription_sender
             .send(SubscriptionMessage::CheckEvent {
-                event: event.clone(),
+                event: stored_event,
                 sender: sender.clone(),
             })
         {
             error!(
                 target: "event_store",
-                "[{}] Failed to send check event message: {:?}",
+                "[{}] Failed to send check event message for {}: {}",
                 self.id,
-                e
+                stored_event_id,
+                e,
             );
         }
-        Ok(())
-    }
 
-    pub async fn save_event(&self, store_command: StoreCommand) -> Result<(), Error> {
-        match store_command {
-            // These events are signed by the relay key
-            StoreCommand::SaveUnsignedEvent(event) => {
-                match self.database.save_unsigned_event(event).await {
-                    Ok(event) => {
-                        info!(
-                            target: "event_store",
-                            "[{}] Saved unsigned event: kind={}, content={}",
-                            self.id,
-                            event.kind,
-                            event.content
-                        );
-                    }
-                    Err(e) => {
-                        error!(
-                            target: "event_store",
-                            "[{}] Error saving unsigned event: {:?}",
-                            self.id,
-                            e
-                        );
-                        return Err(Error::Internal {
-                            message: format!("Error saving unsigned event: {:?}", e),
-                            backtrace: Backtrace::capture(),
-                        });
-                    }
-                }
-            }
-            StoreCommand::SaveSignedEvent(event) => {
-                if let Err(e) = self.database.save_signed_event(&event).await {
-                    return Err(Error::Internal {
-                        message: format!("Error saving signed event: {:?}", e),
-                        backtrace: Backtrace::capture(),
-                    });
-                }
-                info!(
-                    target: "event_store",
-                    "[{}] Saved signed event: kind={} {} content={}",
-                    self.id,
-                    event.kind,
-                    event.id,
-                    event.content
-                );
-            }
-            StoreCommand::DeleteEvents(filter) => {
-                let filter_string = format!("{:?}", filter);
-                if let Err(e) = self.database.delete(filter).await {
-                    return Err(Error::Internal {
-                        message: format!("Error deleting events: {:?}", e),
-                        backtrace: Backtrace::capture(),
-                    });
-                }
-                info!(
-                    target: "event_store",
-                    "[{}] Deleted events: {}",
-                    self.id,
-                    filter_string
-                );
-            }
-        }
         Ok(())
     }
 
@@ -327,49 +275,6 @@ impl EventStoreConnection {
             Ok(events) => Ok(events),
             Err(e) => Err(Error::notice(format!("Failed to fetch events: {:?}", e))),
         }
-    }
-
-    pub async fn save_and_broadcast(&self, event: Event) -> Result<(), Error> {
-        debug!(
-            target: "event_store",
-            "[{}] Handling event {} from {}",
-            self.id,
-            event.id,
-            self.db_connection
-        );
-
-        // First save the event to the database
-        if let Err(e) = self.database.save_signed_event(&event).await {
-            error!(
-                target: "event_store",
-                "[{}] Failed to save event {}: {:?}",
-                self.id,
-                event.id,
-                e
-            );
-            return Err(Error::notice(format!("Failed to save event: {:?}", e)));
-        }
-
-        // Then check subscriptions
-        if let Some(sender) = &self.outgoing_sender {
-            if let Err(e) = self
-                .subscription_sender
-                .send(SubscriptionMessage::CheckEvent {
-                    event: event.clone(),
-                    sender: sender.clone(),
-                })
-            {
-                error!(
-                    target: "event_store",
-                    "[{}] Failed to send event {} to subscription manager: {:?}",
-                    self.id,
-                    event.id,
-                    e
-                );
-            }
-        }
-
-        Ok(())
     }
 
     pub async fn handle_subscription(
@@ -585,20 +490,22 @@ impl EventStoreConnection {
     /// Cleans up resources and metrics when the connection is closed
     pub fn cleanup(&self) {
         let remaining_subs = self.get_local_subscription_count();
+        info!(
+            target: "event_store",
+            "[{}] Cleaning up connection with {} remaining subscriptions",
+            self.id,
+            remaining_subs
+        );
         if remaining_subs > 0 {
-            debug!(
-                target: "event_store",
-                "[{}] Cleaning up {} remaining subscriptions from metrics",
-                self.id,
-                remaining_subs
-            );
             // Decrement the global metrics by the number of subscriptions that weren't explicitly closed
             crate::metrics::active_subscriptions().decrement(remaining_subs as f64);
         }
+        // Cancel the connection token to stop subscription manager
+        self.connection_token.cancel();
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum StoreCommand {
     SaveUnsignedEvent(UnsignedEvent),
     SaveSignedEvent(Event),
@@ -621,6 +528,7 @@ mod tests {
     use crate::test_utils::setup_test;
     use std::time::Instant;
     use tokio::sync::mpsc;
+    use tokio::time::sleep;
     use websocket_builder::MessageSender;
 
     #[tokio::test]
@@ -632,7 +540,12 @@ mod tests {
         let historical_event = EventBuilder::text_note("Historical event")
             .build_with_ctx(&Instant::now(), keys.public_key());
         let historical_event = keys.sign_event(historical_event).await.unwrap();
-        database.save_signed_event(&historical_event).await.unwrap();
+        database
+            .save_signed_event(historical_event.clone())
+            .await
+            .unwrap();
+
+        sleep(std::time::Duration::from_millis(30)).await;
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
@@ -728,7 +641,7 @@ mod tests {
 
         // Save and broadcast the event
         connection
-            .save_and_broadcast(new_event.clone())
+            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event.clone()))
             .await
             .unwrap();
 
@@ -763,7 +676,12 @@ mod tests {
         let historical_event = EventBuilder::text_note("Historical event")
             .build_with_ctx(&Instant::now(), keys.public_key());
         let historical_event = keys.sign_event(historical_event).await.unwrap();
-        database.save_signed_event(&historical_event).await.unwrap();
+        database
+            .save_signed_event(historical_event.clone())
+            .await
+            .unwrap();
+
+        sleep(std::time::Duration::from_millis(30)).await;
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
@@ -821,7 +739,7 @@ mod tests {
 
         // Save and broadcast the event
         connection
-            .save_and_broadcast(new_event.clone())
+            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event.clone()))
             .await
             .unwrap();
 
@@ -862,9 +780,12 @@ mod tests {
                 .custom_created_at(base_time + i as u64) // Each event 1 second apart
                 .build(keys.public_key());
             let event = keys.sign_event(event).await.unwrap();
-            database.save_signed_event(&event).await.unwrap();
+            database.save_signed_event(event.clone()).await.unwrap();
             events.push(event);
         }
+
+        // Wait for events to be saved
+        sleep(std::time::Duration::from_millis(30)).await;
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
@@ -952,7 +873,9 @@ mod tests {
         let text_note = EventBuilder::text_note("Text note event")
             .build_with_ctx(&Instant::now(), keys.public_key());
         let text_note = keys.sign_event(text_note).await.unwrap();
-        database.save_signed_event(&text_note).await.unwrap();
+        database.save_signed_event(text_note.clone()).await.unwrap();
+
+        sleep(std::time::Duration::from_millis(30)).await;
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
@@ -1014,7 +937,12 @@ mod tests {
         let metadata_event =
             EventBuilder::metadata(&metadata).build_with_ctx(&Instant::now(), keys.public_key());
         let metadata_event = keys.sign_event(metadata_event).await.unwrap();
-        database.save_signed_event(&metadata_event).await.unwrap();
+        database
+            .save_signed_event(metadata_event.clone())
+            .await
+            .unwrap();
+
+        sleep(std::time::Duration::from_millis(30)).await;
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
@@ -1074,7 +1002,12 @@ mod tests {
         let contacts_event = EventBuilder::new(Kind::ContactList, "[]")
             .build_with_ctx(&Instant::now(), keys.public_key());
         let contacts_event = keys.sign_event(contacts_event).await.unwrap();
-        database.save_signed_event(&contacts_event).await.unwrap();
+        database
+            .save_signed_event(contacts_event.clone())
+            .await
+            .unwrap();
+
+        sleep(std::time::Duration::from_millis(30)).await;
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
@@ -1146,8 +1079,10 @@ mod tests {
         let event2 = keys2.sign_event(event2).await.unwrap();
 
         // Save events
-        database.save_signed_event(&event1).await.unwrap();
-        database.save_signed_event(&event2).await.unwrap();
+        database.save_signed_event(event1.clone()).await.unwrap();
+        database.save_signed_event(event2.clone()).await.unwrap();
+
+        sleep(std::time::Duration::from_millis(30)).await;
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
@@ -1238,9 +1173,17 @@ mod tests {
         let recommend_relay = keys.sign_event(recommend_relay).await.unwrap();
 
         // Save all events
-        database.save_signed_event(&text_note).await.unwrap();
-        database.save_signed_event(&metadata_event).await.unwrap();
-        database.save_signed_event(&recommend_relay).await.unwrap();
+        database.save_signed_event(text_note.clone()).await.unwrap();
+        database
+            .save_signed_event(metadata_event.clone())
+            .await
+            .unwrap();
+        database
+            .save_signed_event(recommend_relay.clone())
+            .await
+            .unwrap();
+
+        sleep(std::time::Duration::from_millis(30)).await;
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);

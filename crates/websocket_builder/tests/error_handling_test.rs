@@ -142,7 +142,7 @@ impl Middleware for FloodMiddleware {
             // Generate a flood of messages to test overflow
             for i in 0..1000 {
                 // Add a small delay to ensure messages build up
-                tokio::time::sleep(Duration::from_micros(10)).await;
+                tokio::time::sleep(Duration::from_micros(30)).await;
                 ctx.send_message(format!("flood_message_{}", i)).await?;
             }
             Ok(())
@@ -226,7 +226,7 @@ async fn test_channel_capacity() -> Result<(), Error> {
     }
 
     // Wait a bit to let messages process
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
 
     server.shutdown().await?;
     Ok(())
@@ -250,7 +250,7 @@ async fn test_cancellation() -> Result<(), Error> {
     server.shutdown().await?;
 
     // Wait a bit for the shutdown to take effect
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
 
     // Try to send another message - should fail
     let result = client.send(Message::Text("test".to_string().into())).await;
@@ -392,7 +392,7 @@ async fn test_connection_handling() -> Result<(), Error> {
     }
 
     // Wait a bit to let messages process
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
 
     server.shutdown().await?;
     Ok(())
@@ -425,7 +425,7 @@ async fn test_graceful_shutdown() -> Result<(), Error> {
             println!("Send failed during shutdown: {e}");
             break;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(30)).await;
     }
 
     // Wait for shutdown to complete
@@ -594,7 +594,7 @@ async fn test_error_handling_in_event_store() -> Result<(), Box<dyn std::error::
             println!("Send error: {e}");
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
     }
 
     // Check for error responses
@@ -647,7 +647,7 @@ async fn test_error_handling_in_replaceable_events() -> Result<(), Box<dyn std::
             println!("Send error: {e}");
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
     }
 
     // Check responses

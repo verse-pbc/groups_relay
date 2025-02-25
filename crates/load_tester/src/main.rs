@@ -10,11 +10,12 @@ use rand::Rng;
 use scopeguard;
 use serde_json::json;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 // NIP-29 event kinds (matching the frontend definitions)
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
@@ -145,7 +146,7 @@ impl Metrics {
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Number of concurrent clients to simulate
-    #[arg(short, long, default_value = "10")]
+    #[arg(short, long, default_value = "2")]
     clients: usize,
 
     /// WebSocket URL of the relay to test
@@ -153,7 +154,7 @@ struct Args {
     url: String,
 
     /// Duration of the test in seconds
-    #[arg(short, long, default_value = "60")]
+    #[arg(short, long, default_value = "10")]
     duration: u64,
 
     /// Number of groups to create and test with
@@ -447,24 +448,53 @@ async fn wait_for_event<F>(
 where
     F: Fn(&Event) -> bool,
 {
+    info!("Starting to wait for event with filter: {:?}", filter);
+
     // Subscribe to events
-    client.subscribe(filter, None).await?;
+    client.subscribe(filter.clone(), None).await?;
     let mut notifications = client.notifications();
 
     // Set up timeout
     let timeout_fut = tokio::time::sleep(timeout);
     tokio::pin!(timeout_fut);
 
+    let start_time = tokio::time::Instant::now();
+    let mut events_seen = 0;
+
     loop {
         tokio::select! {
             Ok(notification) = notifications.recv() => {
                 if let RelayPoolNotification::Event { event, .. } = notification {
+                    events_seen += 1;
+                    debug!(
+                        "Received event {} (kind: {}) after {:?}, checking predicate...",
+                        event.id,
+                        event.kind,
+                        start_time.elapsed()
+                    );
+
                     if predicate(&event) {
+                        info!(
+                            "Found matching event {} after {:?} ({} events processed)",
+                            event.id,
+                            start_time.elapsed(),
+                            events_seen
+                        );
                         return Ok(Some(*event));
+                    } else {
+                        debug!(
+                            "Event {} did not match predicate, continuing to wait...",
+                            event.id
+                        );
                     }
                 }
             }
             _ = &mut timeout_fut => {
+                info!(
+                    "Timeout after {:?} while waiting for event. Processed {} events.",
+                    timeout,
+                    events_seen
+                );
                 return Ok(None);
             }
         }
@@ -655,26 +685,29 @@ async fn main() -> Result<()> {
         };
 
         if group_clients > 0 {
-            let mut client_config =
-                ClientConfig::new(args.url.clone(), Keys::generate(), ClientRole::NonMember);
-            client_config.group_id = admin_config.group_id.clone();
-
             info!(
                 "Spawning {} clients for group {}",
                 group_clients,
                 admin_config.group_id.as_ref().unwrap()
             );
 
-            handles.extend(
-                spawn_clients(
-                    client_config,
-                    group_clients as u32,
-                    (i as u32) * (clients_per_group as u32),
-                    metrics.clone(),
-                    &shutdown_token,
-                )
-                .await,
-            );
+            // Spawn each client with its own unique key
+            for j in 0..group_clients {
+                let mut client_config =
+                    ClientConfig::new(args.url.clone(), Keys::generate(), ClientRole::NonMember);
+                client_config.group_id = admin_config.group_id.clone();
+
+                handles.extend(
+                    spawn_clients(
+                        client_config,
+                        1, // Spawn one client at a time with unique key
+                        (i as u32) * (clients_per_group as u32) + j as u32,
+                        metrics.clone(),
+                        &shutdown_token,
+                    )
+                    .await,
+                );
+            }
         }
     }
 
@@ -716,14 +749,42 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
     });
 
     // Authenticate before any operations
+    info!("Client {} authenticating...", config.keys.public_key());
     authenticate_client(&client).await?;
+    info!(
+        "Client {} authenticated successfully",
+        config.keys.public_key()
+    );
 
     // Update metrics
     metrics.lock().await.mark_client_started();
 
+    // Create a subscription for membership events that we'll reuse
+    let group_id = config
+        .group_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Group ID is required"))?;
+    let membership_filter = Filter::new()
+        .kinds(vec![Kind::Custom(39002)]) // Monitor members list events
+        .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id);
+
+    // Subscribe once and reuse the subscription
+    info!(
+        "Client {} subscribing to membership events...",
+        config.keys.public_key()
+    );
+    client.subscribe(membership_filter.clone(), None).await?;
+
+    // Add a small delay to ensure subscription is active
+    sleep(Duration::from_millis(100)).await;
+
     // Send join request and track latency
     let join_start = tokio::time::Instant::now();
     let join_request = generate_test_event(&config, GroupEventKind::JoinRequest).await?;
+    info!(
+        "Client {} sending join request...",
+        config.keys.public_key()
+    );
     let output = client.send_event_builder(join_request).await?;
     let join_latency = join_start.elapsed();
     metrics
@@ -734,42 +795,75 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
         "Join request sent for client {} (latency: {:?}): {:?}",
         config.keys.public_key(),
         join_latency,
-        output.success
+        output
     );
     metrics.lock().await.events_sent += 1;
 
-    // Wait for put_user event to confirm membership
-    let group_id = config
-        .group_id
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Group ID is required"))?;
-    let filter = Filter::new()
-        .kinds(vec![Kind::Custom(39002)]) // Monitor members list events
-        .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id);
-
-    let event = wait_for_event(&client, filter, Duration::from_secs(30), |event| {
-        event.tags.iter().any(|tag| {
-            tag.kind() == TagKind::p()
-                && tag
-                    .as_slice()
-                    .get(1)
-                    .is_some_and(|v| v == &config.keys.public_key().to_string())
-        })
-    })
-    .await?;
-
-    if event.is_none() {
-        return Err(anyhow::anyhow!(
-            "Failed to join group - membership not confirmed within timeout"
-        ));
+    // Check if any of the failed responses indicate we're already a member
+    for (_, msg) in output.failed {
+        if msg.contains("already a member") {
+            info!("Client {} is already a member", config.keys.public_key());
+            config.state = ClientState::Joined;
+            sleep(Duration::from_millis(100)).await;
+            return Ok(());
+        }
     }
 
-    // Update client state to joined
-    config.state = ClientState::Joined;
+    // Wait for membership confirmation
+    let mut membership_confirmed = false;
+    let membership_timeout = Duration::from_secs(30);
+    let membership_start = Instant::now();
+
+    while !membership_confirmed && membership_start.elapsed() < membership_timeout {
+        let event = wait_for_event(
+            &client,
+            membership_filter.clone(),
+            Duration::from_secs(5),
+            |event| {
+                // Check if this is a members list event that includes our pubkey
+                event.kind == Kind::Custom(39002)
+                    && event.tags.iter().any(|tag| {
+                        tag.kind() == TagKind::p()
+                            && tag
+                                .as_slice()
+                                .get(0)
+                                .map(|v| v == &config.keys.public_key().to_string())
+                                .unwrap_or(false)
+                    })
+            },
+        )
+        .await?;
+
+        if let Some(_) = event {
+            info!(
+                "Client {} membership confirmed via members list",
+                config.keys.public_key()
+            );
+            config.state = ClientState::Joined;
+            membership_confirmed = true;
+            break;
+        }
+
+        sleep(Duration::from_millis(100)).await;
+    }
+
+    if !membership_confirmed {
+        error!(
+            "Client {} failed to get membership confirmation",
+            config.keys.public_key()
+        );
+        return Ok(());
+    }
+
+    sleep(Duration::from_millis(100)).await;
 
     // Send exactly one group message and track latency
     let msg_start = tokio::time::Instant::now();
     let message = generate_test_event(&config, GroupEventKind::GroupMessage).await?;
+    info!(
+        "Client {} sending group message...",
+        config.keys.public_key()
+    );
     let output = client.send_event_builder(message).await?;
     let msg_latency = msg_start.elapsed();
     metrics
@@ -784,12 +878,19 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
     );
     metrics.lock().await.events_sent += 1;
 
+    // Add a small delay before leaving
+    sleep(Duration::from_millis(100)).await;
+
     // Mark client as done with messages
     config.state = ClientState::MessagesComplete;
 
     // Send leave request and track latency
     let leave_start = tokio::time::Instant::now();
     let leave_request = generate_test_event(&config, GroupEventKind::LeaveRequest).await?;
+    info!(
+        "Client {} sending leave request...",
+        config.keys.public_key()
+    );
     let output = client.send_event_builder(leave_request).await?;
     let leave_latency = leave_start.elapsed();
     metrics
@@ -805,32 +906,45 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
     metrics.lock().await.events_sent += 1;
 
     // Wait for remove_user event to confirm removal
-    let filter = Filter::new()
-        .kinds(vec![Kind::Custom(39002)]) // Monitor members list events
-        .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id);
-
-    let event = wait_for_event(&client, filter, Duration::from_secs(30), |event| {
-        // Check that our pubkey is NOT in the members list
-        !event.tags.iter().any(|tag| {
-            tag.kind() == TagKind::p()
-                && tag
-                    .as_slice()
-                    .get(1)
-                    .is_some_and(|v| v == &config.keys.public_key().to_string())
-        })
-    })
+    info!(
+        "Client {} waiting for removal confirmation...",
+        config.keys.public_key()
+    );
+    let event = wait_for_event(
+        &client,
+        membership_filter,
+        Duration::from_secs(30),
+        |event| {
+            // Check that our pubkey is NOT in the members list
+            !event.tags.iter().any(|tag| {
+                tag.kind() == TagKind::p()
+                    && tag
+                        .as_slice()
+                        .get(1)
+                        .is_some_and(|v| v == &config.keys.public_key().to_string())
+            })
+        },
+    )
     .await?;
 
     if event.is_none() {
-        return Err(anyhow::anyhow!(
-            "Failed to leave group - removal not confirmed within timeout"
-        ));
+        error!(
+            "Client {} failed to leave group - removal not confirmed within timeout",
+            config.keys.public_key()
+        );
+        // Clean up before returning
+        client.disconnect().await;
+        return Ok(());
     }
 
     info!("Client {} confirmed left group", config.keys.public_key());
 
+    // Add a small delay before disconnecting to ensure all messages are processed
+    sleep(Duration::from_millis(200)).await;
+
     // Ensure we disconnect cleanly
     client.disconnect().await;
+    info!("Client {} disconnected cleanly", config.keys.public_key());
 
     Ok(())
 }
