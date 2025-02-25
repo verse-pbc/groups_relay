@@ -202,9 +202,10 @@ impl EventStoreConnection {
     }
 
     pub fn remove_subscription(&self, subscription_id: &SubscriptionId) {
-        if let Err(_) = self
+        if self
             .subscription_sender
             .send(SubscriptionMessage::Remove(subscription_id.clone()))
+            .is_err()
         {
             error!(
                 target: "event_store",

@@ -105,7 +105,7 @@ pub async fn handle_root(
     State(state): State<Arc<ServerState>>,
     headers: axum::http::HeaderMap,
     uri: axum::http::Uri,
-    request: Request<Body>,
+    _request: Request<Body>,
 ) -> impl IntoResponse {
     // 1. WebSocket upgrade: if the upgrade header is present, upgrade the connection.
     if let Some(ws) = ws {

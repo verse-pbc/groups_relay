@@ -79,9 +79,9 @@ async fn main() -> Result<()> {
 
     // Validate URLs
     let _relay_url = RelayUrl::parse(&settings.relay_url)
-        .expect(&format!("Invalid relay_url scheme: {}", settings.relay_url));
+        .unwrap_or_else(|_| panic!("Invalid relay_url scheme: {}", settings.relay_url));
     let _auth_url = RelayUrl::parse(&settings.auth_url)
-        .expect(&format!("Invalid auth_url scheme: {}", settings.auth_url));
+        .unwrap_or_else(|_| panic!("Invalid auth_url scheme: {}", settings.auth_url));
 
     let relay_keys = relay_settings.relay_keys()?;
     let database = Arc::new(RelayDatabase::new(

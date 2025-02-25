@@ -521,9 +521,9 @@ impl Group {
         self.add_members(group_members)?;
 
         let mut events = vec![StoreCommand::SaveSignedEvent(members_event.clone())];
-        let admins_event = self.generate_admins_event(&relay_pubkey);
+        let admins_event = self.generate_admins_event(relay_pubkey);
         events.push(StoreCommand::SaveUnsignedEvent(admins_event));
-        let members_event = self.generate_members_event(&relay_pubkey);
+        let members_event = self.generate_members_event(relay_pubkey);
         events.push(StoreCommand::SaveUnsignedEvent(members_event));
 
         Ok(events)
@@ -614,10 +614,10 @@ impl Group {
 
         let mut events = vec![StoreCommand::SaveSignedEvent(members_event.clone())];
         if removed_admins {
-            let admins_event = self.generate_admins_event(&relay_pubkey);
+            let admins_event = self.generate_admins_event(relay_pubkey);
             events.push(StoreCommand::SaveUnsignedEvent(admins_event));
         }
-        let members_event = self.generate_members_event(&relay_pubkey);
+        let members_event = self.generate_members_event(relay_pubkey);
         events.push(StoreCommand::SaveUnsignedEvent(members_event));
 
         Ok(events)

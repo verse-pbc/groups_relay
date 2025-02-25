@@ -8,13 +8,7 @@ use crate::{
     websocket_server::{self, NostrMessageConverter},
 };
 use anyhow::Result;
-use axum::{
-    body::Body,
-    http::{Method, Request, StatusCode},
-    response::IntoResponse,
-    routing::get,
-    Router,
-};
+use axum::{routing::get, Router};
 use nostr_sdk::prelude::*;
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicUsize;
@@ -22,10 +16,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 use tokio_util::sync::CancellationToken;
-use tower::ServiceExt;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 pub struct ServerState {
     pub http_state: Arc<HttpServerState>,

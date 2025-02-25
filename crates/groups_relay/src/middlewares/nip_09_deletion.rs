@@ -84,11 +84,14 @@ impl Nip09Middleware {
 
                         let delete_command = StoreCommand::DeleteEvents(filter);
 
-                        let _ = self
-                            .database
-                            .save_store_command(delete_command)
-                            .await
-                            .map_err(|e| Error::notice(format!("Failed to delete event: {}", e)))?;
+                        drop(
+                            self.database
+                                .save_store_command(delete_command)
+                                .await
+                                .map_err(|e| {
+                                    Error::notice(format!("Failed to delete event: {}", e))
+                                })?,
+                        );
                     } else {
                         debug!(
                             target: "nip09",
@@ -128,13 +131,17 @@ impl Nip09Middleware {
 
                         let delete_command = StoreCommand::DeleteEvents(filter);
 
-                        let _ = self
-                            .database
-                            .save_store_command(delete_command)
-                            .await
-                            .map_err(|e| {
-                                Error::notice(format!("Failed to delete events by address: {}", e))
-                            })?;
+                        drop(
+                            self.database
+                                .save_store_command(delete_command)
+                                .await
+                                .map_err(|e| {
+                                    Error::notice(format!(
+                                        "Failed to delete events by address: {}",
+                                        e
+                                    ))
+                                })?,
+                        );
                     } else {
                         debug!(
                             target: "nip09",

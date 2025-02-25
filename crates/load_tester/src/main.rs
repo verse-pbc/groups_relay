@@ -7,7 +7,6 @@ use anyhow::Result;
 use clap::Parser; // For command-line argument parsing
 use nostr_sdk::prelude::*;
 use rand::Rng;
-use scopeguard;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Instant;
@@ -644,8 +643,9 @@ async fn main() -> Result<()> {
                 tag.kind() == TagKind::p()
                     && tag
                         .as_slice()
-                        .get(1)
-                        .is_some_and(|v| v == &admin_config.keys.public_key().to_string())
+                        .first()
+                        .map(|v| v == &admin_config.keys.public_key().to_string())
+                        .unwrap_or(false)
             })
         })
         .await?;
@@ -826,7 +826,7 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
                         tag.kind() == TagKind::p()
                             && tag
                                 .as_slice()
-                                .get(0)
+                                .first()
                                 .map(|v| v == &config.keys.public_key().to_string())
                                 .unwrap_or(false)
                     })
@@ -834,7 +834,7 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
         )
         .await?;
 
-        if let Some(_) = event {
+        if event.is_some() {
             info!(
                 "Client {} membership confirmed via members list",
                 config.keys.public_key()
@@ -920,8 +920,9 @@ async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> R
                 tag.kind() == TagKind::p()
                     && tag
                         .as_slice()
-                        .get(1)
-                        .is_some_and(|v| v == &config.keys.public_key().to_string())
+                        .first()
+                        .map(|v| v == &config.keys.public_key().to_string())
+                        .unwrap_or(false)
             })
         },
     )

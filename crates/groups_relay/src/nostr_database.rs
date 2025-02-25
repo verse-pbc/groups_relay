@@ -200,9 +200,10 @@ impl RelayDatabase {
     }
 
     pub async fn save_signed_event(&self, event: Event) -> Result<(), Error> {
-        let _ = self
-            .save_store_command(StoreCommand::SaveSignedEvent(event))
-            .await?;
+        drop(
+            self.save_store_command(StoreCommand::SaveSignedEvent(event))
+                .await?,
+        );
 
         Ok(())
     }
