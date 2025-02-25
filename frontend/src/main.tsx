@@ -9,11 +9,19 @@ import { ErrorState } from './components/ErrorState.tsx'
 import { AuthPrompt } from './components/AuthPrompt.tsx'
 import './style.css'
 
-// In development, connect directly to the relay
-// In production, use the WebSocket proxy
-const wsUrl = import.meta.env.DEV
-  ? "ws://127.0.0.1:8080"
-  : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
+// Get WebSocket URL from environment variable or use current host
+const getWebSocketUrl = () => {
+  // Check if we have an environment variable for the WebSocket URL
+  if (import.meta.env.VITE_WEBSOCKET_URL) {
+    return import.meta.env.VITE_WEBSOCKET_URL;
+  }
+
+  // Otherwise, use the current host
+  return `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+};
+
+const wsUrl = getWebSocketUrl();
+console.log('Using WebSocket URL:', wsUrl);
 
 interface InitializationProps {
   onComplete: (client: NostrClient) => void

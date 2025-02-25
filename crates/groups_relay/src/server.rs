@@ -8,7 +8,13 @@ use crate::{
     websocket_server::{self, NostrMessageConverter},
 };
 use anyhow::Result;
-use axum::{routing::get, Router};
+use axum::{
+    body::Body,
+    http::{Method, Request, StatusCode},
+    response::IntoResponse,
+    routing::get,
+    Router,
+};
 use nostr_sdk::prelude::*;
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicUsize;
@@ -16,9 +22,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 use tokio_util::sync::CancellationToken;
+use tower::ServiceExt;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 pub struct ServerState {
     pub http_state: Arc<HttpServerState>,
@@ -79,7 +86,7 @@ pub async fn run_server(
         .allow_headers(Any);
 
     let router = Router::new()
-        .route("/", get(handler::handle_websocket))
+        .route("/", get(handler::handle_root))
         .route("/health", get(handler::handle_health))
         .route("/api/groups", get(handler::handle_get_groups))
         .route("/metrics", get(handler::handle_metrics))

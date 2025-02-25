@@ -99,17 +99,18 @@ async fn handle_websocket_connection(
     }
 }
 
-pub async fn handle_websocket(
+pub async fn handle_root(
     ws: Option<WebSocketUpgrade>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<ServerState>>,
     headers: axum::http::HeaderMap,
     uri: axum::http::Uri,
+    request: Request<Body>,
 ) -> impl IntoResponse {
     // 1. WebSocket upgrade: if the upgrade header is present, upgrade the connection.
     if let Some(ws) = ws {
         let real_ip = get_real_ip(&headers, addr);
-        info!("WebSocket upgrade requested from {}", real_ip);
+        info!("WebSocket upgrade requested from {} at root path", real_ip);
 
         return ws
             .on_upgrade(move |socket| handle_websocket_connection(socket, state.clone(), real_ip));
@@ -136,19 +137,22 @@ pub async fn handle_websocket(
     }
 
     // 4. Fallback: serve the static HTML (Vite frontend).
-    debug!("Serving Vite frontend");
-    match ServeDir::new("frontend/dist")
-        .oneshot(
-            Request::builder()
-                .method(Method::GET)
-                .uri("/")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-    {
-        Ok(response) => response.into_response(),
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response(),
+    debug!("Serving frontend HTML for root path");
+    let index_req = Request::builder()
+        .method(Method::GET)
+        .uri("/index.html")
+        .body(Body::empty())
+        .unwrap();
+
+    match ServeDir::new("frontend/dist").oneshot(index_req).await {
+        Ok(response) => {
+            debug!("Frontend served successfully");
+            response.into_response()
+        }
+        Err(err) => {
+            eprintln!("Error serving frontend: {:?}", err);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
+        }
     }
 }
 

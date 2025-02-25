@@ -10,8 +10,8 @@ services:
       - ./crates/groups_relay/db:/app/db
     environment:
       RUST_LOG: "${RUST_LOG:-info}"
-      NIP29__relay__relay_url: "${RELAY_URL:-ws://127.0.0.1:8080}"
-      NIP29__relay__auth_url: "${AUTH_URL:-http://127.0.0.1:8080}"
+      NIP29__relay__relay_url: "${RELAY_URL:-ws://0.0.0.0:8080}"
+      NIP29__relay__auth_url: "${AUTH_URL:-ws://0.0.0.0:8080}"
     ports:
       - "8080:8080"
 

@@ -48,12 +48,44 @@ export class NostrClient {
 
   constructor(key: string, config?: Partial<NostrClientConfig>) {
     try {
+      // Get WebSocket URL from environment variable or use current host
+      const getWebSocketUrl = () => {
+        // Check if we have an environment variable for the WebSocket URL
+        if (
+          typeof import.meta !== "undefined" &&
+          import.meta.env &&
+          import.meta.env.VITE_WEBSOCKET_URL
+        ) {
+          return import.meta.env.VITE_WEBSOCKET_URL;
+        }
+
+        // Otherwise, use the current host
+        return `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
+      };
+
+      const defaultRelayUrl = getWebSocketUrl();
+      console.log("NostrClient using relay URL:", defaultRelayUrl);
+
       this.config = {
-        relayUrl: "/",
+        relayUrl: defaultRelayUrl,
         ...config,
       };
 
-      const signer = new NDKPrivateKeySigner(key);
+      // Validate the key format before creating the signer
+      if (!key || typeof key !== "string") {
+        throw new Error("Private key is required and must be a string");
+      }
+
+      // Try to create the signer with better error handling
+      let signer;
+      try {
+        signer = new NDKPrivateKeySigner(key);
+      } catch (signerError) {
+        console.error("Failed to create NDKPrivateKeySigner:", signerError);
+        throw new Error(
+          "Invalid private key provided. Please check the format and try again."
+        );
+      }
 
       // Main NDK instance for group operations
       this.ndk = new NDK({

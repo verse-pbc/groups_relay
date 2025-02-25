@@ -10,12 +10,43 @@ export const AuthPrompt: FunctionComponent<AuthPromptProps> = ({ onSubmit }) => 
   const [error, setError] = useState('')
   const [isConnecting, setIsConnecting] = useState(false)
 
+  // Validate that the key is a valid hex string of the correct length
+  const validatePrivateKey = (key: string): boolean => {
+    // Remove any 'nsec' prefix if present
+    let cleanKey = key.trim();
+    if (cleanKey.startsWith('nsec')) {
+      try {
+        // This is a bech32 encoded key, we'll assume it's valid for now
+        // In a real app, you'd want to decode it properly
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // Check if it's a valid hex string
+    const hexRegex = /^[0-9a-fA-F]+$/;
+    if (!hexRegex.test(cleanKey)) {
+      return false;
+    }
+
+    // Check length (32 bytes = 64 hex characters)
+    return cleanKey.length === 64;
+  }
+
   const handleSubmit = (e: Event) => {
     e.preventDefault()
     if (!key) {
       setError('A private key is required')
       return
     }
+
+    // Validate the key format
+    if (!validatePrivateKey(key)) {
+      setError('Invalid private key format. Please enter a valid 64-character hex string or nsec value.')
+      return
+    }
+
     onSubmit(key)
   }
 
