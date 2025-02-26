@@ -87,8 +87,9 @@ impl Middleware for ErrorMiddleware {
         if self.should_fail_inbound {
             Err(anyhow::anyhow!("Simulated inbound processing error"))
         } else {
-            ctx.message = format!("Error({})", ctx.message);
-            ctx.send_message(ctx.message.clone()).await?;
+            let message = format!("Error({})", ctx.message.clone().unwrap());
+            ctx.message = Some(message.clone());
+            ctx.send_message(message).await?;
             ctx.next().await
         }
     }
@@ -138,7 +139,7 @@ impl Middleware for FloodMiddleware {
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        if ctx.message == "trigger_flood" {
+        if ctx.message == Some("trigger_flood".to_string()) {
             // Generate a flood of messages to test overflow
             for i in 0..1000 {
                 // Add a small delay to ensure messages build up

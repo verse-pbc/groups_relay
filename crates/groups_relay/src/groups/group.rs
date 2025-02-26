@@ -375,17 +375,8 @@ impl Group {
 
     /// Checks if an event kind is a group management kind that requires a managed group to exist
     pub fn is_group_management_kind(kind: Kind) -> bool {
-        matches!(kind,
-            k if k == KIND_GROUP_EDIT_METADATA_9002 ||
-            k == KIND_GROUP_USER_JOIN_REQUEST_9021 ||
-            k == KIND_GROUP_USER_LEAVE_REQUEST_9022 ||
-            k == KIND_GROUP_ADD_USER_9000 ||
-            k == KIND_GROUP_REMOVE_USER_9001 ||
-            k == KIND_GROUP_DELETE_9008 ||
-            k == KIND_GROUP_DELETE_EVENT_9005 ||
-            k == KIND_GROUP_CREATE_INVITE_9009 ||
-            k == KIND_GROUP_SET_ROLES_9006
-        )
+        ADDRESSABLE_EVENT_KINDS.contains(&kind)
+            || ALL_GROUP_KINDS_EXCEPT_DELETE_AND_ADDRESSABLE.contains(&kind)
     }
 
     pub fn new_with_id(id: String) -> Self {
@@ -425,7 +416,7 @@ impl Group {
 
     pub fn delete_group_request(
         &self,
-        delete_group_request_event: &Event,
+        delete_group_request_event: Box<Event>,
         relay_pubkey: &PublicKey,
         authed_pubkey: &Option<PublicKey>,
     ) -> Result<Vec<StoreCommand>, Error> {
@@ -433,9 +424,7 @@ impl Group {
             return Err(Error::notice("Invalid event kind for delete group"));
         }
 
-        if !self.can_delete_group(authed_pubkey, relay_pubkey, delete_group_request_event)? {
-            return Err(Error::notice("User is not authorized to delete this group"));
-        }
+        self.can_delete_group(authed_pubkey, relay_pubkey, &delete_group_request_event)?;
 
         // Delete all group kinds possible except this delete request (kind 9008)
         let non_addressable_filter =
@@ -447,13 +436,13 @@ impl Group {
         Ok(vec![
             StoreCommand::DeleteEvents(non_addressable_filter),
             StoreCommand::DeleteEvents(addressable_filter),
-            StoreCommand::SaveSignedEvent(delete_group_request_event.clone()),
+            StoreCommand::SaveSignedEvent(delete_group_request_event),
         ])
     }
 
     pub fn delete_event_request(
         &mut self,
-        delete_request_event: &Event,
+        delete_request_event: Box<Event>,
         relay_pubkey: &PublicKey,
         authed_pubkey: &Option<PublicKey>,
     ) -> Result<Vec<StoreCommand>, Error> {
@@ -467,9 +456,7 @@ impl Group {
             return Err(Error::notice("No event IDs found in delete request"));
         }
 
-        if !self.can_delete_event(authed_pubkey, relay_pubkey, delete_request_event)? {
-            return Err(Error::notice("User is not authorized to delete this event"));
-        }
+        self.can_delete_event(authed_pubkey, relay_pubkey, &delete_request_event, "event")?;
 
         // We may be deleting invites, remove them from memory too.
         let codes_to_remove: Vec<_> = self
@@ -492,15 +479,19 @@ impl Group {
 
         Ok(vec![
             StoreCommand::DeleteEvents(filter),
-            StoreCommand::SaveSignedEvent(delete_request_event.clone()),
+            StoreCommand::SaveSignedEvent(delete_request_event),
         ])
     }
 
     pub fn add_members_from_event(
         &mut self,
-        members_event: &Event,
+        members_event: Box<Event>,
         relay_pubkey: &PublicKey,
     ) -> Result<Vec<StoreCommand>, Error> {
+        if members_event.kind != KIND_GROUP_ADD_USER_9000 {
+            return Err(Error::notice("Invalid event kind for add members"));
+        }
+
         if !self.can_edit_members(&members_event.pubkey, relay_pubkey) {
             error!(
                 "User {} is not authorized to add users to this group",
@@ -520,7 +511,7 @@ impl Group {
 
         self.add_members(group_members)?;
 
-        let mut events = vec![StoreCommand::SaveSignedEvent(members_event.clone())];
+        let mut events = vec![StoreCommand::SaveSignedEvent(members_event)];
         let admins_event = self.generate_admins_event(relay_pubkey);
         events.push(StoreCommand::SaveUnsignedEvent(admins_event));
         let members_event = self.generate_members_event(relay_pubkey);
@@ -570,9 +561,13 @@ impl Group {
 
     pub fn remove_members(
         &mut self,
-        members_event: &Event,
+        members_event: Box<Event>,
         relay_pubkey: &PublicKey,
     ) -> Result<Vec<StoreCommand>, Error> {
+        if members_event.kind != KIND_GROUP_REMOVE_USER_9001 {
+            return Err(Error::notice("Invalid event kind for remove members"));
+        }
+
         if !self.can_edit_members(&members_event.pubkey, relay_pubkey) {
             error!(
                 "User {} is not authorized to remove users from this group",
@@ -612,7 +607,7 @@ impl Group {
         self.update_roles();
         self.update_state();
 
-        let mut events = vec![StoreCommand::SaveSignedEvent(members_event.clone())];
+        let mut events = vec![StoreCommand::SaveSignedEvent(members_event)];
         if removed_admins {
             let admins_event = self.generate_admins_event(relay_pubkey);
             events.push(StoreCommand::SaveUnsignedEvent(admins_event));
@@ -624,6 +619,10 @@ impl Group {
     }
 
     pub fn set_metadata(&mut self, event: &Event, relay_pubkey: &PublicKey) -> Result<(), Error> {
+        if event.kind != KIND_GROUP_EDIT_METADATA_9002 {
+            return Err(Error::notice("Invalid event kind for set metadata"));
+        }
+
         if !self.can_edit_metadata(&event.pubkey, relay_pubkey) {
             return Err(Error::notice("User cannot edit metadata"));
         }
@@ -683,9 +682,13 @@ impl Group {
     ///   - Invalid tag format
     pub fn set_roles(
         &mut self,
-        event: &Event,
+        event: Box<Event>,
         relay_pubkey: &PublicKey,
     ) -> Result<Vec<StoreCommand>, Error> {
+        if event.kind != KIND_GROUP_SET_ROLES_9006 {
+            return Err(Error::notice("Invalid event kind for set roles"));
+        }
+
         if !self.can_edit_members(&event.pubkey, relay_pubkey) {
             return Err(Error::notice("User is not authorized to set roles"));
         }
@@ -715,7 +718,7 @@ impl Group {
         let members_event = self.generate_members_event(relay_pubkey);
 
         Ok(vec![
-            StoreCommand::SaveSignedEvent(event.clone()),
+            StoreCommand::SaveSignedEvent(event),
             StoreCommand::SaveUnsignedEvent(roles_event),
             StoreCommand::SaveUnsignedEvent(members_event),
         ])
@@ -740,7 +743,7 @@ impl Group {
     /// * `Err` - Invalid event kind or other error
     pub fn join_request(
         &mut self,
-        event: &Event,
+        event: Box<Event>,
         relay_pubkey: &PublicKey,
     ) -> Result<Vec<StoreCommand>, Error> {
         if event.kind != KIND_GROUP_USER_JOIN_REQUEST_9021 {
@@ -763,7 +766,7 @@ impl Group {
                 .or_insert(GroupMember::new_member(event.pubkey));
             self.join_requests.remove(&event.pubkey);
             self.update_state();
-            return Ok(self.create_join_request_commands(true, event, relay_pubkey));
+            return self.create_join_request_commands(true, event, relay_pubkey);
         }
 
         let code = event
@@ -776,7 +779,7 @@ impl Group {
             info!("Invite not found, adding join request for {}", event.pubkey);
             self.join_requests.insert(event.pubkey);
             self.update_state();
-            return Ok(self.create_join_request_commands(false, event, relay_pubkey));
+            return self.create_join_request_commands(false, event, relay_pubkey);
         };
 
         info!("Invite code matched, adding member {}", event.pubkey);
@@ -786,18 +789,19 @@ impl Group {
 
         self.join_requests.remove(&event.pubkey);
         self.update_state();
-        Ok(self.create_join_request_commands(true, event, relay_pubkey))
+        self.create_join_request_commands(true, event, relay_pubkey)
     }
 
     /// Handles group management events (add/remove users).
     /// Returns updated group events if the management action was successful.
     pub fn handle_group_content(
         &mut self,
-        event: &Event,
+        event: Box<Event>,
         relay_pubkey: &PublicKey,
     ) -> Result<Vec<StoreCommand>, Error> {
         let is_member = self.is_member(&event.pubkey);
-        let mut commands = vec![StoreCommand::SaveSignedEvent(event.clone())];
+        let event_pubkey = event.pubkey;
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event)];
 
         // For private and closed groups, only members can post
         if self.metadata.private && self.metadata.closed && !is_member {
@@ -806,7 +810,7 @@ impl Group {
 
         // Open groups auto-join the author when posting
         if !self.metadata.closed && !is_member {
-            self.add_pubkey(event.pubkey)?;
+            self.add_pubkey(event_pubkey)?;
             commands.extend(
                 self.generate_membership_events(relay_pubkey)
                     .into_iter()
@@ -823,20 +827,27 @@ impl Group {
     fn create_join_request_commands(
         &self,
         auto_joined: bool,
-        event: &Event,
+        event: Box<Event>,
         relay_pubkey: &PublicKey,
-    ) -> Vec<StoreCommand> {
+    ) -> Result<Vec<StoreCommand>, Error> {
+        if event.kind != KIND_GROUP_USER_JOIN_REQUEST_9021 {
+            return Err(Error::notice(format!(
+                "Invalid event kind for join request {}",
+                event.kind
+            )));
+        }
+
         if auto_joined {
-            let mut commands = vec![StoreCommand::SaveSignedEvent(event.clone())];
+            let mut commands = vec![StoreCommand::SaveSignedEvent(event)];
             commands.extend(
                 self.generate_membership_events(relay_pubkey)
                     .into_iter()
                     .map(StoreCommand::SaveUnsignedEvent),
             );
 
-            commands
+            Ok(commands)
         } else {
-            vec![StoreCommand::SaveSignedEvent(event.clone())]
+            Ok(vec![StoreCommand::SaveSignedEvent(event)])
         }
     }
 
@@ -877,7 +888,7 @@ impl Group {
 
     pub fn leave_request(
         &mut self,
-        event: &Event,
+        event: Box<Event>,
         relay_pubkey: &PublicKey,
     ) -> Result<Vec<StoreCommand>, Error> {
         if event.kind != KIND_GROUP_USER_LEAVE_REQUEST_9022 {
@@ -893,7 +904,7 @@ impl Group {
         if removed {
             let members_event = self.generate_members_event(relay_pubkey);
             Ok(vec![
-                StoreCommand::SaveSignedEvent(event.clone()),
+                StoreCommand::SaveSignedEvent(event),
                 StoreCommand::SaveUnsignedEvent(members_event),
             ])
         } else {
@@ -1258,8 +1269,8 @@ impl Group {
         authed_pubkey: &Option<PublicKey>,
         relay_pubkey: &PublicKey,
         delete_group_event: &Event,
-    ) -> Result<bool, Error> {
-        self.can_delete_event(authed_pubkey, relay_pubkey, delete_group_event)
+    ) -> Result<(), Error> {
+        self.can_delete_event(authed_pubkey, relay_pubkey, delete_group_event, "group")
     }
 
     pub fn can_delete_event(
@@ -1267,38 +1278,33 @@ impl Group {
         authed_pubkey: &Option<PublicKey>,
         relay_pubkey: &PublicKey,
         event: &Event,
-    ) -> Result<bool, Error> {
+        target: &str,
+    ) -> Result<(), Error> {
         let Some(authed_pubkey) = authed_pubkey else {
-            warn!(
-                "User is not authenticated, cannot delete event {}, kind {}",
-                event.id, event.kind
-            );
             return Err(Error::auth_required("User is not authenticated"));
         };
 
         // Relay pubkey can delete all events
         if relay_pubkey == authed_pubkey {
             debug!(
-                "Relay pubkey {} can delete event {}, kind {}",
-                relay_pubkey, event.id, event.kind
+                "Relay pubkey {} can delete {} {}, kind {}",
+                relay_pubkey, target, event.id, event.kind
             );
-            return Ok(true);
+            return Ok(());
         }
 
         // Only admins can delete events
         if self.is_admin(authed_pubkey) {
             debug!(
-                "Admin {} can delete event {}, kind {}",
-                authed_pubkey, event.id, event.kind
+                "Admin {} can delete {} {}, kind {}",
+                authed_pubkey, target, event.id, event.kind
             );
-            return Ok(true);
+            return Ok(());
         }
 
-        warn!(
-            "User {} is not authorized to delete event {}, kind {}",
-            authed_pubkey, event.id, event.kind
-        );
-        Ok(false)
+        Err(Error::restricted(
+            "User is not authorized to delete this event",
+        ))
     }
 
     pub fn can_see_event(
@@ -1604,7 +1610,7 @@ mod tests {
 
         assert!(
             group
-                .join_request(&join_event, &member_keys.public_key())
+                .join_request(Box::new(join_event), &member_keys.public_key())
                 .unwrap()
                 .len()
                 > 0
@@ -1622,7 +1628,7 @@ mod tests {
 
         assert!(
             group
-                .join_request(&event, &member_keys.public_key())
+                .join_request(Box::new(event), &member_keys.public_key())
                 .unwrap()
                 .len()
                 > 0
@@ -1640,7 +1646,7 @@ mod tests {
 
         assert!(
             group
-                .join_request(&join_event, &member_keys.public_key())
+                .join_request(Box::new(join_event), &member_keys.public_key())
                 .unwrap()
                 .len()
                 > 0
@@ -1667,7 +1673,7 @@ mod tests {
         // Should return error with message "User is already a member"
         assert_eq!(
             group
-                .join_request(&join_event, &member_keys.public_key())
+                .join_request(Box::new(join_event), &member_keys.public_key())
                 .unwrap_err()
                 .to_string(),
             "User is already a member"
@@ -1695,7 +1701,7 @@ mod tests {
 
         assert!(
             group
-                .leave_request(&leave_event, &relay_pubkey.public_key())
+                .leave_request(Box::new(leave_event), &relay_pubkey.public_key())
                 .unwrap()
                 .len()
                 > 1
@@ -1749,7 +1755,7 @@ mod tests {
         ];
         let add_event = create_test_event(&admin_keys, 9000, add_tags).await;
         group
-            .add_members_from_event(&add_event, &admin_keys.public_key())
+            .add_members_from_event(Box::new(add_event), &admin_keys.public_key())
             .unwrap();
 
         let test_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
@@ -1795,7 +1801,7 @@ mod tests {
         .await;
         let delete_event = create_test_delete_event(&admin_keys, &group_id, &event).await;
 
-        let result = group.delete_event_request(&delete_event, &relay_pubkey, &None);
+        let result = group.delete_event_request(Box::new(delete_event), &relay_pubkey, &None);
 
         assert!(result.is_err());
         assert_eq!(
@@ -1830,7 +1836,7 @@ mod tests {
         .await;
 
         let result = group.delete_event_request(
-            &delete_request,
+            Box::new(delete_request),
             &relay_pubkey,
             &Some(admin_keys.public_key()),
         );
@@ -1856,7 +1862,7 @@ mod tests {
         let delete_event = create_test_delete_event(&non_member_keys, &group_id, &event).await;
 
         let result = group.delete_event_request(
-            &delete_event,
+            Box::new(delete_event),
             &relay_pubkey,
             &Some(non_member_keys.public_key()),
         );
@@ -1864,7 +1870,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "User is not authorized to delete this event"
+            "Restricted: User is not authorized to delete this event"
         );
     }
 
@@ -1880,7 +1886,7 @@ mod tests {
         let event = create_test_event(&admin_keys, 9001, tags).await;
 
         assert!(group
-            .remove_members(&event, &admin_keys.public_key())
+            .remove_members(Box::new(event), &admin_keys.public_key())
             .is_err());
     }
 
@@ -1925,7 +1931,7 @@ mod tests {
             create_test_role_event(&admin_keys, &group_id, admin_keys.public_key(), "member").await;
 
         // Should fail with "Cannot remove last admin" error
-        let result = group.set_roles(&event, &admin_keys.public_key());
+        let result = group.set_roles(Box::new(event), &admin_keys.public_key());
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -1949,7 +1955,7 @@ mod tests {
         let add_admin_event =
             create_test_role_event(&admin_keys, &group_id, member_keys.public_key(), "admin").await;
         group
-            .set_roles(&add_admin_event, &admin_keys.public_key())
+            .set_roles(Box::new(add_admin_event), &admin_keys.public_key())
             .unwrap();
         assert!(group.is_admin(&member_keys.public_key()));
 
@@ -1958,7 +1964,7 @@ mod tests {
             create_test_role_event(&admin_keys, &group_id, admin_keys.public_key(), "member").await;
 
         // Should succeed
-        let result = group.set_roles(&event, &admin_keys.public_key());
+        let result = group.set_roles(Box::new(event), &admin_keys.public_key());
         assert!(result.is_ok());
         assert!(!group.is_admin(&admin_keys.public_key()));
         assert!(group.is_admin(&member_keys.public_key()));
@@ -1983,7 +1989,7 @@ mod tests {
         let delete_event =
             create_test_delete_event(&admin_keys, &group_id, &create_invite_event).await;
         let result = group.delete_event_request(
-            &delete_event,
+            Box::new(delete_event),
             &relay_pubkey,
             &Some(admin_keys.public_key()),
         );
@@ -2007,7 +2013,7 @@ mod tests {
         ];
         let add_event = create_test_event(&admin_keys, 9000, add_tags).await;
         group
-            .add_members_from_event(&add_event, &relay_pubkey)
+            .add_members_from_event(Box::new(add_event), &relay_pubkey)
             .unwrap();
         assert!(group.is_member(&member_keys.public_key()));
 
@@ -2018,7 +2024,7 @@ mod tests {
         ];
         let remove_event = create_test_event(&admin_keys, 9001, remove_tags).await;
 
-        let result = group.remove_members(&remove_event, &relay_pubkey);
+        let result = group.remove_members(Box::new(remove_event), &relay_pubkey);
 
         assert!(result.unwrap().len() > 0);
         assert!(!group.is_member(&member_keys.public_key()));

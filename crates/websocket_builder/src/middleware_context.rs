@@ -348,8 +348,9 @@ where
 {
     /// Unique identifier for the connection
     pub connection_id: String,
-    /// The received message
-    pub message: M,
+    /// The received message, it's an option because you may want to own the
+    /// message in the last inbound middleware
+    pub message: Option<M>,
     /// Mutable reference to the connection state
     pub state: &'a mut S,
     /// Optional sender for outgoing messages
@@ -375,7 +376,7 @@ impl<'a, S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 's
     /// * `index` - Current position in the middleware chain
     pub fn new(
         connection_id: String,
-        message: M,
+        message: Option<M>,
         sender: Option<Sender<(O, usize)>>,
         state: &'a mut S,
         middlewares: &'a [Arc<
@@ -404,6 +405,13 @@ impl<'a, S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 's
     /// * `Ok(())` - Successfully processed by next middleware
     /// * `Err` - Processing failed
     pub async fn next(&mut self) -> Result<()> {
+        if self.message.is_none() {
+            // If the current middleware consumed the message we just stop
+            // the middleware chain
+            debug!("Inbound message is empty, stopping middleware chain");
+            return Ok(());
+        }
+
         if self.index >= self.middlewares.len() - 1 {
             return Ok(());
         }

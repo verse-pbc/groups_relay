@@ -14,7 +14,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{debug, error};
 use websocket_builder::{
     ConnectionContext, InboundContext, Middleware, OutboundContext, SendMessage,
 };
@@ -85,57 +85,83 @@ impl Nip29Middleware {
             .flat_map(|(_, tag_set)| tag_set.iter())
             .cloned()
     }
+
     async fn handle_event(
         &self,
-        event: &Event,
+        event: Box<Event>,
         authed_pubkey: &Option<PublicKey>,
     ) -> Result<Vec<StoreCommand>, Error> {
-        if event.kind == KIND_GROUP_CREATE_9007 {
-            return self.groups.handle_group_create(event).await;
-        }
-
         // Allow events through for unmanaged groups (groups not in relay state)
         // Per NIP-29: In unmanaged groups, everyone is considered a member
         // These groups can later be converted to managed groups by the relay admin
         if event.tags.find(TagKind::h()).is_some()
             && !Group::is_group_management_kind(event.kind)
-            && self.groups.find_group_from_event(event).is_none()
+            && self.groups.find_group_from_event(&event).is_none()
         {
-            return Ok(vec![StoreCommand::SaveSignedEvent(event.clone())]);
+            debug!(target: "nip29", "Processing unmanaged group event: kind={}, id={}", event.kind, event.id);
+            return Ok(vec![StoreCommand::SaveSignedEvent(event)]);
         }
 
         let events_to_save = match event.kind {
-            k if k == KIND_GROUP_EDIT_METADATA_9002 => self.groups.handle_edit_metadata(event)?,
+            k if k == KIND_GROUP_CREATE_9007 => {
+                debug!(target: "nip29", "Processing group create event: id={}", event.id);
+                self.groups.handle_group_create(event).await?
+            }
+
+            k if k == KIND_GROUP_EDIT_METADATA_9002 => {
+                debug!(target: "nip29", "Processing group edit metadata event: id={}", event.id);
+                self.groups.handle_edit_metadata(event)?
+            }
 
             k if k == KIND_GROUP_USER_JOIN_REQUEST_9021 => {
+                debug!(target: "nip29", "Processing group join request: id={}", event.id);
                 self.groups.handle_join_request(event)?
             }
 
             k if k == KIND_GROUP_USER_LEAVE_REQUEST_9022 => {
+                debug!(target: "nip29", "Processing group leave request: id={}", event.id);
                 self.groups.handle_leave_request(event)?
             }
 
-            k if k == KIND_GROUP_SET_ROLES_9006 => self.groups.handle_set_roles(event)?,
+            k if k == KIND_GROUP_SET_ROLES_9006 => {
+                debug!(target: "nip29", "Processing group set roles event: id={}", event.id);
+                self.groups.handle_set_roles(event)?
+            }
 
-            k if k == KIND_GROUP_ADD_USER_9000 => self.groups.handle_put_user(event)?,
+            k if k == KIND_GROUP_ADD_USER_9000 => {
+                debug!(target: "nip29", "Processing group add user event: id={}", event.id);
+                self.groups.handle_put_user(event)?
+            }
 
-            k if k == KIND_GROUP_REMOVE_USER_9001 => self.groups.handle_remove_user(event)?,
+            k if k == KIND_GROUP_REMOVE_USER_9001 => {
+                debug!(target: "nip29", "Processing group remove user event: id={}", event.id);
+                self.groups.handle_remove_user(event)?
+            }
 
             k if k == KIND_GROUP_DELETE_9008 => {
+                debug!(target: "nip29", "Processing group deletion event: id={}", event.id);
                 self.groups.handle_delete_group(event, authed_pubkey)?
             }
 
             k if k == KIND_GROUP_DELETE_EVENT_9005 => {
+                debug!(target: "nip29", "Processing group content event deletion: id={}", event.id);
                 self.groups.handle_delete_event(event, authed_pubkey)?
             }
 
-            k if k == KIND_GROUP_CREATE_INVITE_9009 => self.groups.handle_create_invite(event)?,
+            k if k == KIND_GROUP_CREATE_INVITE_9009 => {
+                debug!(target: "nip29", "Processing group create invite event: id={}", event.id);
+                self.groups.handle_create_invite(event)?
+            }
 
             k if !NON_GROUP_ALLOWED_KINDS.contains(&k) => {
+                debug!(target: "nip29", "Processing group content event: kind={}, id={}", event.kind, event.id);
                 self.groups.handle_group_content(event)?
             }
 
-            _ => vec![StoreCommand::SaveSignedEvent(event.clone())],
+            _ => {
+                debug!(target: "nip29", "Processing non-group event: kind={}, id={}", event.kind, event.id);
+                vec![StoreCommand::SaveSignedEvent(event)]
+            }
         };
 
         Ok(events_to_save)
@@ -220,12 +246,20 @@ impl Middleware for Nip29Middleware {
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        match &ctx.message {
+        let Some(client_message) = ctx.message.take() else {
+            // TODO: ctx.message is an option so that the last middeware can
+            // take it and own it if desired, when that happens ctx.next() is a
+            // noop and websocket_builder stops the chain there, so middlewares
+            // should never be able to get a empty message, this would be a bug
+            panic!("We should never have an empty message in the inbound context");
+        };
+
+        match client_message {
             ClientMessage::Event(event) => {
                 metrics::inbound_events_processed().increment(1);
+                let event_id = event.id;
                 match self.handle_event(event, &ctx.state.authed_pubkey).await {
                     Ok(events_to_save) => {
-                        let event_id = event.id;
                         ctx.state.save_events(events_to_save).await?;
                         ctx.send_message(RelayMessage::ok(
                             event_id,
@@ -265,8 +299,6 @@ impl Middleware for Nip29Middleware {
                 Ok(())
             }
             ClientMessage::Close(subscription_id) => {
-                let subscription_id = subscription_id.clone();
-
                 let Some(connection) = ctx.state.relay_connection.as_ref() else {
                     error!(
                         "No connection available for unsubscribing {}",
@@ -278,7 +310,7 @@ impl Middleware for Nip29Middleware {
                     return Ok(());
                 };
 
-                match connection.handle_unsubscribe(subscription_id.clone()).await {
+                match connection.remove_subscription(subscription_id.clone()) {
                     Ok(()) => {
                         ctx.send_message(RelayMessage::closed(subscription_id.clone(), ""))
                             .await?;
@@ -291,7 +323,10 @@ impl Middleware for Nip29Middleware {
 
                 Ok(())
             }
-            _ => ctx.next().await,
+            _ => {
+                debug!("Ignoring message: {:?}", ctx.message);
+                Ok(())
+            }
         }
     }
 
@@ -606,12 +641,13 @@ mod tests {
         .await;
 
         // Should allow the event through since it's an unmanaged group
-        let result = middleware.handle_event(&event, &None).await;
+        let event_id = event.id;
+        let result = middleware.handle_event(Box::new(event), &None).await;
         assert!(result.is_ok());
         if let Ok(commands) = result {
             assert_eq!(commands.len(), 1);
             match &commands[0] {
-                StoreCommand::SaveSignedEvent(saved_event) => assert_eq!(saved_event.id, event.id),
+                StoreCommand::SaveSignedEvent(saved_event) => assert_eq!(saved_event.id, event_id),
                 _ => panic!("Expected SaveSignedEvent command"),
             }
         }
@@ -637,7 +673,7 @@ mod tests {
         .await;
 
         // Should not return an error because group is not needed here
-        let result = middleware.handle_event(&event, &None).await;
+        let result = middleware.handle_event(Box::new(event), &None).await;
         assert!(result.is_ok());
     }
 
@@ -660,19 +696,22 @@ mod tests {
             vec![Tag::custom(TagKind::h(), [group_id])],
         )
         .await;
-        groups.handle_group_create(&create_event).await.unwrap();
+        groups
+            .handle_group_create(Box::new(create_event))
+            .await
+            .unwrap();
 
         // Add member to group
         let add_member_event = create_test_event(
             &admin_keys,
-            9008,
+            9000,
             vec![
                 Tag::custom(TagKind::h(), [group_id]),
                 Tag::public_key(member_keys.public_key()),
             ],
         )
         .await;
-        groups.handle_put_user(&add_member_event).unwrap();
+        groups.handle_put_user(Box::new(add_member_event)).unwrap();
 
         // Create a group content event
         let content_event = create_test_event(
@@ -714,7 +753,10 @@ mod tests {
             vec![Tag::custom(TagKind::h(), [group_id])],
         )
         .await;
-        groups.handle_group_create(&create_event).await.unwrap();
+        groups
+            .handle_group_create(Box::new(create_event))
+            .await
+            .unwrap();
 
         // Create a group content event
         let content_event = create_test_event(
@@ -756,7 +798,10 @@ mod tests {
             vec![Tag::custom(TagKind::h(), [group_id])],
         )
         .await;
-        groups.handle_group_create(&create_event).await.unwrap();
+        groups
+            .handle_group_create(Box::new(create_event))
+            .await
+            .unwrap();
 
         // Create a group content event
         let content_event = create_test_event(
@@ -905,7 +950,10 @@ mod tests {
             vec![Tag::custom(TagKind::h(), [group_id])],
         )
         .await;
-        groups.handle_group_create(&create_event).await.unwrap();
+        groups
+            .handle_group_create(Box::new(create_event))
+            .await
+            .unwrap();
 
         let meta_filter = Filter::new()
             .kinds(vec![Kind::Custom(39000)]) // Just the addressable kind
@@ -937,20 +985,22 @@ mod tests {
         )
         .await;
         groups
-            .handle_group_create(&private_create_event)
+            .handle_group_create(Box::new(private_create_event))
             .await
             .unwrap();
 
         let add_to_private_event = create_test_event(
             &admin_keys,
-            9008,
+            9000,
             vec![
                 Tag::custom(TagKind::h(), [private_group_id]),
                 Tag::public_key(member_keys.public_key()),
             ],
         )
         .await;
-        groups.handle_put_user(&add_to_private_event).unwrap();
+        groups
+            .handle_put_user(Box::new(add_to_private_event))
+            .unwrap();
 
         let private_filter = Filter::new()
             .kind(Kind::Custom(11))
@@ -982,7 +1032,7 @@ mod tests {
         )
         .await;
         groups
-            .handle_group_create(&private_create_event)
+            .handle_group_create(Box::new(private_create_event))
             .await
             .unwrap();
 
@@ -1015,7 +1065,7 @@ mod tests {
         )
         .await;
         groups
-            .handle_group_create(&private_create_event)
+            .handle_group_create(Box::new(private_create_event))
             .await
             .unwrap();
 
@@ -1046,7 +1096,7 @@ mod tests {
         )
         .await;
         groups
-            .handle_group_create(&private_create_event)
+            .handle_group_create(Box::new(private_create_event))
             .await
             .unwrap();
 
@@ -1087,7 +1137,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
-            ClientMessage::Event(Box::new(event.clone())),
+            Some(ClientMessage::Event(Box::new(event.clone()))),
             None,
             &mut state,
             &[],
@@ -1220,7 +1270,7 @@ mod tests {
         .await;
 
         let result = middleware
-            .handle_event(&create_event_non_admin, &None)
+            .handle_event(Box::new(create_event_non_admin), &None)
             .await;
         assert!(result.is_err());
         assert_eq!(
@@ -1236,14 +1286,17 @@ mod tests {
         )
         .await;
 
-        let result = middleware.handle_event(&create_event_admin, &None).await;
+        let event_id = create_event_admin.id;
+        let result = middleware
+            .handle_event(Box::new(create_event_admin), &None)
+            .await;
         assert!(result.is_ok());
         if let Ok(commands) = result {
             // Should have 6 commands: save create event + 5 metadata events
             assert_eq!(commands.len(), 6);
             match &commands[0] {
                 StoreCommand::SaveSignedEvent(saved_event) => {
-                    assert_eq!(saved_event.id, create_event_admin.id)
+                    assert_eq!(saved_event.id, event_id)
                 }
                 _ => panic!("Expected SaveSignedEvent command"),
             }

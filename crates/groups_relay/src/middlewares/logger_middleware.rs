@@ -35,7 +35,7 @@ impl Middleware for LoggerMiddleware {
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         match &ctx.message {
-            ClientMessage::Event(event) => {
+            Some(ClientMessage::Event(event)) => {
                 let start_time = Instant::now();
                 info!("> EVENT kind {}: {}", event.kind.as_u16(), event.as_json());
 
@@ -44,18 +44,18 @@ impl Middleware for LoggerMiddleware {
                 ctx.state.event_kind = Some(event.kind.as_u16());
                 ctx.next().await
             }
-            ClientMessage::Req {
+            Some(ClientMessage::Req {
                 subscription_id,
                 filter,
-            } => {
+            }) => {
                 info!("> REQ {}: {}", subscription_id, filter.as_json());
                 ctx.next().await
             }
-            ClientMessage::Close(subscription_id) => {
+            Some(ClientMessage::Close(subscription_id)) => {
                 info!("> CLOSE {}", subscription_id);
                 ctx.next().await
             }
-            ClientMessage::Auth(event) => {
+            Some(ClientMessage::Auth(event)) => {
                 info!("> AUTH {}", event.as_json());
                 ctx.next().await
             }
@@ -85,8 +85,14 @@ impl Middleware for LoggerMiddleware {
                         if let Some(kind) = ctx.state.event_kind.take() {
                             metrics::event_latency(kind as u32).record(latency_ms);
                         }
+
+                        info!(
+                            "< OK {} {} {} took {:?}ms",
+                            event_id, status, message, latency_ms
+                        );
+                    } else {
+                        info!("< OK {} {} {}", event_id, status, message);
                     }
-                    info!("< OK {} {} {}", event_id, status, message);
                 }
                 RelayMessage::Event {
                     subscription_id,
@@ -158,7 +164,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_connection".to_string(),
-            ClientMessage::Close(SubscriptionId::new("test_sub")),
+            Some(ClientMessage::Close(SubscriptionId::new("test_sub"))),
             None,
             &mut state,
             chain.as_slice(),

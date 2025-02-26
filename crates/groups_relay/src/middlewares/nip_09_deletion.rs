@@ -1,7 +1,7 @@
 use crate::error::Error;
-use crate::event_store_connection::StoreCommand;
 use crate::nostr_database::RelayDatabase;
 use crate::nostr_session_state::NostrConnectionState;
+use crate::subscription_manager::StoreCommand;
 use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
@@ -84,14 +84,10 @@ impl Nip09Middleware {
 
                         let delete_command = StoreCommand::DeleteEvents(filter);
 
-                        drop(
-                            self.database
-                                .save_store_command(delete_command)
-                                .await
-                                .map_err(|e| {
-                                    Error::notice(format!("Failed to delete event: {}", e))
-                                })?,
-                        );
+                        self.database
+                            .save_store_command(delete_command)
+                            .await
+                            .map_err(|e| Error::notice(format!("Failed to delete event: {}", e)))?;
                     } else {
                         debug!(
                             target: "nip09",
@@ -131,17 +127,12 @@ impl Nip09Middleware {
 
                         let delete_command = StoreCommand::DeleteEvents(filter);
 
-                        drop(
-                            self.database
-                                .save_store_command(delete_command)
-                                .await
-                                .map_err(|e| {
-                                    Error::notice(format!(
-                                        "Failed to delete events by address: {}",
-                                        e
-                                    ))
-                                })?,
-                        );
+                        self.database
+                            .save_store_command(delete_command)
+                            .await
+                            .map_err(|e| {
+                                Error::notice(format!("Failed to delete events by address: {}", e))
+                            })?;
                     } else {
                         debug!(
                             target: "nip09",
@@ -166,7 +157,7 @@ impl Middleware for Nip09Middleware {
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        let ClientMessage::Event(event) = &ctx.message else {
+        let Some(ClientMessage::Event(event)) = &ctx.message else {
             return ctx.next().await;
         };
 
@@ -230,7 +221,7 @@ mod tests {
         let mut state = NostrConnectionState::default();
         let mut ctx = InboundContext::new(
             "test".to_string(),
-            ClientMessage::Event(Box::new(deletion_request.clone())),
+            Some(ClientMessage::Event(Box::new(deletion_request.clone()))),
             None,
             &mut state,
             &[],
@@ -272,7 +263,7 @@ mod tests {
         let mut state = NostrConnectionState::default();
         let mut ctx = InboundContext::new(
             "test".to_string(),
-            ClientMessage::Event(Box::new(deletion_request.clone())),
+            Some(ClientMessage::Event(Box::new(deletion_request.clone()))),
             None,
             &mut state,
             &[],
@@ -314,7 +305,7 @@ mod tests {
         let mut state = NostrConnectionState::default();
         let mut ctx = InboundContext::new(
             "test".to_string(),
-            ClientMessage::Event(Box::new(deletion_request.clone())),
+            Some(ClientMessage::Event(Box::new(deletion_request.clone()))),
             None,
             &mut state,
             &[],
@@ -348,7 +339,7 @@ mod tests {
         let mut state = NostrConnectionState::default();
         let mut ctx = InboundContext::new(
             "test".to_string(),
-            ClientMessage::Event(Box::new(event.clone())),
+            Some(ClientMessage::Event(Box::new(event.clone()))),
             None,
             &mut state,
             &[],
@@ -386,7 +377,7 @@ mod tests {
         let mut state = NostrConnectionState::default();
         let mut ctx = InboundContext::new(
             "test".to_string(),
-            ClientMessage::Event(Box::new(deletion_event.clone())),
+            Some(ClientMessage::Event(Box::new(deletion_event.clone()))),
             None,
             &mut state,
             &[],

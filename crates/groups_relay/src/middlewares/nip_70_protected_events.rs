@@ -18,7 +18,7 @@ impl Middleware for Nip70Middleware {
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        let ClientMessage::Event(event) = &ctx.message else {
+        let Some(ClientMessage::Event(event)) = &ctx.message else {
             return ctx.next().await;
         };
 

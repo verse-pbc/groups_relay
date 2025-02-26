@@ -57,7 +57,7 @@ impl Middleware for OneMiddleware {
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.state.lock().await.inbound_count += 1;
-        ctx.message = format!("One({})", ctx.message);
+        ctx.message = Some(format!("One({})", ctx.message.as_ref().unwrap()));
         ctx.next().await
     }
 
@@ -85,7 +85,7 @@ impl Middleware for TwoMiddleware {
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.state.lock().await.inbound_count += 1;
-        ctx.message = format!("Two({})", ctx.message);
+        ctx.message = Some(format!("Two({})", ctx.message.as_ref().unwrap()));
         ctx.next().await
     }
 
@@ -113,10 +113,11 @@ impl Middleware for ThreeMiddleware {
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.state.lock().await.inbound_count += 1;
-        ctx.message = format!("Three({})", ctx.message);
+        let message = format!("Three({})", ctx.message.as_ref().unwrap());
+        ctx.message = Some(message.clone());
 
         // Send the processed message back as a response
-        ctx.send_message(ctx.message.clone()).await?;
+        ctx.send_message(message).await?;
         ctx.next().await
     }
 
@@ -144,7 +145,7 @@ impl Middleware for FourMiddleware {
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         ctx.state.lock().await.inbound_count += 1;
-        ctx.message = format!("Four({})", ctx.message);
+        ctx.message = Some(format!("Four({})", ctx.message.as_ref().unwrap()));
 
         ctx.next().await
     }

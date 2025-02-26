@@ -1,360 +1,182 @@
 use crate::error::Error;
-use crate::nostr_database::{RelayDatabase, StoreMessage};
-use anyhow::Result;
+use crate::nostr_database::RelayDatabase;
 use nostr_sdk::prelude::*;
 use snafu::Backtrace;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::{
-    mpsc::{self, error::TrySendError},
-    oneshot,
-};
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tokio::sync::mpsc;
+use tracing::{debug, error, info};
 use websocket_builder::MessageSender;
 
-// Message types for subscription management
 #[derive(Debug)]
 enum SubscriptionMessage {
     Add(SubscriptionId, Vec<Filter>),
     Remove(SubscriptionId),
-    CheckEvent {
-        event: Event,
-        sender: MessageSender<RelayMessage>,
-    },
+    CheckEvent { event: Box<Event> },
 }
 
 #[derive(Debug, Clone)]
-pub struct EventStoreConnection {
+pub struct SubscriptionManager {
     id: String,
     database: Arc<RelayDatabase>,
     db_connection: String,
-    connection_token: CancellationToken,
     subscription_sender: mpsc::UnboundedSender<SubscriptionMessage>,
-    pub outgoing_sender: Option<MessageSender<RelayMessage>>,
+    outgoing_sender: Option<MessageSender<RelayMessage>>,
     local_subscription_count: Arc<AtomicUsize>,
 }
 
-impl EventStoreConnection {
+impl SubscriptionManager {
     pub async fn new(
         id: String,
         database: Arc<RelayDatabase>,
         db_connection: String,
-        cancellation_token: CancellationToken,
         outgoing_sender: MessageSender<RelayMessage>,
-    ) -> Result<Self> {
-        let id_clone = id.clone();
-        info!(
-            target: "event_store",
-            "[{}] Creating new connection for {} with sender capacity {}",
-            id_clone,
-            db_connection,
-            outgoing_sender.capacity()
-        );
-
-        let (subscription_sender, subscription_receiver) = mpsc::unbounded_channel();
+    ) -> Result<Self, Error> {
         let local_subscription_count = Arc::new(AtomicUsize::new(0));
+        let subscription_sender = Self::start_subscription_task(
+            &id,
+            outgoing_sender.clone(),
+            local_subscription_count.clone(),
+        )?;
 
-        let connection = Self {
-            id: id_clone.clone(),
-            database: database.clone(),
+        let manager = Self {
+            id,
+            database,
             db_connection,
-            connection_token: cancellation_token.child_token(),
             subscription_sender,
-            outgoing_sender: Some(outgoing_sender.clone()),
-            local_subscription_count: local_subscription_count.clone(),
+            outgoing_sender: Some(outgoing_sender),
+            local_subscription_count,
         };
 
-        // Spawn subscription management task
-        let token = connection.connection_token.clone();
-        let id_clone2 = id_clone.clone();
+        manager.start_database_subscription_task()?;
+        info!(target: "event_store", "[{}] Connection created successfully", manager.id);
+        Ok(manager)
+    }
+
+    fn start_subscription_task(
+        id: &str,
+        mut outgoing_sender: MessageSender<RelayMessage>,
+        local_subscription_count: Arc<AtomicUsize>,
+    ) -> Result<mpsc::UnboundedSender<SubscriptionMessage>, Error> {
+        let (subscription_sender, mut subscription_receiver) = mpsc::unbounded_channel();
+        let id = id.to_string();
+
         tokio::spawn(Box::pin(async move {
-            let mut subscriptions: HashMap<SubscriptionId, Vec<Filter>> = HashMap::new();
-            let mut subscription_receiver = subscription_receiver;
+            let mut subscriptions = HashMap::new();
+            info!(target: "event_store", "[{}] Starting subscription manager", id);
 
-            info!(
-                target: "event_store",
-                "[{}] Starting subscription manager",
-                id_clone2
-            );
-
-            loop {
-                tokio::select! {
-                    _ = token.cancelled() => {
-                        info!(
-                            target: "event_store",
-                            "[{}] Subscription manager shutting down with {} active subscriptions",
-                            id_clone2,
-                            subscriptions.len()
-                        );
-                        break;
+            while let Some(msg) = subscription_receiver.recv().await {
+                match msg {
+                    SubscriptionMessage::Add(subscription_id, filters) => {
+                        subscriptions.insert(subscription_id.clone(), filters);
+                        local_subscription_count.fetch_add(1, Ordering::Relaxed);
+                        crate::metrics::active_subscriptions().increment(1.0);
                     }
-                    Some(msg) = subscription_receiver.recv() => {
-                        match msg {
-                            SubscriptionMessage::Add(subscription_id, filters) => {
-                                info!(
-                                    target: "event_store",
-                                    "[{}] Adding subscription {} with filters {:?} (current count: {})",
-                                    id_clone2, subscription_id, filters, subscriptions.len()
-                                );
-                                subscriptions.insert(subscription_id, filters);
-                            }
-                            SubscriptionMessage::Remove(subscription_id) => {
-                                if subscriptions.remove(&subscription_id).is_some() {
-                                    info!(
-                                        target: "event_store",
-                                        "[{}] Removed subscription {} (remaining count: {})",
-                                        id_clone2,
-                                        subscription_id,
-                                        subscriptions.len()
-                                    );
-                                    local_subscription_count.fetch_sub(1, Ordering::Relaxed);
-                                    crate::metrics::active_subscriptions().decrement(1.0);
-                                }
-                            }
-                            SubscriptionMessage::CheckEvent { event, sender } => {
-                                let mut sender = sender;
-                                let mut matched_count = 0;
-                                for (subscription_id, filters) in subscriptions.iter() {
-                                    let matches = filters.iter().any(|filter| filter.match_event(&event));
-                                    if matches {
-                                        matched_count += 1;
-                                        info!(
-                                            target: "event_store",
-                                            "[{}] Matched event {} (kind: {}) to subscription {}",
-                                            id_clone2,
-                                            event.id,
-                                            event.kind,
-                                            subscription_id
-                                        );
-                                        let message = RelayMessage::Event {
-                                            event: Box::new(event.clone()),
-                                            subscription_id: subscription_id.clone(),
-                                        };
-
-                                        if let Err(e) = sender.send(message).await {
-                                            error!(
-                                                target: "event_store",
-                                                "[{}] Failed to send event {} to subscription {}: {}. Sender capacity: {}",
-                                                id_clone2,
-                                                event.id,
-                                                subscription_id,
-                                                match e {
-                                                    TrySendError::Full(_) => "Channel is full",
-                                                    TrySendError::Closed(_) => "Channel is closed (receiver dropped)",
-                                                },
-                                                sender.capacity()
-                                            );
-                                        }
-                                    }
-                                }
-                                if matched_count == 0 {
-                                    debug!(
-                                        target: "event_store",
-                                        "[{}] Event {} (kind: {}) did not match any of {} subscriptions",
-                                        id_clone2,
-                                        event.id,
-                                        event.kind,
-                                        subscriptions.len()
-                                    );
+                    SubscriptionMessage::Remove(subscription_id) => {
+                        if subscriptions.remove(&subscription_id).is_some() {
+                            local_subscription_count.fetch_sub(1, Ordering::Relaxed);
+                            crate::metrics::active_subscriptions().decrement(1.0);
+                        }
+                    }
+                    SubscriptionMessage::CheckEvent { event } => {
+                        for (subscription_id, filters) in &subscriptions {
+                            if filters
+                                .iter()
+                                .any(|filter| filter.match_event(event.as_ref()))
+                            {
+                                let message = RelayMessage::Event {
+                                    event: event.clone(),
+                                    subscription_id: subscription_id.clone(),
+                                };
+                                if let Err(e) = outgoing_sender.send(message).await {
+                                    error!(target: "event_store", "[{}] Failed to send event: {:?}", id, e);
                                 }
                             }
                         }
                     }
                 }
             }
+            info!(target: "event_store", "[{}] Subscription manager stopped", id);
         }));
 
-        debug!(
-            target: "event_store",
-            "[{}] Connection created successfully",
-            id_clone
-        );
-
-        Ok(connection)
+        Ok(subscription_sender)
     }
 
-    /// Returns the capacity of the outgoing sender
+    fn start_database_subscription_task(&self) -> Result<(), Error> {
+        let mut database_subscription = self.database.subscribe();
+        let subscription_sender = self.subscription_sender.clone();
+
+        tokio::spawn(async move {
+            while let Ok(event) = database_subscription.recv().await {
+                if let Err(e) = subscription_sender.send(SubscriptionMessage::CheckEvent { event })
+                {
+                    error!(target: "event_store", "Failed to send event: {:?}", e);
+                    break;
+                }
+            }
+            debug!(target: "event_store", "Database subscription task stopped");
+        });
+
+        Ok(())
+    }
+
     pub fn sender_capacity(&self) -> usize {
-        let Some(sender) = &self.outgoing_sender else {
-            return 0;
-        };
-        sender.capacity()
+        self.outgoing_sender
+            .as_ref()
+            .map_or(0, |sender| sender.capacity())
     }
 
     pub fn set_outgoing_sender(&mut self, sender: MessageSender<RelayMessage>) {
         self.outgoing_sender = Some(sender);
     }
 
-    pub fn add_subscription(&self, subscription_id: SubscriptionId, filters: Vec<Filter>) {
-        if let Err(_e) = self
-            .subscription_sender
-            .send(SubscriptionMessage::Add(subscription_id.clone(), filters))
-        {
-            error!(
-                target: "event_store",
-                "[{}] Failed to send add subscription message for {}: Channel closed (manager likely stopped)",
-                self.id,
-                subscription_id,
-            );
-        }
-    }
-
-    pub fn remove_subscription(&self, subscription_id: &SubscriptionId) {
-        if self
-            .subscription_sender
-            .send(SubscriptionMessage::Remove(subscription_id.clone()))
-            .is_err()
-        {
-            error!(
-                target: "event_store",
-                "[{}] Failed to send remove subscription message for {}: Channel closed (manager likely stopped)",
-                self.id,
-                subscription_id,
-            );
-        }
-    }
-
-    pub async fn save_and_broadcast(&self, store_command: StoreCommand) -> Result<(), Error> {
-        let store_sender = self.database.get_store_sender();
-
-        let (reply_to_sender, reply_to_receiver) = oneshot::channel();
-
-        let store_message = StoreMessage {
-            command: store_command,
-            reply_to: reply_to_sender,
-        };
-
-        store_sender
-            .send(store_message)
-            .map_err(|e| Error::Internal {
-                message: format!("Failed to queue store command: {}", e),
-                backtrace: Backtrace::capture(),
-            })?;
-
-        let Ok(stored_event) = reply_to_receiver.await else {
-            warn!(
-                target: "event_store",
-                "[{}] Failed to receive stored event: Channel closed (manager likely stopped)",
-                self.id
-            );
-            return Ok(());
-        };
-
-        let Some(sender) = &self.outgoing_sender else {
-            error!(
-                target: "event_store",
-                "[{}] No outgoing sender available for connection", self.id
-            );
-            return Ok(());
-        };
-
-        let stored_event_id = stored_event.id;
-
-        if let Err(e) = self
-            .subscription_sender
-            .send(SubscriptionMessage::CheckEvent {
-                event: stored_event,
-                sender: sender.clone(),
-            })
-        {
-            error!(
-                target: "event_store",
-                "[{}] Failed to send check event message for {}: {}",
-                self.id,
-                stored_event_id,
-                e,
-            );
-        }
-
-        Ok(())
-    }
-
-    pub async fn fetch_events(&self, filters: Vec<Filter>) -> Result<Events, Error> {
-        match self.database.query(filters).await {
-            Ok(events) => Ok(events),
-            Err(e) => Err(Error::notice(format!("Failed to fetch events: {:?}", e))),
-        }
-    }
-
-    pub async fn handle_subscription(
+    pub fn add_subscription(
         &self,
         subscription_id: SubscriptionId,
         filters: Vec<Filter>,
     ) -> Result<(), Error> {
-        debug!(
-            target: "event_store",
-            "[{}] Handling subscription {} from {}",
-            self.id,
-            subscription_id,
-            self.db_connection
-        );
-
-        // Increment subscription count before sending message
-        self.local_subscription_count
-            .fetch_add(1, Ordering::Relaxed);
-        crate::metrics::active_subscriptions().increment(1.0);
-
-        if let Err(e) = self
-            .subscription_sender
+        self.subscription_sender
             .send(SubscriptionMessage::Add(subscription_id, filters))
-        {
-            // Decrement count if we failed to send
-            self.local_subscription_count
-                .fetch_sub(1, Ordering::Relaxed);
-            crate::metrics::active_subscriptions().decrement(1.0);
-
-            error!(
-                target: "event_store",
-                "[{}] Failed to send subscription to manager: {:?}",
-                self.id,
-                e
-            );
-            return Err(Error::Internal {
-                message: format!("Failed to send subscription to manager: {}", e),
+            .map_err(|e| Error::Internal {
+                message: format!("Failed to send subscription: {}", e),
                 backtrace: Backtrace::capture(),
-            });
-        }
+            })
+    }
 
-        Ok(())
+    pub fn remove_subscription(&self, subscription_id: SubscriptionId) -> Result<(), Error> {
+        self.subscription_sender
+            .send(SubscriptionMessage::Remove(subscription_id))
+            .map_err(|e| Error::Internal {
+                message: format!("Failed to send unsubscribe: {}", e),
+                backtrace: Backtrace::capture(),
+            })
+    }
+
+    pub async fn save_and_broadcast(&self, store_command: StoreCommand) -> Result<(), Error> {
+        self.database.save_store_command(store_command).await
+    }
+
+    pub async fn fetch_events(&self, filters: Vec<Filter>) -> Result<Events, Error> {
+        self.database
+            .query(filters)
+            .await
+            .map_err(|e| Error::notice(format!("Failed to fetch events: {:?}", e)))
     }
 
     pub async fn handle_unsubscribe(&self, subscription_id: SubscriptionId) -> Result<(), Error> {
         debug!(
             target: "event_store",
             "[{}] Handling unsubscribe {} from {}",
-            self.id,
-            subscription_id,
-            self.db_connection
+            self.id, subscription_id, self.db_connection
         );
-
-        if let Err(e) = self
-            .subscription_sender
-            .send(SubscriptionMessage::Remove(subscription_id))
-        {
-            error!(
-                target: "event_store",
-                "[{}] Failed to send unsubscribe to manager: {:?}",
-                self.id,
-                e
-            );
-            return Err(Error::Internal {
-                message: format!("Failed to send unsubscribe to manager: {}", e),
-                backtrace: Backtrace::capture(),
-            });
-        }
-
-        Ok(())
+        self.remove_subscription(subscription_id)
     }
 
-    /// Returns the current number of active subscriptions for this connection
-    pub fn get_local_subscription_count(&self) -> usize {
+    fn get_local_subscription_count(&self) -> usize {
         self.local_subscription_count.load(Ordering::Relaxed)
     }
 
-    /// Fetches historical events for a subscription and sends them through the provided sender
-    /// Returns the number of events sent
     pub async fn fetch_historical_events(
         &self,
         subscription_id: &SubscriptionId,
@@ -362,10 +184,8 @@ impl EventStoreConnection {
         mut sender: MessageSender<RelayMessage>,
     ) -> Result<usize, Error> {
         let events = self.fetch_events(filters.to_vec()).await?;
-
-        // Send each event
-        let len = events.len();
-        let capacity = self.sender_capacity() / 2;
+        let capacity = sender.capacity() / 2;
+        let events_len = events.len();
 
         for event in events.into_iter().take(capacity) {
             if let Err(e) = sender
@@ -375,141 +195,81 @@ impl EventStoreConnection {
                 })
                 .await
             {
-                error!(
-                    target: "event_store",
-                    "[{}] Failed to send historical event to subscription {}: {:?}",
-                    self.id,
-                    subscription_id,
-                    e
-                );
+                return Err(Error::Internal {
+                    message: format!("Failed to send event: {}", e),
+                    backtrace: Backtrace::capture(),
+                });
             }
         }
 
-        debug!(
-            target: "event_store",
-            "[{}] Sending EOSE for subscription {} after {} historical events",
-            self.id,
-            subscription_id,
-            len
-        );
-
-        // Send EOSE
         if let Err(e) = sender
             .send(RelayMessage::EndOfStoredEvents(subscription_id.clone()))
             .await
         {
-            error!(
-                target: "event_store",
-                "[{}] Failed to send EOSE to subscription {}: {:?}",
-                self.id,
-                subscription_id,
-                e
-            );
+            return Err(Error::Internal {
+                message: format!("Failed to send EOSE: {}", e),
+                backtrace: Backtrace::capture(),
+            });
         }
 
-        Ok(len)
+        Ok(events_len)
     }
 
-    /// Handles a complete subscription request by:
-    /// 1. Adding the subscription
-    /// 2. Fetching and sending historical events
-    /// 3. Sending EOSE
     pub async fn handle_subscription_request(
         &self,
         subscription_id: SubscriptionId,
         filters: Vec<Filter>,
     ) -> Result<(), Error> {
-        debug!(
-            target: "event_store",
-            "[{}] Processing subscription request for {}",
-            self.id,
-            subscription_id
-        );
-
-        let Some(sender) = &self.outgoing_sender else {
-            error!(
-                target: "event_store",
-                "[{}] No outgoing sender available for subscription {}",
-                self.id,
-                subscription_id
-            );
-            return Err(Error::Internal {
+        let sender = self
+            .outgoing_sender
+            .clone()
+            .ok_or_else(|| Error::Internal {
                 message: "No outgoing sender available".to_string(),
                 backtrace: Backtrace::capture(),
-            });
-        };
+            })?;
 
-        // First add the subscription
-        if let Err(e) = self
-            .handle_subscription(subscription_id.clone(), filters.clone())
+        self.add_subscription(subscription_id.clone(), filters.clone())?;
+        if let Err(fetch_err) = self
+            .fetch_historical_events(&subscription_id, &filters, sender)
             .await
         {
-            error!(
-                target: "event_store",
-                "[{}] Failed to add subscription {}: {}",
-                self.id,
-                subscription_id,
-                e
-            );
-            return Err(e);
+            if let Err(remove_err) = self.remove_subscription(subscription_id.clone()) {
+                return Err(Error::Internal {
+                    message: format!(
+                        "Failed to fetch historical events: {}; rollback failed: {}",
+                        fetch_err, remove_err
+                    ),
+                    backtrace: Backtrace::capture(),
+                });
+            }
+            return Err(fetch_err);
         }
-
-        debug!(
-            target: "event_store",
-            "[{}] Successfully added subscription {}",
-            self.id,
-            subscription_id
-        );
-
-        // Then fetch and send historical events
-        if let Err(e) = self
-            .fetch_historical_events(&subscription_id, &filters, sender.clone())
-            .await
-        {
-            error!(
-                target: "event_store",
-                "[{}] Failed to fetch historical events for subscription {}: {}",
-                self.id,
-                subscription_id,
-                e
-            );
-            // Clean up subscription since we failed
-            self.remove_subscription(&subscription_id);
-            return Err(e);
-        }
-
-        debug!(
-            target: "event_store",
-            "[{}] Successfully completed subscription request for {}",
-            self.id,
-            subscription_id
-        );
-
         Ok(())
     }
 
-    /// Cleans up resources and metrics when the connection is closed
     pub fn cleanup(&self) {
         let remaining_subs = self.get_local_subscription_count();
-        info!(
-            target: "event_store",
-            "[{}] Cleaning up connection with {} remaining subscriptions",
-            self.id,
-            remaining_subs
-        );
         if remaining_subs > 0 {
-            // Decrement the global metrics by the number of subscriptions that weren't explicitly closed
             crate::metrics::active_subscriptions().decrement(remaining_subs as f64);
         }
-        // Cancel the connection token to stop subscription manager
-        self.connection_token.cancel();
+        info!(
+            target: "event_store",
+            "[{}] Cleaned up connection with {} remaining subscriptions",
+            self.id, remaining_subs
+        );
+    }
+}
+
+impl Drop for SubscriptionManager {
+    fn drop(&mut self) {
+        self.cleanup();
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum StoreCommand {
     SaveUnsignedEvent(UnsignedEvent),
-    SaveSignedEvent(Event),
+    SaveSignedEvent(Box<Event>),
     DeleteEvents(Filter),
 }
 
@@ -522,7 +282,6 @@ impl StoreCommand {
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,11 +309,10 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = EventStoreConnection::new(
+        let connection = SubscriptionManager::new(
             "test_conn".to_string(),
             database,
             "test_db".to_string(),
-            CancellationToken::new(),
             MessageSender::new(tx, 0),
         )
         .await
@@ -606,11 +364,10 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = EventStoreConnection::new(
+        let connection = SubscriptionManager::new(
             "test_conn".to_string(),
             database.clone(),
             "test_db".to_string(),
-            CancellationToken::new(),
             MessageSender::new(tx, 0),
         )
         .await
@@ -638,11 +395,12 @@ mod tests {
         let keys = Keys::generate();
         let new_event = EventBuilder::text_note("Hello, world!")
             .build_with_ctx(&Instant::now(), keys.public_key());
-        let new_event = keys.sign_event(new_event).await.unwrap();
+        let new_event = Box::new(keys.sign_event(new_event).await.unwrap());
+        let new_event_clone = new_event.clone();
 
         // Save and broadcast the event
         connection
-            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event.clone()))
+            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event))
             .await
             .unwrap();
 
@@ -656,7 +414,7 @@ mod tests {
                 _idx,
             )) => {
                 assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
-                assert_eq!(*event, new_event, "Event content mismatch");
+                assert_eq!(event, new_event_clone, "Event content mismatch");
             }
             other => panic!("Expected Event message, got: {:?}", other),
         }
@@ -686,11 +444,10 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = EventStoreConnection::new(
+        let connection = SubscriptionManager::new(
             "test_conn".to_string(),
             database.clone(),
             "test_db".to_string(),
-            CancellationToken::new(),
             MessageSender::new(tx, 0),
         )
         .await
@@ -736,11 +493,12 @@ mod tests {
         let keys = Keys::generate();
         let new_event =
             EventBuilder::text_note("New event").build_with_ctx(&Instant::now(), keys.public_key());
-        let new_event = keys.sign_event(new_event).await.unwrap();
+        let new_event = Box::new(keys.sign_event(new_event).await.unwrap());
+        let new_event_clone = new_event.clone();
 
         // Save and broadcast the event
         connection
-            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event.clone()))
+            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event))
             .await
             .unwrap();
 
@@ -754,7 +512,7 @@ mod tests {
                 _idx,
             )) => {
                 assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
-                assert_eq!(*event, new_event, "New event content mismatch");
+                assert_eq!(event, new_event_clone, "New event content mismatch");
             }
             other => panic!("Expected Event message, got: {:?}", other),
         }
@@ -790,11 +548,10 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = EventStoreConnection::new(
+        let connection = SubscriptionManager::new(
             "test_conn".to_string(),
             database.clone(),
             "test_db".to_string(),
-            CancellationToken::new(),
             MessageSender::new(tx, 0),
         )
         .await
@@ -880,11 +637,10 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = EventStoreConnection::new(
+        let connection = SubscriptionManager::new(
             "test_conn".to_string(),
             database,
             "test_db".to_string(),
-            CancellationToken::new(),
             MessageSender::new(tx, 0),
         )
         .await
@@ -947,11 +703,10 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = EventStoreConnection::new(
+        let connection = SubscriptionManager::new(
             "test_conn".to_string(),
             database,
             "test_db".to_string(),
-            CancellationToken::new(),
             MessageSender::new(tx, 0),
         )
         .await
@@ -1012,11 +767,10 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = EventStoreConnection::new(
+        let connection = SubscriptionManager::new(
             "test_conn".to_string(),
             database,
             "test_db".to_string(),
-            CancellationToken::new(),
             MessageSender::new(tx, 0),
         )
         .await
@@ -1087,11 +841,10 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = EventStoreConnection::new(
+        let connection = SubscriptionManager::new(
             "test_conn".to_string(),
             database,
             "test_db".to_string(),
-            CancellationToken::new(),
             MessageSender::new(tx, 0),
         )
         .await
@@ -1188,11 +941,10 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = EventStoreConnection::new(
+        let connection = SubscriptionManager::new(
             "test_conn".to_string(),
             database,
             "test_db".to_string(),
-            CancellationToken::new(),
             MessageSender::new(tx, 0),
         )
         .await
@@ -1208,7 +960,6 @@ mod tests {
             .await
             .unwrap();
 
-        // We should receive all events (order may vary)
         let mut received_kinds = vec![];
         for _ in 0..3 {
             match rx.recv().await {
@@ -1226,7 +977,6 @@ mod tests {
             }
         }
 
-        // Verify we receive EOSE
         match rx.recv().await {
             Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
                 assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
@@ -1234,15 +984,12 @@ mod tests {
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
 
-        // Verify we received all kinds
         assert!(received_kinds.contains(&Kind::TextNote));
         assert!(received_kinds.contains(&Kind::Metadata));
         assert!(received_kinds.contains(&Kind::RelayList));
 
-        // Verify subscription count
         assert_eq!(connection.get_local_subscription_count(), 1);
 
-        // Clean up
         connection.cleanup();
     }
 }

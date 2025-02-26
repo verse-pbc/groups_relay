@@ -80,7 +80,7 @@ pub async fn create_test_group_with_members(
     .await;
 
     group
-        .add_members_from_event(&add_member_event, &admin_keys.public_key())
+        .add_members_from_event(Box::new(add_member_event), &admin_keys.public_key())
         .unwrap();
 
     (group, group_id)
@@ -105,7 +105,7 @@ pub async fn create_test_group_with_multiple_admins(
     .await;
 
     group
-        .add_members_from_event(&add_admin_event, &admin_keys.public_key())
+        .add_members_from_event(Box::new(add_admin_event), &admin_keys.public_key())
         .unwrap();
 
     (group, group_id)
@@ -124,7 +124,7 @@ pub async fn add_member_to_group(
     let add_event = create_test_event(admin_keys, 9000, add_tags).await;
 
     group
-        .add_members_from_event(&add_event, &admin_keys.public_key())
+        .add_members_from_event(Box::new(add_event.clone()), &admin_keys.public_key())
         .unwrap();
 
     add_event
@@ -143,7 +143,7 @@ pub async fn remove_member_from_group(
     let remove_event = create_test_event(admin_keys, 9001, remove_tags).await;
 
     group
-        .remove_members(&remove_event, &admin_keys.public_key())
+        .remove_members(Box::new(remove_event.clone()), &admin_keys.public_key())
         .unwrap();
 
     remove_event

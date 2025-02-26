@@ -1,4 +1,5 @@
 use crate::nostr_session_state::NostrConnectionState;
+use nostr_database::DatabaseError;
 use nostr_sdk::client::Error as NostrSdkError;
 use nostr_sdk::prelude::*;
 use snafu::{Backtrace, Snafu};
@@ -105,6 +106,20 @@ impl From<NostrSdkError> for Error {
     }
 }
 
+impl From<DatabaseError> for Error {
+    fn from(error: DatabaseError) -> Self {
+        Error::Internal {
+            message: format!("Database error: {}", error),
+            backtrace: Backtrace::capture(),
+        }
+    }
+}
+
+pub enum ClientMessageId {
+    Event(EventId),
+    Subscription(SubscriptionId),
+}
+
 impl Error {
     pub fn to_relay_messages_from_subscription_id(
         &self,
@@ -198,19 +213,14 @@ impl Error {
     pub async fn handle_inbound_error(
         &self,
         ctx: &mut InboundContext<'_, NostrConnectionState, ClientMessage, RelayMessage>,
+        client_message_id: ClientMessageId,
     ) -> Result<()> {
-        let relay_messages = match &ctx.message {
-            ClientMessage::Event(event) => self.to_relay_messages_from_event(ctx.state, event.id),
-            ClientMessage::Req {
-                subscription_id, ..
-            } => self.to_relay_messages_from_subscription_id(ctx.state, subscription_id.clone()),
-            ClientMessage::Close(subscription_id) => {
-                self.to_relay_messages_from_subscription_id(ctx.state, subscription_id.clone())
+        let relay_messages = match client_message_id {
+            ClientMessageId::Event(event_id) => {
+                self.to_relay_messages_from_event(ctx.state, event_id)
             }
-            ClientMessage::Auth(auth) => self.to_relay_messages_from_event(ctx.state, auth.id),
-            _ => {
-                error!("{}", self);
-                return Ok(());
+            ClientMessageId::Subscription(subscription_id) => {
+                self.to_relay_messages_from_subscription_id(ctx.state, subscription_id)
             }
         };
 

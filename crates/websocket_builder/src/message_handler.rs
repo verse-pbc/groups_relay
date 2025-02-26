@@ -125,7 +125,7 @@ impl<
             ));
         };
 
-        let Some(inbound_message) = inbound_message else {
+        if inbound_message.is_none() {
             return Ok(state);
         };
 

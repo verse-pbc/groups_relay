@@ -31,7 +31,7 @@ impl Middleware for Nip42Middleware {
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         match &ctx.message {
-            ClientMessage::Auth(event) => {
+            Some(ClientMessage::Auth(event)) => {
                 debug!(
                     target: "auth",
                     "[{}] Processing AUTH message",
@@ -214,7 +214,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
-            ClientMessage::Auth(Box::new(auth_event.clone())),
+            Some(ClientMessage::Auth(Box::new(auth_event.clone()))),
             None,
             &mut state,
             &[],
@@ -241,7 +241,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
-            ClientMessage::Auth(Box::new(auth_event.clone())),
+            Some(ClientMessage::Auth(Box::new(auth_event.clone()))),
             None,
             &mut state,
             &[],
@@ -273,7 +273,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
-            ClientMessage::Auth(Box::new(auth_event.clone())),
+            Some(ClientMessage::Auth(Box::new(auth_event.clone()))),
             None,
             &mut state,
             &[],
@@ -303,7 +303,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
-            ClientMessage::Auth(Box::new(auth_event.clone())),
+            Some(ClientMessage::Auth(Box::new(auth_event.clone()))),
             None,
             &mut state,
             &[],
@@ -334,7 +334,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
-            ClientMessage::Auth(Box::new(auth_event.clone())),
+            Some(ClientMessage::Auth(Box::new(auth_event.clone()))),
             None,
             &mut state,
             &[],
@@ -371,7 +371,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
-            ClientMessage::Auth(Box::new(auth_event.clone())),
+            Some(ClientMessage::Auth(Box::new(auth_event.clone()))),
             None,
             &mut state,
             &[],

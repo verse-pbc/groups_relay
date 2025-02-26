@@ -30,7 +30,7 @@ impl Middleware for EventVerifierMiddleware {
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<()> {
-        if let ClientMessage::Event(event) = &ctx.message {
+        if let Some(ClientMessage::Event(event)) = &ctx.message {
             let event_id = event.id;
             let event_owned = event.clone(); // Clone to own the Box<Event>
 
@@ -96,7 +96,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_connection".to_string(),
-            ClientMessage::Event(Box::new(event)),
+            Some(ClientMessage::Event(Box::new(event))),
             None,
             &mut state,
             &chain,
@@ -128,7 +128,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_connection".to_string(),
-            ClientMessage::Event(Box::new(event)),
+            Some(ClientMessage::Event(Box::new(event))),
             None,
             &mut state,
             &chain,
@@ -146,7 +146,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_connection".to_string(),
-            ClientMessage::Close(SubscriptionId::new("test_sub")),
+            Some(ClientMessage::Close(SubscriptionId::new("test_sub"))),
             None,
             &mut state,
             &chain,
@@ -165,7 +165,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_connection".to_string(),
-            ClientMessage::Auth(Box::new(auth_event)),
+            Some(ClientMessage::Auth(Box::new(auth_event))),
             None,
             &mut state,
             &chain,

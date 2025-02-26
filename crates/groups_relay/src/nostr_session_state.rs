@@ -1,6 +1,6 @@
 use crate::error::Error;
 use crate::nostr_database::RelayDatabase;
-use crate::{EventStoreConnection, StoreCommand};
+use crate::{StoreCommand, SubscriptionManager};
 use nostr_sdk::prelude::*;
 use std::backtrace::Backtrace;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ pub struct NostrConnectionState {
     pub relay_url: RelayUrl,
     pub challenge: Option<String>,
     pub authed_pubkey: Option<PublicKey>,
-    pub relay_connection: Option<EventStoreConnection>,
+    pub relay_connection: Option<SubscriptionManager>,
     pub connection_token: CancellationToken,
     pub event_start_time: Option<Instant>,
     pub event_kind: Option<u16>,
@@ -71,11 +71,10 @@ impl NostrConnectionState {
             connection_id
         );
 
-        let connection = EventStoreConnection::new(
+        let connection = SubscriptionManager::new(
             connection_id.clone(),
             database,
             connection_id.clone(),
-            self.connection_token.clone(),
             sender,
         )
         .await
@@ -93,13 +92,6 @@ impl NostrConnectionState {
         );
 
         Ok(())
-    }
-
-    /// Cleans up the event store connection
-    pub fn cleanup_connection(&mut self) {
-        if let Some(connection) = &self.relay_connection {
-            connection.cleanup();
-        }
     }
 
     pub async fn save_events(&mut self, events: Vec<StoreCommand>) -> Result<(), Error> {

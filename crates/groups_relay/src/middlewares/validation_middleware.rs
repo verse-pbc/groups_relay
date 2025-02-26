@@ -102,7 +102,7 @@ impl Middleware for ValidationMiddleware {
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        let ClientMessage::Event(event) = &ctx.message else {
+        let Some(ClientMessage::Event(event)) = &ctx.message else {
             return ctx.next().await;
         };
 
@@ -163,10 +163,10 @@ mod tests {
             NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
-            ClientMessage::Req {
+            Some(ClientMessage::Req {
                 subscription_id: SubscriptionId::new("test"),
                 filter: Box::new(normal_filter),
-            },
+            }),
             None,
             &mut state,
             chain.as_slice(),
@@ -190,10 +190,10 @@ mod tests {
             NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
-            ClientMessage::Req {
+            Some(ClientMessage::Req {
                 subscription_id: SubscriptionId::new("test"),
                 filter: Box::new(meta_filter),
-            },
+            }),
             None,
             &mut state,
             chain.as_slice(),
@@ -217,10 +217,10 @@ mod tests {
             NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
-            ClientMessage::Req {
+            Some(ClientMessage::Req {
                 subscription_id: SubscriptionId::new("test"),
                 filter: Box::new(ref_filter),
-            },
+            }),
             None,
             &mut state,
             chain.as_slice(),

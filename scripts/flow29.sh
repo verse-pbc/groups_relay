@@ -8,7 +8,7 @@ set -e
 # ----------------------------
 
 # Relay Configuration
-RELAY_URL="ws://127.0.0.1:8080"
+RELAY_URL="ws://0.0.0.0:8080"
 RELAY_PRIVATE_KEY="6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e"
 USER_PRIVATE_KEY="262f9c9cdd4d490f54c7333c0ae7033b03cfb8f83c123f2da4e3cf10b7d33b00"
 NEW_USER_PRIVATE_KEY="efa1aa99103d56f1c0d77b6986d06d4a8327c88886ed5ec0a2ed2b1bca504895"
