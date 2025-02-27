@@ -43,7 +43,7 @@ pub fn create_test_state(pubkey: Option<nostr_sdk::PublicKey>) -> NostrConnectio
         challenge: None,
         authed_pubkey: pubkey,
         relay_url: RelayUrl::parse("ws://test.relay").expect("Invalid test relay URL"),
-        relay_connection: None,
+        subscription_manager: None,
         connection_token: token.clone(),
         event_start_time: None,
         event_kind: None,

@@ -16,7 +16,7 @@ use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tracing::{debug, error};
 use websocket_builder::{
-    ConnectionContext, InboundContext, Middleware, OutboundContext, SendMessage,
+    ConnectionContext, DisconnectContext, InboundContext, Middleware, OutboundContext, SendMessage,
 };
 
 #[derive(Debug)]
@@ -220,7 +220,7 @@ impl Nip29Middleware {
             return Ok(());
         };
 
-        let Some(relay_conn) = &conn.relay_connection else {
+        let Some(relay_conn) = &conn.subscription_manager else {
             error!(
                 "No relay connection available for subscription {}",
                 subscription_id
@@ -299,7 +299,7 @@ impl Middleware for Nip29Middleware {
                 Ok(())
             }
             ClientMessage::Close(subscription_id) => {
-                let Some(connection) = ctx.state.relay_connection.as_ref() else {
+                let Some(connection) = ctx.state.subscription_manager.as_ref() else {
                     error!(
                         "No connection available for unsubscribing {}",
                         subscription_id
@@ -361,13 +361,24 @@ impl Middleware for Nip29Middleware {
     ) -> Result<(), anyhow::Error> {
         let Some(sender) = ctx.sender.clone() else {
             error!("No sender available for connection setup in Nip29Middleware");
-            return Ok(());
+            return Err(Error::internal("No sender available for connection setup").into());
         };
 
         ctx.state
-            .setup_connection(ctx.connection_id.clone(), self.database.clone(), sender)
+            .setup_connection(self.database.clone(), sender)
             .await?;
 
+        Ok(())
+    }
+
+    async fn on_disconnect<'a>(
+        &'a self,
+        ctx: &mut DisconnectContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> Result<(), anyhow::Error> {
+        if let Some(connection) = &ctx.state.subscription_manager {
+            debug!("Proactively cleaning up connection in on_disconnect");
+            connection.cleanup();
+        }
         Ok(())
     }
 }
@@ -434,7 +445,7 @@ mod tests {
                 challenge: None,
                 authed_pubkey: None,
                 relay_url: RelayUrl::parse("ws://test.relay").expect("Invalid test relay URL"),
-                relay_connection: None,
+                subscription_manager: None,
                 connection_token: token.clone(),
                 event_start_time: None,
                 event_kind: None,
@@ -1131,7 +1142,7 @@ mod tests {
         let mut state = create_test_state(None);
         let (tx, _rx) = tokio::sync::mpsc::channel(10);
         state
-            .setup_connection("test_conn".to_string(), database, MessageSender::new(tx, 0))
+            .setup_connection(database, MessageSender::new(tx, 0))
             .await
             .unwrap();
 

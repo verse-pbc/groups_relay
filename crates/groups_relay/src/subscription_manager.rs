@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 use websocket_builder::MessageSender;
 
@@ -18,86 +19,101 @@ enum SubscriptionMessage {
 
 #[derive(Debug, Clone)]
 pub struct SubscriptionManager {
-    id: String,
     database: Arc<RelayDatabase>,
-    db_connection: String,
     subscription_sender: mpsc::UnboundedSender<SubscriptionMessage>,
     outgoing_sender: Option<MessageSender<RelayMessage>>,
     local_subscription_count: Arc<AtomicUsize>,
+    task_token: CancellationToken,
 }
 
 impl SubscriptionManager {
     pub async fn new(
-        id: String,
         database: Arc<RelayDatabase>,
-        db_connection: String,
         outgoing_sender: MessageSender<RelayMessage>,
     ) -> Result<Self, Error> {
         let local_subscription_count = Arc::new(AtomicUsize::new(0));
+        let task_token = CancellationToken::new();
+
         let subscription_sender = Self::start_subscription_task(
-            &id,
             outgoing_sender.clone(),
             local_subscription_count.clone(),
+            task_token.clone(),
         )?;
 
         let manager = Self {
-            id,
             database,
-            db_connection,
             subscription_sender,
             outgoing_sender: Some(outgoing_sender),
             local_subscription_count,
+            task_token,
         };
 
         manager.start_database_subscription_task()?;
-        info!(target: "event_store", "[{}] Connection created successfully", manager.id);
+        info!("Connection created successfully");
         Ok(manager)
     }
 
     fn start_subscription_task(
-        id: &str,
         mut outgoing_sender: MessageSender<RelayMessage>,
         local_subscription_count: Arc<AtomicUsize>,
+        task_token: CancellationToken,
     ) -> Result<mpsc::UnboundedSender<SubscriptionMessage>, Error> {
         let (subscription_sender, mut subscription_receiver) = mpsc::unbounded_channel();
-        let id = id.to_string();
 
         tokio::spawn(Box::pin(async move {
             let mut subscriptions = HashMap::new();
-            info!(target: "event_store", "[{}] Starting subscription manager", id);
+            info!("Starting subscription manager");
 
-            while let Some(msg) = subscription_receiver.recv().await {
-                match msg {
-                    SubscriptionMessage::Add(subscription_id, filters) => {
-                        subscriptions.insert(subscription_id.clone(), filters);
-                        local_subscription_count.fetch_add(1, Ordering::Relaxed);
-                        crate::metrics::active_subscriptions().increment(1.0);
+            loop {
+                tokio::select! {
+                    _ = task_token.cancelled() => {
+                        info!("Subscription task cancelled");
+                        break;
                     }
-                    SubscriptionMessage::Remove(subscription_id) => {
-                        if subscriptions.remove(&subscription_id).is_some() {
-                            local_subscription_count.fetch_sub(1, Ordering::Relaxed);
-                            crate::metrics::active_subscriptions().decrement(1.0);
-                        }
-                    }
-                    SubscriptionMessage::CheckEvent { event } => {
-                        for (subscription_id, filters) in &subscriptions {
-                            if filters
-                                .iter()
-                                .any(|filter| filter.match_event(event.as_ref()))
-                            {
-                                let message = RelayMessage::Event {
-                                    event: event.clone(),
-                                    subscription_id: subscription_id.clone(),
-                                };
-                                if let Err(e) = outgoing_sender.send(message).await {
-                                    error!(target: "event_store", "[{}] Failed to send event: {:?}", id, e);
+                    maybe_msg = subscription_receiver.recv() => {
+                        match maybe_msg {
+                            Some(msg) => {
+                                match msg {
+                                    SubscriptionMessage::Add(subscription_id, filters) => {
+                                        subscriptions.insert(subscription_id.clone(), filters);
+                                        local_subscription_count.fetch_add(1, Ordering::Relaxed);
+                                        crate::metrics::active_subscriptions().increment(1.0);
+                                    }
+                                    SubscriptionMessage::Remove(subscription_id) => {
+                                        if subscriptions.remove(&subscription_id).is_some() {
+                                            local_subscription_count.fetch_sub(1, Ordering::Relaxed);
+                                            crate::metrics::active_subscriptions().decrement(1.0);
+                                        }
+                                    }
+                                    SubscriptionMessage::CheckEvent { event } => {
+                                        for (subscription_id, filters) in &subscriptions {
+                                            if filters
+                                                .iter()
+                                                .any(|filter| filter.match_event(event.as_ref()))
+                                            {
+                                                let message = RelayMessage::Event {
+                                                    event: event.clone(),
+                                                    subscription_id: subscription_id.clone(),
+                                                };
+                                                if let Err(e) = outgoing_sender.send(message).await {
+                                                    error!("Failed to send event: {:?}", e);
+                                                    info!("Outgoing sender closed, terminating subscription task");
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
+                            }
+                            None => {
+                                info!("Subscription channel closed");
+                                break;
                             }
                         }
                     }
                 }
             }
-            info!(target: "event_store", "[{}] Subscription manager stopped", id);
+            info!("Subscription manager stopped");
         }));
 
         Ok(subscription_sender)
@@ -106,16 +122,32 @@ impl SubscriptionManager {
     fn start_database_subscription_task(&self) -> Result<(), Error> {
         let mut database_subscription = self.database.subscribe();
         let subscription_sender = self.subscription_sender.clone();
+        let task_token = self.task_token.clone();
 
         tokio::spawn(async move {
-            while let Ok(event) = database_subscription.recv().await {
-                if let Err(e) = subscription_sender.send(SubscriptionMessage::CheckEvent { event })
-                {
-                    error!(target: "event_store", "Failed to send event: {:?}", e);
-                    break;
+            loop {
+                tokio::select! {
+                    _ = task_token.cancelled() => {
+                        debug!("Database subscription task cancelled");
+                        break;
+                    }
+                    event_result = database_subscription.recv() => {
+                        match event_result {
+                            Ok(event) => {
+                                if let Err(e) = subscription_sender.send(SubscriptionMessage::CheckEvent { event }) {
+                                    error!("Failed to send event: {:?}", e);
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to receive event from database: {:?}", e);
+                                break;
+                            }
+                        }
+                    }
                 }
             }
-            debug!(target: "event_store", "Database subscription task stopped");
+            debug!("Database subscription task stopped");
         });
 
         Ok(())
@@ -165,11 +197,7 @@ impl SubscriptionManager {
     }
 
     pub async fn handle_unsubscribe(&self, subscription_id: SubscriptionId) -> Result<(), Error> {
-        debug!(
-            target: "event_store",
-            "[{}] Handling unsubscribe {} from {}",
-            self.id, subscription_id, self.db_connection
-        );
+        debug!("Handling unsubscribe {}", subscription_id);
         self.remove_subscription(subscription_id)
     }
 
@@ -247,15 +275,19 @@ impl SubscriptionManager {
         Ok(())
     }
 
+    pub fn cancel_subscription_task(&self) {
+        self.task_token.cancel();
+    }
+
     pub fn cleanup(&self) {
         let remaining_subs = self.get_local_subscription_count();
         if remaining_subs > 0 {
             crate::metrics::active_subscriptions().decrement(remaining_subs as f64);
         }
+        self.cancel_subscription_task();
         info!(
-            target: "event_store",
-            "[{}] Cleaned up connection with {} remaining subscriptions",
-            self.id, remaining_subs
+            "Cleaned up connection with {} remaining subscriptions",
+            remaining_subs
         );
     }
 }
@@ -282,6 +314,7 @@ impl StoreCommand {
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,14 +342,9 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = SubscriptionManager::new(
-            "test_conn".to_string(),
-            database,
-            "test_db".to_string(),
-            MessageSender::new(tx, 0),
-        )
-        .await
-        .unwrap();
+        let connection = SubscriptionManager::new(database, MessageSender::new(tx, 0))
+            .await
+            .unwrap();
 
         // Set up subscription
         let subscription_id = SubscriptionId::new("test_sub");
@@ -364,14 +392,9 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = SubscriptionManager::new(
-            "test_conn".to_string(),
-            database.clone(),
-            "test_db".to_string(),
-            MessageSender::new(tx, 0),
-        )
-        .await
-        .unwrap();
+        let connection = SubscriptionManager::new(database.clone(), MessageSender::new(tx, 0))
+            .await
+            .unwrap();
 
         // Set up subscription
         let subscription_id = SubscriptionId::new("test_sub");
@@ -444,14 +467,9 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = SubscriptionManager::new(
-            "test_conn".to_string(),
-            database.clone(),
-            "test_db".to_string(),
-            MessageSender::new(tx, 0),
-        )
-        .await
-        .unwrap();
+        let connection = SubscriptionManager::new(database.clone(), MessageSender::new(tx, 0))
+            .await
+            .unwrap();
 
         // Set up subscription
         let subscription_id = SubscriptionId::new("test_sub");
@@ -548,14 +566,9 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = SubscriptionManager::new(
-            "test_conn".to_string(),
-            database.clone(),
-            "test_db".to_string(),
-            MessageSender::new(tx, 0),
-        )
-        .await
-        .unwrap();
+        let connection = SubscriptionManager::new(database.clone(), MessageSender::new(tx, 0))
+            .await
+            .unwrap();
 
         // Set up subscription with limit filter
         let subscription_id = SubscriptionId::new("limited_events");
@@ -637,14 +650,9 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = SubscriptionManager::new(
-            "test_conn".to_string(),
-            database,
-            "test_db".to_string(),
-            MessageSender::new(tx, 0),
-        )
-        .await
-        .unwrap();
+        let connection = SubscriptionManager::new(database.clone(), MessageSender::new(tx, 0))
+            .await
+            .unwrap();
 
         // Set up subscription with empty filter
         let subscription_id = SubscriptionId::new("text_note_events");
@@ -703,14 +711,9 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = SubscriptionManager::new(
-            "test_conn".to_string(),
-            database,
-            "test_db".to_string(),
-            MessageSender::new(tx, 0),
-        )
-        .await
-        .unwrap();
+        let connection = SubscriptionManager::new(database.clone(), MessageSender::new(tx, 0))
+            .await
+            .unwrap();
 
         // Set up subscription with empty filter
         let subscription_id = SubscriptionId::new("metadata_events");
@@ -767,14 +770,9 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = SubscriptionManager::new(
-            "test_conn".to_string(),
-            database,
-            "test_db".to_string(),
-            MessageSender::new(tx, 0),
-        )
-        .await
-        .unwrap();
+        let connection = SubscriptionManager::new(database.clone(), MessageSender::new(tx, 0))
+            .await
+            .unwrap();
 
         // Set up subscription with empty filter
         let subscription_id = SubscriptionId::new("contact_list_events");
@@ -841,14 +839,9 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = SubscriptionManager::new(
-            "test_conn".to_string(),
-            database,
-            "test_db".to_string(),
-            MessageSender::new(tx, 0),
-        )
-        .await
-        .unwrap();
+        let connection = SubscriptionManager::new(database.clone(), MessageSender::new(tx, 0))
+            .await
+            .unwrap();
 
         // Set up subscription with empty filter
         let subscription_id = SubscriptionId::new("multi_author_events");
@@ -941,14 +934,9 @@ mod tests {
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
-        let connection = SubscriptionManager::new(
-            "test_conn".to_string(),
-            database,
-            "test_db".to_string(),
-            MessageSender::new(tx, 0),
-        )
-        .await
-        .unwrap();
+        let connection = SubscriptionManager::new(database.clone(), MessageSender::new(tx, 0))
+            .await
+            .unwrap();
 
         // Set up subscription with empty filter
         let subscription_id = SubscriptionId::new("all_events");

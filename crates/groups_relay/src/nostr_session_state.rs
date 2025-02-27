@@ -16,7 +16,7 @@ pub struct NostrConnectionState {
     pub relay_url: RelayUrl,
     pub challenge: Option<String>,
     pub authed_pubkey: Option<PublicKey>,
-    pub relay_connection: Option<SubscriptionManager>,
+    pub subscription_manager: Option<SubscriptionManager>,
     pub connection_token: CancellationToken,
     pub event_start_time: Option<Instant>,
     pub event_kind: Option<u16>,
@@ -28,7 +28,7 @@ impl Default for NostrConnectionState {
             relay_url: RelayUrl::parse(DEFAULT_RELAY_URL).expect("Invalid default relay URL"),
             challenge: None,
             authed_pubkey: None,
-            relay_connection: None,
+            subscription_manager: None,
             connection_token: CancellationToken::new(),
             event_start_time: None,
             event_kind: None,
@@ -47,7 +47,7 @@ impl NostrConnectionState {
             relay_url,
             challenge: None,
             authed_pubkey: None,
-            relay_connection: None,
+            subscription_manager: None,
             connection_token: CancellationToken::new(),
             event_start_time: None,
             event_kind: None,
@@ -61,41 +61,27 @@ impl NostrConnectionState {
     /// Sets up a new event store connection
     pub async fn setup_connection(
         &mut self,
-        connection_id: String,
         database: Arc<RelayDatabase>,
         sender: MessageSender<RelayMessage>,
     ) -> Result<(), Error> {
-        debug!(
-            target: "event_store",
-            "[{}] Setting up connection",
-            connection_id
-        );
+        debug!("Setting up connection",);
 
-        let connection = SubscriptionManager::new(
-            connection_id.clone(),
-            database,
-            connection_id.clone(),
-            sender,
-        )
-        .await
-        .map_err(|e| Error::Internal {
-            message: format!("Failed to create connection: {}", e),
-            backtrace: Backtrace::capture(),
-        })?;
+        let connection = SubscriptionManager::new(database, sender)
+            .await
+            .map_err(|e| Error::Internal {
+                message: format!("Failed to create connection: {}", e),
+                backtrace: Backtrace::capture(),
+            })?;
 
-        self.relay_connection = Some(connection);
+        self.subscription_manager = Some(connection);
 
-        debug!(
-            target: "event_store",
-            "[{}] Connection setup complete",
-            connection_id
-        );
+        debug!("Connection setup complete",);
 
         Ok(())
     }
 
     pub async fn save_events(&mut self, events: Vec<StoreCommand>) -> Result<(), Error> {
-        let Some(connection) = &self.relay_connection else {
+        let Some(connection) = &self.subscription_manager else {
             return Err(Error::Internal {
                 message: "No connection available".to_string(),
                 backtrace: Backtrace::capture(),
@@ -146,7 +132,7 @@ impl StateFactory<NostrConnectionState> for NostrConnectionFactory {
             challenge: None,
             authed_pubkey: None,
             relay_url: self.relay_url.clone(),
-            relay_connection: None,
+            subscription_manager: None,
             connection_token: token,
             event_start_time: None,
             event_kind: None,
