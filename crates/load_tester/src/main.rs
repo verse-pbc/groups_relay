@@ -1,22 +1,17 @@
-// This is the main file for the load_tester crate.
-// It serves as a skeleton for implementing a load testing tool against the Groups Relay.
-// The goal is to simulate multiple WebSocket clients, generate test events, collect metrics,
-// and provide reporting. This template includes minimal code and detailed comments to guide further implementation.
-
 use anyhow::Result;
-use clap::Parser; // For command-line argument parsing
+use clap::Parser;
 use nostr_sdk::prelude::*;
 use rand::Rng;
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tokio::time::{sleep, Duration};
+use tokio::time::{interval, sleep, timeout};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
-// NIP-29 event kinds (matching the frontend definitions)
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum GroupEventKind {
     JoinRequest = 9021,
@@ -28,7 +23,7 @@ pub enum GroupEventKind {
     CreateGroup = 9007,
     DeleteGroup = 9008,
     CreateInvite = 9009,
-    GroupMessage = 9, // Changed from 11 to 9 for regular group messages
+    GroupMessage = 9,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -39,78 +34,34 @@ pub enum ClientRole {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)]
 enum ClientState {
     Initial,
-    JoinRequested,
     Joined,
     MessagesComplete,
     Left,
 }
 
-/// Metrics for tracking load test results
 #[derive(Debug, Default)]
 struct Metrics {
     events_sent: usize,
-    events_received: usize,
     errors: usize,
-    total_latency: Duration,
-    completed: bool,
     active_clients: usize,
     finished_clients: usize,
-    // Track latency by event type
-    event_latencies: std::collections::HashMap<GroupEventKind, (Duration, usize)>,
+    event_latencies: HashMap<GroupEventKind, (Duration, usize)>,
 }
 
 impl Metrics {
     fn new() -> Self {
-        Self {
-            events_sent: 0,
-            events_received: 0,
-            errors: 0,
-            total_latency: Duration::default(),
-            completed: false,
-            active_clients: 0,
-            finished_clients: 0,
-            event_latencies: std::collections::HashMap::new(),
-        }
+        Self::default()
     }
 
-    #[allow(dead_code)]
-    fn merge(&mut self, other: &Metrics) {
-        self.events_sent += other.events_sent;
-        self.events_received += other.events_received;
-        self.errors += other.errors;
-        self.total_latency += other.total_latency;
-        self.finished_clients += other.finished_clients;
-
-        // Merge event latencies
-        for (kind, (duration, count)) in &other.event_latencies {
-            let (total, num) = self
-                .event_latencies
-                .entry(*kind)
-                .or_insert((Duration::default(), 0));
-            *total += *duration;
-            *num += count;
-        }
-    }
-
-    fn average_latency(&self) -> Option<Duration> {
-        if self.events_received == 0 {
-            None
-        } else {
-            Some(self.total_latency / self.events_received as u32)
-        }
-    }
-
-    #[allow(dead_code)]
     fn record_event_latency(&mut self, event_kind: GroupEventKind, latency: Duration) {
-        let (total_latency, count) = self
+        let entry = self
             .event_latencies
             .entry(event_kind)
             .or_insert((Duration::default(), 0));
-        *total_latency += latency;
-        *count += 1;
+        entry.0 += latency;
+        entry.1 += 1;
     }
 
     fn average_latency_by_event(&self, event_kind: GroupEventKind) -> Option<Duration> {
@@ -123,45 +74,24 @@ impl Metrics {
         })
     }
 
-    fn mark_client_finished(&mut self) {
-        self.finished_clients += 1;
-        if self.finished_clients >= self.active_clients && self.active_clients > 0 {
-            self.completed = true;
-        }
-    }
-
     fn mark_client_started(&mut self) {
         self.active_clients += 1;
     }
 }
 
-/// Command-line arguments for configuring the load test.
-///
-/// - `clients`: Number of concurrent simulated clients.
-/// - `url`: The WebSocket endpoint of the relay to test.
-/// - `duration`: How long (in seconds) the test should run.
-/// - `groups`: Number of groups to create and test with.
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about)]
 struct Args {
-    /// Number of concurrent clients to simulate
     #[arg(short, long, default_value = "2")]
     clients: usize,
-
-    /// WebSocket URL of the relay to test
-    #[arg(short, long, default_value = "ws://127.0.0.1:8080")]
+    #[arg(short, long, default_value = "ws://0.0.0.0:8080")]
     url: String,
-
-    /// Duration of the test in seconds
     #[arg(short, long, default_value = "10")]
     duration: u64,
-
-    /// Number of groups to create and test with
     #[arg(short, long, default_value = "1")]
     groups: usize,
 }
 
-/// Client configuration for the load test
 #[derive(Debug, Clone)]
 struct ClientConfig {
     url: String,
@@ -170,7 +100,6 @@ struct ClientConfig {
     role: ClientRole,
     invite_code: Option<String>,
     state: ClientState,
-    #[allow(dead_code)]
     messages_to_send: usize,
 }
 
@@ -183,40 +112,24 @@ impl ClientConfig {
             role,
             invite_code: None,
             state: ClientState::Initial,
-            messages_to_send: 3, // Each client will send 3 messages by default
+            messages_to_send: 3,
         }
     }
 }
 
-/// Generate a Nostr event for testing based on client role
 async fn generate_test_event(config: &ClientConfig, kind: GroupEventKind) -> Result<EventBuilder> {
-    // Validate event permissions based on role and state
     match (config.role, kind, config.state) {
-        // Admin-only events
         (ClientRole::Admin, GroupEventKind::CreateGroup, _)
         | (ClientRole::Admin, GroupEventKind::EditMetadata, _)
         | (ClientRole::Admin, GroupEventKind::CreateInvite, _)
         | (ClientRole::Admin, GroupEventKind::PutUser, _)
         | (ClientRole::Admin, GroupEventKind::RemoveUser, _)
         | (ClientRole::Admin, GroupEventKind::DeleteEvent, _)
-        | (ClientRole::Admin, GroupEventKind::DeleteGroup, _) => (),
-
-        // Any client in MessagesComplete state can send a leave request
-        (_, GroupEventKind::LeaveRequest, ClientState::MessagesComplete) => (),
-
-        // Any client in Joined state can send messages
-        (_, GroupEventKind::GroupMessage, ClientState::Joined) => (),
-
-        // Non-member events
-        (ClientRole::NonMember, GroupEventKind::JoinRequest, ClientState::Initial) => (),
-
-        // Invalid role/event/state combination
-        _ => anyhow::bail!(
-            "Invalid event kind {:?} for role {:?} in state {:?}",
-            kind,
-            config.role,
-            config.state
-        ),
+        | (ClientRole::Admin, GroupEventKind::DeleteGroup, _) => {}
+        (_, GroupEventKind::LeaveRequest, ClientState::MessagesComplete) => {}
+        (_, GroupEventKind::GroupMessage, ClientState::Joined) => {}
+        (ClientRole::NonMember, GroupEventKind::JoinRequest, ClientState::Initial) => {}
+        _ => anyhow::bail!("Invalid event kind"),
     }
 
     let content = match kind {
@@ -224,10 +137,10 @@ async fn generate_test_event(config: &ClientConfig, kind: GroupEventKind) -> Res
             let group_id = config
                 .group_id
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Group ID is required for group creation"))?;
+                .ok_or_else(|| anyhow::anyhow!("Group ID required"))?;
             json!({
                 "name": "Test Group",
-                "about": "A test group for load testing",
+                "about": "A test group",
                 "picture": "https://example.com/pic.jpg",
                 "id": group_id
             })
@@ -237,24 +150,20 @@ async fn generate_test_event(config: &ClientConfig, kind: GroupEventKind) -> Res
             let group_id = config
                 .group_id
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Group ID is required for messages"))?;
+                .ok_or_else(|| anyhow::anyhow!("Group ID required"))?;
             json!({
-                "content": format!("Test message {} from {}",
-                    rand::thread_rng().gen::<u32>(),
-                    config.keys.public_key()
-                ),
+                "content": format!("Test message {} from {}", rand::thread_rng().gen::<u32>(), config.keys.public_key()),
                 "group_id": group_id
-            })
-            .to_string()
+            }).to_string()
         }
         GroupEventKind::EditMetadata => {
             let group_id = config
                 .group_id
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Group ID is required for metadata edits"))?;
+                .ok_or_else(|| anyhow::anyhow!("Group ID required"))?;
             json!({
                 "name": "Test Group",
-                "about": "A test group for load testing",
+                "about": "A test group",
                 "picture": "https://example.com/pic.jpg",
                 "private": false,
                 "closed": false,
@@ -266,17 +175,17 @@ async fn generate_test_event(config: &ClientConfig, kind: GroupEventKind) -> Res
             let group_id = config
                 .group_id
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Group ID is required for invite creation"))?;
+                .ok_or_else(|| anyhow::anyhow!("Group ID required"))?;
             let invite_code = config
                 .invite_code
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Invite code is required for CreateInvite event"))?;
+                .ok_or_else(|| anyhow::anyhow!("Invite code required"))?;
             json!({
                 "type": "invite",
                 "group_id": group_id,
                 "code": invite_code,
                 "roles": ["member"],
-                "expires_at": Timestamp::now().as_u64() + 86400 // 24 hours
+                "expires_at": Timestamp::now().as_u64() + 86400
             })
             .to_string()
         }
@@ -284,20 +193,20 @@ async fn generate_test_event(config: &ClientConfig, kind: GroupEventKind) -> Res
             let group_id = config
                 .group_id
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Group ID is required for join requests"))?;
+                .ok_or_else(|| anyhow::anyhow!("Group ID required"))?;
             if let Some(code) = &config.invite_code {
                 json!({
                     "type": "join_request",
                     "group_id": group_id,
                     "code": code,
-                    "message": "Request to join with invite code"
+                    "message": "Request to join"
                 })
                 .to_string()
             } else {
                 json!({
                     "type": "join_request",
                     "group_id": group_id,
-                    "message": "Manual request to join"
+                    "message": "Manual join request"
                 })
                 .to_string()
             }
@@ -306,11 +215,11 @@ async fn generate_test_event(config: &ClientConfig, kind: GroupEventKind) -> Res
             let group_id = config
                 .group_id
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Group ID is required for leave requests"))?;
+                .ok_or_else(|| anyhow::anyhow!("Group ID required"))?;
             json!({
                 "type": "leave_request",
                 "group_id": group_id,
-                "message": "Leaving the group"
+                "message": "Leaving group"
             })
             .to_string()
         }
@@ -318,7 +227,7 @@ async fn generate_test_event(config: &ClientConfig, kind: GroupEventKind) -> Res
             let group_id = config
                 .group_id
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Group ID is required for adding users"))?;
+                .ok_or_else(|| anyhow::anyhow!("Group ID required"))?;
             json!({
                 "type": "add_user",
                 "group_id": group_id,
@@ -330,7 +239,7 @@ async fn generate_test_event(config: &ClientConfig, kind: GroupEventKind) -> Res
             let group_id = config
                 .group_id
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Group ID is required for removing users"))?;
+                .ok_or_else(|| anyhow::anyhow!("Group ID required"))?;
             json!({
                 "type": "remove_user",
                 "group_id": group_id
@@ -341,7 +250,7 @@ async fn generate_test_event(config: &ClientConfig, kind: GroupEventKind) -> Res
             let group_id = config
                 .group_id
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Group ID is required for deleting events"))?;
+                .ok_or_else(|| anyhow::anyhow!("Group ID required"))?;
             json!({
                 "type": "delete_event",
                 "group_id": group_id
@@ -352,7 +261,7 @@ async fn generate_test_event(config: &ClientConfig, kind: GroupEventKind) -> Res
             let group_id = config
                 .group_id
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Group ID is required for deleting group"))?;
+                .ok_or_else(|| anyhow::anyhow!("Group ID required"))?;
             json!({
                 "type": "delete_group",
                 "group_id": group_id
@@ -362,32 +271,16 @@ async fn generate_test_event(config: &ClientConfig, kind: GroupEventKind) -> Res
     };
 
     let mut builder = EventBuilder::new(Kind::Custom(kind as u16), content);
-
-    // Add tags based on event kind
     if let Some(group_id) = &config.group_id {
-        // Add h tag for all group events
-        builder = builder.tag(Tag::custom(TagKind::h(), [group_id]));
-
-        // Add additional tags based on event kind
+        builder = builder.tag(Tag::custom(TagKind::custom("h"), [group_id]));
         match kind {
-            GroupEventKind::CreateGroup => {
+            GroupEventKind::CreateGroup | GroupEventKind::EditMetadata => {
                 builder = builder
-                    .tag(Tag::custom(TagKind::d(), [group_id]))
+                    .tag(Tag::custom(TagKind::custom("d"), [group_id]))
                     .tag(Tag::custom(TagKind::custom("public"), &[] as &[String]))
                     .tag(Tag::custom(TagKind::custom("open"), &[] as &[String]));
             }
-            GroupEventKind::EditMetadata => {
-                builder = builder
-                    .tag(Tag::custom(TagKind::d(), [group_id]))
-                    .tag(Tag::custom(TagKind::custom("public"), &[] as &[String]))
-                    .tag(Tag::custom(TagKind::custom("open"), &[] as &[String]));
-            }
-            GroupEventKind::CreateInvite => {
-                if let Some(code) = &config.invite_code {
-                    builder = builder.tag(Tag::custom(TagKind::custom("code"), [code]));
-                }
-            }
-            GroupEventKind::JoinRequest => {
+            GroupEventKind::CreateInvite | GroupEventKind::JoinRequest => {
                 if let Some(code) = &config.invite_code {
                     builder = builder.tag(Tag::custom(TagKind::custom("code"), [code]));
                 }
@@ -395,312 +288,392 @@ async fn generate_test_event(config: &ClientConfig, kind: GroupEventKind) -> Res
             _ => {}
         }
     }
-
     Ok(builder)
 }
 
-/// Wait for client to be connected to relay
 async fn wait_for_connection(client: &Client) -> Result<()> {
     let mut attempts = 0;
     while attempts < 5 {
-        let relays = client.relays().await;
-        let mut connected = false;
-        for (_, relay) in relays.iter() {
-            if relay.status() == RelayStatus::Connected {
-                connected = true;
-                break;
-            }
-        }
-        if connected {
+        if client
+            .relays()
+            .await
+            .iter()
+            .any(|(_, relay)| relay.status() == RelayStatus::Connected)
+        {
             return Ok(());
         }
-        // Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
         sleep(Duration::from_millis(100 * 2u64.pow(attempts))).await;
         attempts += 1;
     }
-    anyhow::bail!("Failed to connect to relay after 5 attempts")
+    anyhow::bail!("Failed to connect after 5 attempts")
 }
 
-/// Authenticate a client before sending events
 async fn authenticate_client(client: &Client) -> Result<()> {
-    // First ensure we're connected
     wait_for_connection(client).await?;
-
-    // Verify we're authenticated
-    let relays = client.relays().await;
-    for (_, relay) in relays.iter() {
-        if relay.status() != RelayStatus::Connected {
-            anyhow::bail!("Not connected to relay after authentication");
-        }
+    if client
+        .relays()
+        .await
+        .iter()
+        .any(|(_, relay)| relay.status() != RelayStatus::Connected)
+    {
+        anyhow::bail!("Not connected after authentication");
     }
-
     Ok(())
 }
 
-/// Wait for a specific event that matches the given filter and predicate
-async fn wait_for_event<F>(
+async fn wait_for_event2<F>(
     client: &Client,
     filter: Filter,
-    timeout: Duration,
+    timeout_dur: Duration,
     predicate: F,
 ) -> Result<Option<Event>>
 where
     F: Fn(&Event) -> bool,
 {
-    info!("Starting to wait for event with filter: {:?}", filter);
-
-    // Subscribe to events
-    client.subscribe(filter.clone(), None).await?;
+    let result = client.subscribe(filter.clone(), None).await?;
+    let sub_id = result.val;
     let mut notifications = client.notifications();
-
-    // Set up timeout
-    let timeout_fut = tokio::time::sleep(timeout);
+    let timeout_fut = sleep(timeout_dur);
     tokio::pin!(timeout_fut);
-
-    let start_time = tokio::time::Instant::now();
-    let mut events_seen = 0;
-
     loop {
         tokio::select! {
             Ok(notification) = notifications.recv() => {
-                if let RelayPoolNotification::Event { event, .. } = notification {
-                    events_seen += 1;
-                    debug!(
-                        "Received event {} (kind: {}) after {:?}, checking predicate...",
-                        event.id,
-                        event.kind,
-                        start_time.elapsed()
-                    );
-
+                if let RelayPoolNotification::Message { message, .. } = notification {
+                    let RelayMessage::Event { event, subscription_id, .. } = message else { continue };
+                    if subscription_id != sub_id { continue };
                     if predicate(&event) {
-                        info!(
-                            "Found matching event {} after {:?} ({} events processed)",
-                            event.id,
-                            start_time.elapsed(),
-                            events_seen
-                        );
+                        client.unsubscribe(sub_id).await;
                         return Ok(Some(*event));
-                    } else {
-                        debug!(
-                            "Event {} did not match predicate, continuing to wait...",
-                            event.id
-                        );
                     }
                 }
             }
             _ = &mut timeout_fut => {
-                info!(
-                    "Timeout after {:?} while waiting for event. Processed {} events.",
-                    timeout,
-                    events_seen
-                );
+                client.unsubscribe(sub_id).await;
                 return Ok(None);
             }
         }
     }
 }
 
-/// Spawn a set of clients with the same configuration
+async fn join_group(
+    client: &Client,
+    config: &mut ClientConfig,
+    metrics: &Arc<Mutex<Metrics>>,
+    _group_id: &str,
+    membership_filter: &Filter,
+) -> Result<()> {
+    if config.state != ClientState::Initial {
+        return Ok(());
+    }
+    let join_request = generate_test_event(config, GroupEventKind::JoinRequest).await?;
+    let start = Instant::now();
+    let _output = client.send_event_builder(join_request).await?;
+    let latency = start.elapsed();
+    metrics.lock().await.events_sent += 1;
+    metrics
+        .lock()
+        .await
+        .record_event_latency(GroupEventKind::JoinRequest, latency);
+
+    let event = wait_for_event2(
+        client,
+        membership_filter.clone(),
+        Duration::from_secs(30),
+        |event| {
+            event.tags.iter().any(|tag| {
+                tag.kind() == TagKind::p()
+                    && tag
+                        .as_slice()
+                        .get(1)
+                        .map(|v| v == &config.keys.public_key().to_string())
+                        .unwrap_or(false)
+            })
+        },
+    )
+    .await?;
+
+    if event.is_some() {
+        config.state = ClientState::Joined;
+    } else {
+        metrics.lock().await.errors += 1;
+        return Err(anyhow::anyhow!("Failed to join group"));
+    }
+    Ok(())
+}
+
+async fn send_messages(
+    client: &Client,
+    config: &mut ClientConfig,
+    metrics: &Arc<Mutex<Metrics>>,
+    _group_id: &str,
+) -> Result<()> {
+    if config.state != ClientState::Joined {
+        return Ok(());
+    }
+    for _ in 0..config.messages_to_send {
+        let message_event = generate_test_event(config, GroupEventKind::GroupMessage).await?;
+        let start = Instant::now();
+        client.send_event_builder(message_event).await?;
+        let latency = start.elapsed();
+        metrics.lock().await.events_sent += 1;
+        metrics
+            .lock()
+            .await
+            .record_event_latency(GroupEventKind::GroupMessage, latency);
+    }
+    config.state = ClientState::MessagesComplete;
+    Ok(())
+}
+
+async fn leave_group(
+    client: &Client,
+    config: &mut ClientConfig,
+    metrics: &Arc<Mutex<Metrics>>,
+    _group_id: &str,
+    membership_filter: &Filter,
+) -> Result<()> {
+    if config.state != ClientState::MessagesComplete {
+        return Ok(());
+    }
+    let leave_request = generate_test_event(config, GroupEventKind::LeaveRequest).await?;
+    let start = Instant::now();
+    client.send_event_builder(leave_request).await?;
+    let latency = start.elapsed();
+    metrics.lock().await.events_sent += 1;
+    metrics
+        .lock()
+        .await
+        .record_event_latency(GroupEventKind::LeaveRequest, latency);
+
+    let event = wait_for_event2(
+        client,
+        membership_filter.clone(),
+        Duration::from_secs(30),
+        |event| {
+            !event.tags.iter().any(|tag| {
+                tag.kind() == TagKind::p()
+                    && tag
+                        .as_slice()
+                        .get(1)
+                        .map(|v| v == &config.keys.public_key().to_string())
+                        .unwrap_or(false)
+            })
+        },
+    )
+    .await?;
+
+    if event.is_some() {
+        config.state = ClientState::Left;
+    } else {
+        metrics.lock().await.errors += 1;
+        return Err(anyhow::anyhow!("Failed to leave group"));
+    }
+    Ok(())
+}
+
+async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> Result<()> {
+    let client = Client::new(config.keys.clone());
+    client.add_relay(&config.url).await?;
+    client.connect().await;
+    authenticate_client(&client).await?;
+    metrics.lock().await.mark_client_started();
+
+    let group_id = config
+        .group_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Group ID required"))?
+        .clone();
+    let membership_filter = Filter::new()
+        .kinds(vec![Kind::Custom(39002)])
+        .custom_tag(SingleLetterTag::lowercase(Alphabet::D), &group_id);
+    client.subscribe(membership_filter.clone(), None).await?;
+
+    join_group(
+        &client,
+        &mut config,
+        &metrics,
+        &group_id,
+        &membership_filter,
+    )
+    .await?;
+    send_messages(&client, &mut config, &metrics, &group_id).await?;
+    leave_group(
+        &client,
+        &mut config,
+        &metrics,
+        &group_id,
+        &membership_filter,
+    )
+    .await?;
+
+    client.disconnect().await;
+    Ok(())
+}
+
+async fn create_groups(args: &Args) -> Result<Vec<ClientConfig>> {
+    let mut group_configs = Vec::new();
+    for i in 0..args.groups {
+        let mut admin_config =
+            ClientConfig::new(args.url.clone(), Keys::generate(), ClientRole::Admin);
+        admin_config.group_id = Some(format!("group_{:x}", rand::thread_rng().gen::<u64>()));
+        let group_id = admin_config.group_id.as_ref().unwrap().clone();
+        let admin_client = Client::new(admin_config.keys.clone());
+        admin_client.add_relay(&admin_config.url).await?;
+        admin_client.connect().await;
+        authenticate_client(&admin_client).await?;
+        let filter = Filter::new()
+            .kinds(vec![Kind::Custom(39002)])
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::D), &group_id);
+        admin_client.subscribe(filter.clone(), None).await?;
+        sleep(Duration::from_millis(100)).await;
+        let create_event = generate_test_event(&admin_config, GroupEventKind::CreateGroup).await?;
+        let output = admin_client.send_event_builder(create_event).await?;
+        info!("Group {} creation sent: {:?}", i + 1, output.success);
+        let event = wait_for_event2(&admin_client, filter, Duration::from_secs(30), |event| {
+            event.tags.iter().any(|tag| {
+                tag.kind() == TagKind::p()
+                    && tag
+                        .as_slice()
+                        .get(1)
+                        .map(|v| v == &admin_config.keys.public_key().to_string())
+                        .unwrap_or(false)
+            })
+        })
+        .await?;
+        if event.is_none() {
+            return Err(anyhow::anyhow!(
+                "Failed to create group {} within timeout",
+                i + 1
+            ));
+        }
+        info!("Group {} confirmed", i + 1);
+        let metadata_event =
+            generate_test_event(&admin_config, GroupEventKind::EditMetadata).await?;
+        let output = admin_client.send_event_builder(metadata_event).await?;
+        info!("Group {} metadata update sent: {:?}", i + 1, output.success);
+        group_configs.push(admin_config);
+    }
+    Ok(group_configs)
+}
+
 async fn spawn_clients(
     config: ClientConfig,
     count: u32,
     start_index: u32,
-    _metrics: Arc<Mutex<Metrics>>,
+    metrics: Arc<Mutex<Metrics>>,
     shutdown: &CancellationToken,
 ) -> Vec<JoinHandle<Result<()>>> {
     let mut handles = Vec::new();
     for i in 0..count {
         let client_config = config.clone();
-        let metrics = _metrics.clone();
+        let metrics_clone = metrics.clone();
         let _shutdown = shutdown.clone();
         let handle = tokio::spawn(async move {
-            let result = run_client(client_config, metrics.clone()).await;
-            if let Err(ref e) = result {
+            let res = run_client(client_config, metrics_clone).await;
+            if let Err(e) = &res {
                 error!("Client {} failed: {}", start_index + i, e);
             }
-            metrics.lock().await.mark_client_finished();
-            result
+            res
         });
         handles.push(handle);
     }
     handles
 }
 
-/// Wait for completion or timeout
 async fn wait_for_completion(
     metrics: Arc<Mutex<Metrics>>,
     duration: u64,
     shutdown: &CancellationToken,
 ) -> Result<()> {
-    let timeout = tokio::time::sleep(Duration::from_secs(duration));
-    tokio::pin!(timeout);
-
-    let completion_check = tokio::time::interval(Duration::from_millis(100));
-    tokio::pin!(completion_check);
-
+    let timeout_fut = sleep(Duration::from_secs(duration));
+    tokio::pin!(timeout_fut);
+    let mut check_interval = interval(Duration::from_millis(100));
+    let mut waiting_since = None;
+    let max_wait = Duration::from_secs(5);
     loop {
         tokio::select! {
-            _ = &mut timeout => {
-                info!("Load test duration reached");
-                break;
-            }
-            _ = shutdown.cancelled() => {
-                info!("Received shutdown signal");
-                break;
-            }
-            _ = completion_check.tick() => {
-                let metrics = metrics.lock().await;
-                if metrics.finished_clients > 0 && metrics.finished_clients >= metrics.active_clients {
-                    info!("All clients completed their operations");
+            _ = &mut timeout_fut => break,
+            _ = shutdown.cancelled() => break,
+            _ = check_interval.tick() => {
+                let m = metrics.lock().await;
+                if m.active_clients > 0 && m.finished_clients >= m.active_clients {
                     break;
+                }
+                if m.active_clients > 0 && m.events_sent > 0 {
+                    if waiting_since.is_none() {
+                        waiting_since = Some(Instant::now());
+                    } else if waiting_since.unwrap().elapsed() > max_wait {
+                        break;
+                    }
                 }
             }
         }
     }
-
-    // Give a small grace period for final cleanup
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(1)).await;
     Ok(())
 }
 
-/// Print final test metrics
 async fn print_metrics(metrics: &Mutex<Metrics>) {
-    let final_metrics = metrics.lock().await;
+    let m = metrics.lock().await;
     info!("Load test completed. Final metrics:");
-    info!("Events sent: {}", final_metrics.events_sent);
-    info!("Events received: {}", final_metrics.events_received);
-    info!("Errors: {}", final_metrics.errors);
-    info!("Active clients: {}", final_metrics.active_clients);
-    info!("Finished clients: {}", final_metrics.finished_clients);
-    info!("Completed flag: {}", final_metrics.completed);
-    if let Some(avg_latency) = final_metrics.average_latency() {
-        info!("Overall average latency: {:?}", avg_latency);
+    info!("Events sent: {}", m.events_sent);
+    info!("Errors: {}", m.errors);
+    info!("Active clients: {}", m.active_clients);
+    info!("Finished clients: {}", m.finished_clients);
+    if m.active_clients > m.finished_clients {
+        error!(
+            "{} clients did not complete",
+            m.active_clients - m.finished_clients
+        );
     }
-
-    info!("\nLatency by event type:");
-    for event_kind in [
+    for kind in [
         GroupEventKind::CreateGroup,
         GroupEventKind::EditMetadata,
         GroupEventKind::JoinRequest,
         GroupEventKind::GroupMessage,
         GroupEventKind::LeaveRequest,
     ] {
-        if let Some(latency) = final_metrics.average_latency_by_event(event_kind) {
-            let (total, count) = final_metrics.event_latencies.get(&event_kind).unwrap();
+        if let Some(latency) = m.average_latency_by_event(kind) {
+            let (total, count) = m.event_latencies.get(&kind).unwrap();
             info!(
-                "{:?}: {:?} average ({} events, total time: {:?})",
-                event_kind, latency, count, total
+                "{:?}: {:?} avg ({} events, total: {:?})",
+                kind, latency, count, total
             );
         }
     }
 }
 
-/// The main function initializes logging, parses arguments,
-/// and spawns multiple asynchronous tasks to simulate load.
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
     tracing_subscriber::fmt::init();
-
-    // Parse command line arguments
     let args = Args::parse();
-
-    // Initialize metrics
     let metrics = Arc::new(Mutex::new(Metrics::new()));
     let mut handles = Vec::new();
-
-    // Create shutdown token
     let shutdown_token = CancellationToken::new();
 
-    // Create admin clients for each group
-    let mut group_configs = Vec::new();
-    for i in 0..args.groups {
-        // Create admin config with generated keys
-        let mut admin_config =
-            ClientConfig::new(args.url.clone(), Keys::generate(), ClientRole::Admin);
-
-        // Generate a unique group ID
-        admin_config.group_id = Some(format!("group_{:x}", rand::thread_rng().gen::<u64>()));
-        let group_id = admin_config.group_id.as_ref().unwrap().clone();
-
-        let admin_client = Client::new(admin_config.keys.clone());
-        admin_client.add_relay(&admin_config.url).await?;
-        admin_client.connect().await;
-
-        // First create the group
-        let create_event = generate_test_event(&admin_config, GroupEventKind::CreateGroup).await?;
-        let output = admin_client.send_event_builder(create_event).await?;
-        info!("Group {} creation sent to: {:?}", i + 1, output.success);
-
-        // Wait for the group creation to be confirmed via members list event
-        let filter = Filter::new()
-            .kinds(vec![Kind::Custom(39002)]) // Monitor members list events
-            .custom_tag(SingleLetterTag::lowercase(Alphabet::D), &group_id);
-
-        let event = wait_for_event(&admin_client, filter, Duration::from_secs(30), |event| {
-            // Verify this is a members list for our group and contains the admin
-            event.tags.iter().any(|tag| {
-                tag.kind() == TagKind::p()
-                    && tag
-                        .as_slice()
-                        .first()
-                        .map(|v| v == &admin_config.keys.public_key().to_string())
-                        .unwrap_or(false)
-            })
-        })
-        .await?;
-
-        if event.is_none() {
-            return Err(anyhow::anyhow!(
-                "Failed to create group {} - creation not confirmed within timeout",
-                i + 1
-            ));
-        }
-
-        info!("Group {} creation confirmed", i + 1);
-
-        // Then set the metadata to make it public and open
-        let metadata_event =
-            generate_test_event(&admin_config, GroupEventKind::EditMetadata).await?;
-        let output = admin_client.send_event_builder(metadata_event).await?;
-        info!(
-            "Group {} metadata update sent to: {:?}",
-            i + 1,
-            output.success
-        );
-
-        group_configs.push(admin_config);
-    }
-
-    // Calculate clients per group (distribute evenly)
+    let group_configs = create_groups(&args).await?;
     let clients_per_group = args.clients / args.groups;
     let remainder = args.clients % args.groups;
-
-    // Spawn clients for each group
     for (i, admin_config) in group_configs.iter().enumerate() {
         let group_clients = if i < remainder {
             clients_per_group + 1
         } else {
             clients_per_group
         };
-
         if group_clients > 0 {
             info!(
                 "Spawning {} clients for group {}",
                 group_clients,
                 admin_config.group_id.as_ref().unwrap()
             );
-
-            // Spawn each client with its own unique key
             for j in 0..group_clients {
                 let mut client_config =
                     ClientConfig::new(args.url.clone(), Keys::generate(), ClientRole::NonMember);
                 client_config.group_id = admin_config.group_id.clone();
-
                 handles.extend(
                     spawn_clients(
                         client_config,
-                        1, // Spawn one client at a time with unique key
+                        1,
                         (i as u32) * (clients_per_group as u32) + j as u32,
                         metrics.clone(),
                         &shutdown_token,
@@ -711,257 +684,18 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Wait for completion
     wait_for_completion(metrics.clone(), args.duration, &shutdown_token).await?;
-
-    // Print metrics and cleanup
     print_metrics(&metrics).await;
-
-    // Cancel all tasks
     shutdown_token.cancel();
 
-    // Wait for tasks to complete with timeout
-    let timeout = Duration::from_secs(5);
+    let timeout_duration = Duration::from_secs(5);
     for handle in handles {
-        match tokio::time::timeout(timeout, handle).await {
+        match timeout(timeout_duration, handle).await {
             Ok(Ok(Ok(()))) => (),
             Ok(Ok(Err(e))) => error!("Client task failed: {}", e),
             Ok(Err(e)) => error!("Client task panicked: {}", e),
-            Err(e) => error!("Client task timed out waiting for shutdown: {}", e),
+            Err(e) => error!("Client task timed out: {}", e),
         }
     }
-
     Ok(())
 }
-
-/// Simulate a single WebSocket client with basic message sending and metrics collection
-async fn run_client(mut config: ClientConfig, metrics: Arc<Mutex<Metrics>>) -> Result<()> {
-    let client = Client::new(config.keys.clone());
-    client.add_relay(&config.url).await?;
-    client.connect().await;
-
-    // Use defer pattern to ensure cleanup happens
-    let metrics_clone = metrics.clone();
-    let _cleanup = scopeguard::guard((), move |_| {
-        if let Ok(mut metrics) = metrics_clone.try_lock() {
-            metrics.mark_client_finished();
-        }
-    });
-
-    // Authenticate before any operations
-    info!("Client {} authenticating...", config.keys.public_key());
-    authenticate_client(&client).await?;
-    info!(
-        "Client {} authenticated successfully",
-        config.keys.public_key()
-    );
-
-    // Update metrics
-    metrics.lock().await.mark_client_started();
-
-    // Create a subscription for membership events that we'll reuse
-    let group_id = config
-        .group_id
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Group ID is required"))?;
-    let membership_filter = Filter::new()
-        .kinds(vec![Kind::Custom(39002)]) // Monitor members list events
-        .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id);
-
-    // Subscribe once and reuse the subscription
-    info!(
-        "Client {} subscribing to membership events...",
-        config.keys.public_key()
-    );
-    client.subscribe(membership_filter.clone(), None).await?;
-
-    // Add a small delay to ensure subscription is active
-    sleep(Duration::from_millis(100)).await;
-
-    // Send join request and track latency
-    let join_start = tokio::time::Instant::now();
-    let join_request = generate_test_event(&config, GroupEventKind::JoinRequest).await?;
-    info!(
-        "Client {} sending join request...",
-        config.keys.public_key()
-    );
-    let output = client.send_event_builder(join_request).await?;
-    let join_latency = join_start.elapsed();
-    metrics
-        .lock()
-        .await
-        .record_event_latency(GroupEventKind::JoinRequest, join_latency);
-    info!(
-        "Join request sent for client {} (latency: {:?}): {:?}",
-        config.keys.public_key(),
-        join_latency,
-        output
-    );
-    metrics.lock().await.events_sent += 1;
-
-    // Check if any of the failed responses indicate we're already a member
-    for (_, msg) in output.failed {
-        if msg.contains("already a member") {
-            info!("Client {} is already a member", config.keys.public_key());
-            config.state = ClientState::Joined;
-            sleep(Duration::from_millis(100)).await;
-            return Ok(());
-        }
-    }
-
-    // Wait for membership confirmation
-    let mut membership_confirmed = false;
-    let membership_timeout = Duration::from_secs(30);
-    let membership_start = Instant::now();
-
-    while !membership_confirmed && membership_start.elapsed() < membership_timeout {
-        let event = wait_for_event(
-            &client,
-            membership_filter.clone(),
-            Duration::from_secs(5),
-            |event| {
-                // Check if this is a members list event that includes our pubkey
-                event.kind == Kind::Custom(39002)
-                    && event.tags.iter().any(|tag| {
-                        tag.kind() == TagKind::p()
-                            && tag
-                                .as_slice()
-                                .first()
-                                .map(|v| v == &config.keys.public_key().to_string())
-                                .unwrap_or(false)
-                    })
-            },
-        )
-        .await?;
-
-        if event.is_some() {
-            info!(
-                "Client {} membership confirmed via members list",
-                config.keys.public_key()
-            );
-            config.state = ClientState::Joined;
-            membership_confirmed = true;
-            break;
-        }
-
-        sleep(Duration::from_millis(100)).await;
-    }
-
-    if !membership_confirmed {
-        error!(
-            "Client {} failed to get membership confirmation",
-            config.keys.public_key()
-        );
-        return Ok(());
-    }
-
-    sleep(Duration::from_millis(100)).await;
-
-    // Send exactly one group message and track latency
-    let msg_start = tokio::time::Instant::now();
-    let message = generate_test_event(&config, GroupEventKind::GroupMessage).await?;
-    info!(
-        "Client {} sending group message...",
-        config.keys.public_key()
-    );
-    let output = client.send_event_builder(message).await?;
-    let msg_latency = msg_start.elapsed();
-    metrics
-        .lock()
-        .await
-        .record_event_latency(GroupEventKind::GroupMessage, msg_latency);
-    info!(
-        "Single group message sent from client {} (latency: {:?}): {:?}",
-        config.keys.public_key(),
-        msg_latency,
-        output.success
-    );
-    metrics.lock().await.events_sent += 1;
-
-    // Add a small delay before leaving
-    sleep(Duration::from_millis(100)).await;
-
-    // Mark client as done with messages
-    config.state = ClientState::MessagesComplete;
-
-    // Send leave request and track latency
-    let leave_start = tokio::time::Instant::now();
-    let leave_request = generate_test_event(&config, GroupEventKind::LeaveRequest).await?;
-    info!(
-        "Client {} sending leave request...",
-        config.keys.public_key()
-    );
-    let output = client.send_event_builder(leave_request).await?;
-    let leave_latency = leave_start.elapsed();
-    metrics
-        .lock()
-        .await
-        .record_event_latency(GroupEventKind::LeaveRequest, leave_latency);
-    info!(
-        "Leave request sent for client {} (latency: {:?}): {:?}",
-        config.keys.public_key(),
-        leave_latency,
-        output.success
-    );
-    metrics.lock().await.events_sent += 1;
-
-    // Wait for remove_user event to confirm removal
-    info!(
-        "Client {} waiting for removal confirmation...",
-        config.keys.public_key()
-    );
-    let event = wait_for_event(
-        &client,
-        membership_filter,
-        Duration::from_secs(30),
-        |event| {
-            // Check that our pubkey is NOT in the members list
-            !event.tags.iter().any(|tag| {
-                tag.kind() == TagKind::p()
-                    && tag
-                        .as_slice()
-                        .first()
-                        .map(|v| v == &config.keys.public_key().to_string())
-                        .unwrap_or(false)
-            })
-        },
-    )
-    .await?;
-
-    if event.is_none() {
-        error!(
-            "Client {} failed to leave group - removal not confirmed within timeout",
-            config.keys.public_key()
-        );
-        // Clean up before returning
-        client.disconnect().await;
-        return Ok(());
-    }
-
-    info!("Client {} confirmed left group", config.keys.public_key());
-
-    // Add a small delay before disconnecting to ensure all messages are processed
-    sleep(Duration::from_millis(200)).await;
-
-    // Ensure we disconnect cleanly
-    client.disconnect().await;
-    info!("Client {} disconnected cleanly", config.keys.public_key());
-
-    Ok(())
-}
-
-// TODO: Implement these additional functions in the next iteration:
-// 1. ✓ setup_signal_handler() for graceful shutdown
-// 2. ✓ retry_connection() with exponential backoff (not needed for load testing)
-// 3. ✓ implement_auth() for NIP-42 authentication
-// 4. ✓ create_group() to set up test groups
-// 5. ✓ generate_group_events() for more varied event types
-//
-// Additional TODOs:
-// 6. Add admin approval functionality for join requests
-// 7. Add group metadata update testing
-// 8. Add concurrent group creation/deletion stress testing
-// 9. Add metrics for event processing latency per event type
-// 10. Add configurable rate limiting for event generation
-// 11. Add support for testing group permissions and role changes
-// 12. Add simulation of realistic user behavior patterns

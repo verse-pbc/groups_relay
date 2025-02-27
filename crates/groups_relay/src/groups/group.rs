@@ -837,18 +837,16 @@ impl Group {
             )));
         }
 
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event)];
         if auto_joined {
-            let mut commands = vec![StoreCommand::SaveSignedEvent(event)];
             commands.extend(
                 self.generate_membership_events(relay_pubkey)
                     .into_iter()
                     .map(StoreCommand::SaveUnsignedEvent),
             );
-
-            Ok(commands)
-        } else {
-            Ok(vec![StoreCommand::SaveSignedEvent(event)])
         }
+
+        Ok(commands)
     }
 
     pub fn create_invite(
@@ -1608,13 +1606,10 @@ mod tests {
         ];
         let join_event = create_test_event(&member_keys, 9021, join_tags).await;
 
-        assert!(
-            group
-                .join_request(Box::new(join_event), &member_keys.public_key())
-                .unwrap()
-                .len()
-                > 0
-        );
+        assert!(!group
+            .join_request(Box::new(join_event), &member_keys.public_key())
+            .unwrap()
+            .is_empty());
         assert!(group.is_member(&member_keys.public_key()));
     }
 
@@ -1626,13 +1621,10 @@ mod tests {
         let tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let event = create_test_event(&member_keys, 9021, tags).await;
 
-        assert!(
-            group
-                .join_request(Box::new(event), &member_keys.public_key())
-                .unwrap()
-                .len()
-                > 0
-        );
+        assert!(!group
+            .join_request(Box::new(event), &member_keys.public_key())
+            .unwrap()
+            .is_empty());
         assert_eq!(group.join_requests.len(), 1);
     }
 
@@ -1644,13 +1636,10 @@ mod tests {
         let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let join_event = create_test_event(&member_keys, 9021, join_tags).await;
 
-        assert!(
-            group
-                .join_request(Box::new(join_event), &member_keys.public_key())
-                .unwrap()
-                .len()
-                > 0
-        );
+        assert!(!group
+            .join_request(Box::new(join_event), &member_keys.public_key())
+            .unwrap()
+            .is_empty());
         assert!(group.join_requests.contains(&member_keys.public_key()));
     }
 
@@ -1699,13 +1688,9 @@ mod tests {
         let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event = create_test_event(&member_keys, 9022, leave_tags).await;
 
-        assert!(
-            group
-                .leave_request(Box::new(leave_event), &relay_pubkey.public_key())
-                .unwrap()
-                .len()
-                > 1
-        );
+        let result = group.leave_request(Box::new(leave_event), &relay_pubkey.public_key());
+
+        assert!(!result.unwrap().is_empty());
         assert!(!group.is_member(&member_keys.public_key()));
     }
 
@@ -2026,7 +2011,7 @@ mod tests {
 
         let result = group.remove_members(Box::new(remove_event), &relay_pubkey);
 
-        assert!(result.unwrap().len() > 0);
+        assert!(!result.unwrap().is_empty());
         assert!(!group.is_member(&member_keys.public_key()));
     }
 

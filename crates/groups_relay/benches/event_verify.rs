@@ -1,7 +1,7 @@
 use anyhow::Result;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use nostr_sdk::{Event, EventBuilder, Keys};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
 
@@ -53,7 +53,7 @@ async fn process_with_cloning(event: Box<Event>) -> Result<()> {
 /// - Is simpler but can significantly reduce overall throughput
 async fn process_direct(event: Box<Event>) -> Result<()> {
     let result = event.verify();
-    let _ = black_box(result?);
+    black_box(result?);
     Ok(())
 }
 

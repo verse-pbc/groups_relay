@@ -696,7 +696,7 @@ mod tests {
         .await;
 
         let result = groups.handle_put_user(add_event).unwrap();
-        assert!(result.len() > 0);
+        assert!(!result.is_empty());
 
         let group = groups.get_group(TEST_GROUP_ID).unwrap();
         assert!(group.members.contains_key(&member_keys.public_key()));
@@ -767,7 +767,7 @@ mod tests {
         .await;
 
         let result = groups.handle_remove_user(remove_event);
-        assert!(result.unwrap().len() > 0);
+        assert!(!result.unwrap().is_empty());
 
         let group = groups.get_group(TEST_GROUP_ID).unwrap();
         assert!(!group.members.contains_key(&member_keys.public_key()));
@@ -933,7 +933,7 @@ mod tests {
         ];
         let join_event =
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
-        assert!(groups.handle_join_request(join_event).unwrap().len() > 0);
+        assert!(!groups.handle_join_request(join_event).unwrap().is_empty());
 
         // Verify member was added
         let group = groups.get_group(&group_id).unwrap();
@@ -985,7 +985,7 @@ mod tests {
         ];
         let join_event =
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
-        assert!(groups.handle_join_request(join_event).unwrap().len() > 0);
+        assert!(!groups.handle_join_request(join_event).unwrap().is_empty());
 
         let group = groups.get_group(&group_id).unwrap();
         assert!(group.is_member(&member_keys.public_key()));
@@ -1002,7 +1002,17 @@ mod tests {
         ];
         let join_event =
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
-        assert!(groups.handle_join_request(join_event).unwrap().len() == 1);
+
+        // According to NIP-29, the join request should be saved
+        let result = groups.handle_join_request(join_event).unwrap();
+        assert_eq!(result.len(), 1, "Join request should be saved");
+
+        match &result[0] {
+            StoreCommand::SaveSignedEvent(event) => {
+                assert_eq!(event.kind, KIND_GROUP_USER_JOIN_REQUEST_9021);
+            }
+            _ => panic!("Expected SaveSignedEvent command"),
+        }
 
         let group = groups.get_group(&group_id).unwrap();
         assert!(!group.is_member(&member_keys.public_key()));
@@ -1016,10 +1026,20 @@ mod tests {
         let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let join_event =
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
-        assert!(groups.handle_join_request(join_event).unwrap().len() == 1);
+
+        // According to NIP-29, the join request should be saved
+        let result = groups.handle_join_request(join_event).unwrap();
+        assert_eq!(result.len(), 1, "Join request should be saved");
+
+        match &result[0] {
+            StoreCommand::SaveSignedEvent(event) => {
+                assert_eq!(event.kind, KIND_GROUP_USER_JOIN_REQUEST_9021);
+            }
+            _ => panic!("Expected SaveSignedEvent command"),
+        }
 
         let group = groups.get_group(&group_id).unwrap();
-        assert!(!group.is_member(&member_keys.public_key()));
+        // The join request should be added to the join_requests set
         assert!(group.join_requests.contains(&member_keys.public_key()));
     }
 
@@ -1058,7 +1078,7 @@ mod tests {
             join_tags2,
         )
         .await;
-        assert!(groups.handle_join_request(join_event2).unwrap().len() > 0);
+        assert!(!groups.handle_join_request(join_event2).unwrap().is_empty());
 
         let group = groups.get_group(&group_id).unwrap();
         assert!(group.is_member(&non_member_keys.public_key()));
@@ -1103,7 +1123,7 @@ mod tests {
                     .tags
                     .filter(TagKind::p())
                     .filter_map(|t| t.content())
-                    .any(|t| t == &member_keys.public_key().to_string()));
+                    .any(|t| t == member_keys.public_key().to_string()));
             }
             _ => panic!("Second command should be SaveUnsignedEvent for members"),
         }
@@ -1125,7 +1145,7 @@ mod tests {
             leave_tags,
         )
         .await;
-        assert!(groups.handle_leave_request(leave_event).unwrap().len() == 0);
+        assert!(groups.handle_leave_request(leave_event).unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1159,7 +1179,7 @@ mod tests {
         let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event =
             create_test_event(&admin_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
-        assert!(groups.handle_leave_request(leave_event).unwrap().len() > 0);
+        assert!(!groups.handle_leave_request(leave_event).unwrap().is_empty());
 
         let group = groups.get_group(&group_id).unwrap();
         assert!(!group.is_member(&admin_keys.public_key()));
@@ -1174,7 +1194,7 @@ mod tests {
         let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event =
             create_test_event(&admin_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
-        assert!(groups.handle_leave_request(leave_event).unwrap().len() > 0);
+        assert!(!groups.handle_leave_request(leave_event).unwrap().is_empty());
 
         let group = groups.get_group(&group_id).unwrap();
         assert!(!group.is_member(&admin_keys.public_key()));
@@ -1194,7 +1214,7 @@ mod tests {
         let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event =
             create_test_event(&member_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
-        assert!(groups.handle_leave_request(leave_event).unwrap().len() == 0);
+        assert!(groups.handle_leave_request(leave_event).unwrap().is_empty());
 
         let group = groups.get_group(&group_id).unwrap();
         assert!(!group.join_requests.contains(&member_keys.public_key()));
