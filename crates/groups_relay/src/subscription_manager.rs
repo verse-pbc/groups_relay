@@ -291,12 +291,15 @@ impl SubscriptionManager {
         self.task_token.cancel();
     }
 
+    // Should be idempotent
     pub fn cleanup(&self) {
+        self.cancel_subscription_task();
         let remaining_subs = self.get_local_subscription_count();
+        self.local_subscription_count.store(0, Ordering::Relaxed);
+
         if remaining_subs > 0 {
             crate::metrics::active_subscriptions().decrement(remaining_subs as f64);
         }
-        self.cancel_subscription_task();
         info!(
             "Cleaned up connection with {} remaining subscriptions",
             remaining_subs
