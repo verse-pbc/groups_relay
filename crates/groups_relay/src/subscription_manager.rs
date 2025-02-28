@@ -80,13 +80,13 @@ impl SubscriptionManager {
                             match msg {
                                 Some(SubscriptionMessage::Add(subscription_id, filters)) => {
                                     subscriptions.insert(subscription_id.clone(), filters);
-                                    local_subscription_count.fetch_add(1, Ordering::Relaxed);
+                                    local_subscription_count.fetch_add(1, Ordering::SeqCst);
                                     crate::metrics::active_subscriptions().increment(1.0);
                                     debug!("Subscription {} added", subscription_id);
                                 }
                                 Some(SubscriptionMessage::Remove(subscription_id)) => {
                                     if subscriptions.remove(&subscription_id).is_some() {
-                                        local_subscription_count.fetch_sub(1, Ordering::Relaxed);
+                                        local_subscription_count.fetch_sub(1, Ordering::SeqCst);
                                         crate::metrics::active_subscriptions().decrement(1.0);
                                         debug!("Subscription {} removed", subscription_id);
                                     }
@@ -173,6 +173,12 @@ impl SubscriptionManager {
 
     pub fn set_outgoing_sender(&mut self, sender: MessageSender<RelayMessage>) {
         self.outgoing_sender = Some(sender);
+    }
+
+    /// Returns the current number of active subscriptions.
+    /// Uses SeqCst ordering for maximum reliability.
+    pub fn subscription_count(&self) -> usize {
+        self.local_subscription_count.load(Ordering::SeqCst)
     }
 
     pub fn add_subscription(
@@ -290,6 +296,8 @@ impl SubscriptionManager {
     // Should be idempotent
     pub fn cleanup(&self) {
         self.cancel_subscription_task();
+
+        // Swap the count to 0 and get the previous value
         let remaining_subs = self.local_subscription_count.swap(0, Ordering::SeqCst);
 
         if remaining_subs > 0 {
@@ -299,6 +307,25 @@ impl SubscriptionManager {
             "Cleaned up connection with {} remaining subscriptions",
             remaining_subs
         );
+    }
+
+    /// Waits for the subscription count to reach the expected value with a timeout.
+    /// This is useful for tests to ensure that subscription messages have been processed.
+    #[cfg(test)]
+    pub async fn wait_for_subscription_count(&self, expected: usize, timeout_ms: u64) -> bool {
+        use tokio::time::{sleep, Duration};
+
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_millis(timeout_ms);
+
+        while start.elapsed() < timeout {
+            if self.subscription_count() == expected {
+                return true;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+
+        false
     }
 }
 
@@ -389,11 +416,12 @@ mod tests {
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
 
-        // Verify subscription count
-        assert_eq!(
-            connection.local_subscription_count.load(Ordering::Relaxed),
-            1
+        // Wait for subscription count to be updated and verify
+        assert!(
+            connection.wait_for_subscription_count(1, 1000).await,
+            "Subscription count did not reach expected value"
         );
+        assert_eq!(connection.subscription_count(), 1);
 
         // Clean up
         connection.cleanup();
@@ -456,10 +484,11 @@ mod tests {
         }
 
         // Verify subscription count
-        assert_eq!(
-            connection.local_subscription_count.load(Ordering::Relaxed),
-            1
+        assert!(
+            connection.wait_for_subscription_count(1, 1000).await,
+            "Subscription count did not reach expected value"
         );
+        assert_eq!(connection.subscription_count(), 1);
 
         // Clean up
         connection.cleanup();
@@ -552,10 +581,11 @@ mod tests {
         }
 
         // Verify subscription count
-        assert_eq!(
-            connection.local_subscription_count.load(Ordering::Relaxed),
-            1
+        assert!(
+            connection.wait_for_subscription_count(1, 1000).await,
+            "Subscription count did not reach expected value"
         );
+        assert_eq!(connection.subscription_count(), 1);
 
         // Clean up
         connection.cleanup();
@@ -647,17 +677,15 @@ mod tests {
             );
         }
 
-        assert_eq!(
-            connection.local_subscription_count.load(Ordering::Relaxed),
-            1
+        assert!(
+            connection.wait_for_subscription_count(1, 1000).await,
+            "Subscription count did not reach expected value"
         );
+        assert_eq!(connection.subscription_count(), 1);
 
         connection.cleanup();
 
-        assert_eq!(
-            connection.local_subscription_count.load(Ordering::Relaxed),
-            0
-        );
+        assert_eq!(connection.subscription_count(), 0);
     }
 
     #[tokio::test]
@@ -711,6 +739,13 @@ mod tests {
             }
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
+
+        // Wait for subscription count to be updated and verify
+        assert!(
+            connection.wait_for_subscription_count(1, 1000).await,
+            "Subscription count did not reach expected value"
+        );
+        assert_eq!(connection.subscription_count(), 1);
 
         // Clean up
         connection.cleanup();
@@ -772,6 +807,13 @@ mod tests {
             }
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
+
+        // Wait for subscription count to be updated and verify
+        assert!(
+            connection.wait_for_subscription_count(1, 1000).await,
+            "Subscription count did not reach expected value"
+        );
+        assert_eq!(connection.subscription_count(), 1);
 
         // Clean up
         connection.cleanup();
@@ -835,6 +877,13 @@ mod tests {
             }
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
+
+        // Wait for subscription count to be updated and verify
+        assert!(
+            connection.wait_for_subscription_count(1, 1000).await,
+            "Subscription count did not reach expected value"
+        );
+        assert_eq!(connection.subscription_count(), 1);
 
         // Clean up
         connection.cleanup();
@@ -917,6 +966,13 @@ mod tests {
                 .any(|e| e.pubkey == keys2.public_key()),
             "No events from author 2"
         );
+
+        // Wait for subscription count to be updated and verify
+        assert!(
+            connection.wait_for_subscription_count(1, 1000).await,
+            "Subscription count did not reach expected value"
+        );
+        assert_eq!(connection.subscription_count(), 1);
 
         // Clean up
         connection.cleanup();
@@ -1001,10 +1057,11 @@ mod tests {
         assert!(received_kinds.contains(&Kind::Metadata));
         assert!(received_kinds.contains(&Kind::RelayList));
 
-        assert_eq!(
-            connection.local_subscription_count.load(Ordering::Relaxed),
-            1
+        assert!(
+            connection.wait_for_subscription_count(1, 1000).await,
+            "Subscription count did not reach expected value"
         );
+        assert_eq!(connection.subscription_count(), 1);
 
         connection.cleanup();
     }
