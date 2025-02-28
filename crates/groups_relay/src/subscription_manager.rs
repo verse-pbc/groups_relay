@@ -213,10 +213,6 @@ impl SubscriptionManager {
         self.remove_subscription(subscription_id)
     }
 
-    fn get_local_subscription_count(&self) -> usize {
-        self.local_subscription_count.load(Ordering::Relaxed)
-    }
-
     pub async fn fetch_historical_events(
         &self,
         subscription_id: &SubscriptionId,
@@ -294,8 +290,7 @@ impl SubscriptionManager {
     // Should be idempotent
     pub fn cleanup(&self) {
         self.cancel_subscription_task();
-        let remaining_subs = self.get_local_subscription_count();
-        self.local_subscription_count.store(0, Ordering::Relaxed);
+        let remaining_subs = self.local_subscription_count.swap(0, Ordering::SeqCst);
 
         if remaining_subs > 0 {
             crate::metrics::active_subscriptions().decrement(remaining_subs as f64);
@@ -395,7 +390,10 @@ mod tests {
         }
 
         // Verify subscription count
-        assert_eq!(connection.get_local_subscription_count(), 1);
+        assert_eq!(
+            connection.local_subscription_count.load(Ordering::Relaxed),
+            1
+        );
 
         // Clean up
         connection.cleanup();
@@ -458,7 +456,10 @@ mod tests {
         }
 
         // Verify subscription count
-        assert_eq!(connection.get_local_subscription_count(), 1);
+        assert_eq!(
+            connection.local_subscription_count.load(Ordering::Relaxed),
+            1
+        );
 
         // Clean up
         connection.cleanup();
@@ -551,7 +552,10 @@ mod tests {
         }
 
         // Verify subscription count
-        assert_eq!(connection.get_local_subscription_count(), 1);
+        assert_eq!(
+            connection.local_subscription_count.load(Ordering::Relaxed),
+            1
+        );
 
         // Clean up
         connection.cleanup();
@@ -643,11 +647,17 @@ mod tests {
             );
         }
 
-        // Verify subscription count
-        assert_eq!(connection.get_local_subscription_count(), 1);
+        assert_eq!(
+            connection.local_subscription_count.load(Ordering::Relaxed),
+            1
+        );
 
-        // Clean up
         connection.cleanup();
+
+        assert_eq!(
+            connection.local_subscription_count.load(Ordering::Relaxed),
+            0
+        );
     }
 
     #[tokio::test]
@@ -991,7 +1001,10 @@ mod tests {
         assert!(received_kinds.contains(&Kind::Metadata));
         assert!(received_kinds.contains(&Kind::RelayList));
 
-        assert_eq!(connection.get_local_subscription_count(), 1);
+        assert_eq!(
+            connection.local_subscription_count.load(Ordering::Relaxed),
+            1
+        );
 
         connection.cleanup();
     }
