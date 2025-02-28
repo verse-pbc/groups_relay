@@ -51,6 +51,17 @@ impl Middleware for LoggerMiddleware {
                 info!("> REQ {}: {}", subscription_id, filter.as_json());
                 ctx.next().await
             }
+            Some(ClientMessage::ReqMultiFilter {
+                subscription_id,
+                filters,
+            }) => {
+                info!(
+                    "> REQ {}: {:?}",
+                    subscription_id,
+                    filters.iter().map(|f| f.as_json()).collect::<Vec<String>>()
+                );
+                ctx.next().await
+            }
             Some(ClientMessage::Close(subscription_id)) => {
                 info!("> CLOSE {}", subscription_id);
                 ctx.next().await
