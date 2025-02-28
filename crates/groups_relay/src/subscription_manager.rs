@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
+use tracing_futures::Instrument;
 use websocket_builder::MessageSender;
 
 #[derive(Debug)]
@@ -60,61 +61,66 @@ impl SubscriptionManager {
     ) -> Result<mpsc::UnboundedSender<SubscriptionMessage>, Error> {
         let (subscription_sender, mut subscription_receiver) = mpsc::unbounded_channel();
 
-        tokio::spawn(Box::pin(async move {
-            let mut subscriptions = HashMap::new();
-            info!("Starting subscription manager");
+        // Capture the current span to propagate context to the spawned task
+        let span = tracing::Span::current();
 
-            loop {
-                tokio::select! {
-                    _ = task_token.cancelled() => {
-                        info!("Subscription task cancelled");
-                        break;
-                    }
-                    maybe_msg = subscription_receiver.recv() => {
-                        match maybe_msg {
-                            Some(msg) => {
-                                match msg {
-                                    SubscriptionMessage::Add(subscription_id, filters) => {
-                                        subscriptions.insert(subscription_id.clone(), filters);
-                                        local_subscription_count.fetch_add(1, Ordering::Relaxed);
-                                        crate::metrics::active_subscriptions().increment(1.0);
+        tokio::spawn(
+            async move {
+                let mut subscriptions = HashMap::new();
+
+                loop {
+                    tokio::select! {
+                        // Check if the task has been cancelled
+                        _ = task_token.cancelled() => {
+                            debug!("Subscription task cancelled");
+                            break;
+                        }
+                        // Process incoming subscription messages
+                        msg = subscription_receiver.recv() => {
+                            match msg {
+                                Some(SubscriptionMessage::Add(subscription_id, filters)) => {
+                                    subscriptions.insert(subscription_id.clone(), filters);
+                                    local_subscription_count.fetch_add(1, Ordering::Relaxed);
+                                    crate::metrics::active_subscriptions().increment(1.0);
+                                    debug!("Subscription {} added", subscription_id);
+                                }
+                                Some(SubscriptionMessage::Remove(subscription_id)) => {
+                                    if subscriptions.remove(&subscription_id).is_some() {
+                                        local_subscription_count.fetch_sub(1, Ordering::Relaxed);
+                                        crate::metrics::active_subscriptions().decrement(1.0);
+                                        debug!("Subscription {} removed", subscription_id);
                                     }
-                                    SubscriptionMessage::Remove(subscription_id) => {
-                                        if subscriptions.remove(&subscription_id).is_some() {
-                                            local_subscription_count.fetch_sub(1, Ordering::Relaxed);
-                                            crate::metrics::active_subscriptions().decrement(1.0);
-                                        }
-                                    }
-                                    SubscriptionMessage::CheckEvent { event } => {
-                                        for (subscription_id, filters) in &subscriptions {
-                                            if filters
-                                                .iter()
-                                                .any(|filter| filter.match_event(event.as_ref()))
-                                            {
-                                                let message = RelayMessage::Event {
-                                                    event: event.clone(),
-                                                    subscription_id: subscription_id.clone(),
-                                                };
-                                                if let Err(e) = outgoing_sender.send(message).await {
-                                                    error!("Failed to send event: {:?}", e);
-                                                    info!("Outgoing sender closed, terminating subscription task");
-                                                    return;
-                                                }
+                                }
+                                Some(SubscriptionMessage::CheckEvent { event }) => {
+                                    for (subscription_id, filters) in &subscriptions {
+                                        if filters
+                                            .iter()
+                                            .any(|filter| filter.match_event(event.as_ref()))
+                                        {
+                                            let message = RelayMessage::Event {
+                                                subscription_id: subscription_id.clone(),
+                                                event: event.clone(),
+                                            };
+                                            if let Err(e) = outgoing_sender.send(message).await {
+                                                error!("Failed to send event: {:?}", e);
+                                                info!("Outgoing sender closed, terminating subscription task");
+                                                return;
                                             }
                                         }
                                     }
                                 }
-                            }
-                            None => {
-                                info!("Subscription channel closed");
-                                break;
+                                None => {
+                                    debug!("Subscription channel closed");
+                                    break;
+                                }
                             }
                         }
                     }
                 }
+                info!("Subscription manager stopped");
             }
-            info!("Subscription manager stopped");
-        }));
+            .instrument(span),
+        );
 
         Ok(subscription_sender)
     }
@@ -124,31 +130,37 @@ impl SubscriptionManager {
         let subscription_sender = self.subscription_sender.clone();
         let task_token = self.task_token.clone();
 
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = task_token.cancelled() => {
-                        debug!("Database subscription task cancelled");
-                        break;
-                    }
-                    event_result = database_subscription.recv() => {
-                        match event_result {
-                            Ok(event) => {
-                                if let Err(e) = subscription_sender.send(SubscriptionMessage::CheckEvent { event }) {
-                                    error!("Failed to send event: {:?}", e);
+        // Capture the current span to propagate context to the spawned task
+        let span = tracing::Span::current();
+
+        tokio::spawn(
+            async move {
+                loop {
+                    tokio::select! {
+                        _ = task_token.cancelled() => {
+                            debug!("Database subscription task cancelled");
+                            break;
+                        }
+                        event_result = database_subscription.recv() => {
+                            match event_result {
+                                Ok(event) => {
+                                    if let Err(e) = subscription_sender.send(SubscriptionMessage::CheckEvent { event }) {
+                                        error!("Failed to send event: {:?}", e);
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Failed to receive event from database: {:?}", e);
                                     break;
                                 }
-                            }
-                            Err(e) => {
-                                error!("Failed to receive event from database: {:?}", e);
-                                break;
                             }
                         }
                     }
                 }
+                debug!("Database subscription task stopped");
             }
-            debug!("Database subscription task stopped");
-        });
+            .instrument(span),
+        );
 
         Ok(())
     }

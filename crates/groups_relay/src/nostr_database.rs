@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::spawn_blocking;
 use tracing::{debug, error, info};
+use tracing_futures::Instrument;
 
 #[derive(Debug, Clone)]
 pub struct RelayDatabase {
@@ -47,45 +48,51 @@ impl RelayDatabase {
         relay_db: Self,
         broadcast_sender: broadcast::Sender<Box<Event>>,
     ) {
-        tokio::spawn(async move {
-            while let Some(store_command) = store_receiver.recv().await {
-                match store_command {
-                    StoreCommand::DeleteEvents(filter) => {
-                        info!("Deleting events with filter: {:?}", filter);
-                        if let Err(e) = relay_db.delete(filter).await {
-                            error!("Error deleting events: {:?}", e);
-                        }
-                    }
-                    StoreCommand::SaveSignedEvent(event) => {
-                        Self::handle_signed_event(&relay_db, event, &broadcast_sender).await;
-                    }
-                    StoreCommand::SaveUnsignedEvent(unsigned_event) => {
-                        let keys = keys.clone();
-                        let sign_result = spawn_blocking(move || {
-                            get_blocking_runtime().block_on(keys.sign_event(unsigned_event))
-                        })
-                        .await;
+        // Capture the current span to propagate context to the spawned task
+        let span = tracing::Span::current();
 
-                        match sign_result {
-                            Ok(Ok(event)) => {
-                                Self::handle_signed_event(
-                                    &relay_db,
-                                    Box::new(event),
-                                    &broadcast_sender,
-                                )
-                                .await;
+        tokio::spawn(
+            async move {
+                while let Some(store_command) = store_receiver.recv().await {
+                    match store_command {
+                        StoreCommand::DeleteEvents(filter) => {
+                            info!("Deleting events with filter: {:?}", filter);
+                            if let Err(e) = relay_db.delete(filter).await {
+                                error!("Error deleting events: {:?}", e);
                             }
-                            Ok(Err(e)) => {
-                                error!("Error signing unsigned event: {:?}", e);
-                            }
-                            Err(e) => {
-                                error!("Spawn blocking task failed: {:?}", e);
+                        }
+                        StoreCommand::SaveSignedEvent(event) => {
+                            Self::handle_signed_event(&relay_db, event, &broadcast_sender).await;
+                        }
+                        StoreCommand::SaveUnsignedEvent(unsigned_event) => {
+                            let keys = keys.clone();
+                            let sign_result = spawn_blocking(move || {
+                                get_blocking_runtime().block_on(keys.sign_event(unsigned_event))
+                            })
+                            .await;
+
+                            match sign_result {
+                                Ok(Ok(event)) => {
+                                    Self::handle_signed_event(
+                                        &relay_db,
+                                        Box::new(event),
+                                        &broadcast_sender,
+                                    )
+                                    .await;
+                                }
+                                Ok(Err(e)) => {
+                                    error!("Error signing unsigned event: {:?}", e);
+                                }
+                                Err(e) => {
+                                    error!("Spawn blocking task failed: {:?}", e);
+                                }
                             }
                         }
                     }
                 }
             }
-        });
+            .instrument(span),
+        );
     }
 
     async fn handle_signed_event(

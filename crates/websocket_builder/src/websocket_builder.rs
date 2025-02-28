@@ -242,23 +242,16 @@ where
     /// Handles connection permit acquisition
     async fn try_acquire_connection_permit(
         &self,
-        connection_id: &str,
         state: TapState,
     ) -> Result<(TapState, Option<OwnedSemaphorePermit>), WebsocketError<TapState>> {
         if let Some(semaphore) = &self.connection_semaphore {
             match semaphore.clone().try_acquire_owned() {
                 Ok(permit) => {
-                    debug!(
-                        "[{}] Connection permit acquired (within connection limit)",
-                        connection_id
-                    );
+                    debug!("Connection permit acquired (within connection limit)");
                     Ok((state, Some(permit)))
                 }
                 Err(_) => {
-                    warn!(
-                        "[{}] Maximum connections limit reached, rejecting connection",
-                        connection_id
-                    );
+                    warn!("Maximum connections limit reached, rejecting connection");
                     Err(WebsocketError::MaxConnectionsExceeded(state))
                 }
             }
@@ -268,17 +261,16 @@ where
     }
 
     /// Spawns timeout task if max_connection_time is configured
-    fn spawn_timeout_task(&self, connection_id: String, connection_token: CancellationToken) {
+    fn spawn_timeout_task(&self, connection_token: CancellationToken) {
         if let Some(max_time) = self.max_connection_time {
             let token = connection_token.clone();
-            let conn_id = connection_id;
             tokio::spawn(async move {
                 tokio::select! {
                     _ = tokio::time::sleep(max_time) => {
                         if !token.is_cancelled() {
                             warn!(
-                                "[{}] Max connection time ({:?}) exceeded, initiating graceful shutdown",
-                                conn_id, max_time
+                                "Max connection time ({:?}) exceeded, initiating graceful shutdown",
+                                max_time
                             );
                             token.cancel();
                         }
@@ -325,11 +317,9 @@ where
 
         let state = self.state_factory.create_state(connection_token.clone());
 
-        let (state, _connection_permit) = self
-            .try_acquire_connection_permit(&connection_id, state)
-            .await?;
+        let (state, _connection_permit) = self.try_acquire_connection_permit(state).await?;
 
-        self.spawn_timeout_task(connection_id.clone(), connection_token.clone());
+        self.spawn_timeout_task(connection_token.clone());
 
         let mut session_handler = MessageHandler::new(
             self.middlewares.clone(),
@@ -356,10 +346,7 @@ where
             .on_disconnect(connection_id.clone(), state)
             .await
         {
-            error!(
-                "[{}] Error during connection disconnect handler: {}",
-                connection_id, e
-            );
+            error!("Error during connection disconnect handler: {}", e);
         }
 
         Ok(())
@@ -396,24 +383,18 @@ async fn handle_connection_lifecycle<
     cancellation_token: CancellationToken,
     state: TapState,
 ) -> Result<TapState, WebsocketError<TapState>> {
-    debug!(
-        "[{}] Starting WebSocket connection lifecycle",
-        connection_id
-    );
+    debug!("Starting WebSocket connection lifecycle");
 
     let (state, server_receiver) = match session_handler
         .on_connect(connection_id.clone(), state)
         .await
     {
         Ok(result) => {
-            debug!("[{}] WebSocket connection setup successful", connection_id);
+            debug!("WebSocket connection setup successful");
             result
         }
         Err(e) => {
-            error!(
-                "[{}] WebSocket connection setup failed: {}",
-                connection_id, e
-            );
+            error!("WebSocket connection setup failed: {}", e);
             return Err(e);
         }
     };
@@ -429,31 +410,25 @@ async fn handle_connection_lifecycle<
     .await
     {
         Ok(state) => {
-            debug!(
-                "[{}] WebSocket message loop completed normally",
-                connection_id
-            );
+            debug!("WebSocket message loop completed normally");
             state
         }
         Err(e) => match e {
             WebsocketError::NoClosingHandshake(e, state) => {
                 debug!(
-                    "[{}] Client closed WebSocket connection without handshake: {}",
-                    connection_id, e
+                    "Client closed WebSocket connection without handshake: {}",
+                    e
                 );
                 return Ok(state);
             }
             _ => {
-                error!("[{}] WebSocket message loop error: {}", connection_id, e);
+                warn!("WebSocket message loop error: {}", e);
                 return Err(e);
             }
         },
     };
 
-    debug!(
-        "[{}] WebSocket connection lifecycle completed",
-        connection_id
-    );
+    debug!("WebSocket connection lifecycle completed");
     Ok(state)
 }
 
@@ -494,7 +469,7 @@ async fn message_loop<
     cancellation_token: CancellationToken,
     mut state: TapState,
 ) -> Result<TapState, WebsocketError<TapState>> {
-    debug!("[{}] Starting message loop", connection_id);
+    debug!("Starting message loop");
 
     /// Processes an outgoing message through the middleware chain.
     ///
@@ -532,8 +507,8 @@ async fn message_loop<
     {
         let log_prefix = if is_flush { "Flushing" } else { "Processing" };
         debug!(
-            "[{}] {} outbound message from middleware {}",
-            connection_id, log_prefix, middleware_index
+            "{} outbound message from middleware {}",
+            log_prefix, middleware_index
         );
 
         let (new_state, message) = match handler
@@ -543,8 +518,7 @@ async fn message_loop<
             Ok((new_state, message)) => (new_state, message),
             Err(e) => {
                 error!(
-                    "[{}] Error handling outbound message{}: {}",
-                    connection_id,
+                    "Error handling outbound message{}: {}",
                     if is_flush { " during flush" } else { "" },
                     e
                 );
@@ -554,43 +528,40 @@ async fn message_loop<
 
         if let Some(message) = message {
             debug!(
-                "[{}] Sending{} message to websocket",
-                connection_id,
+                "Sending{} message to websocket",
                 if is_flush { " final" } else { "" }
             );
             if let Err(e) = socket.send(Message::Text(message)).await {
                 error!(
-                    "[{}] Failed to send{} message to websocket: {}",
-                    connection_id,
+                    "Failed to send{} message to websocket: {}",
                     if is_flush { " final" } else { "" },
                     e
                 );
                 return Err(WebsocketError::WebsocketError(e, new_state));
             }
             debug!(
-                "[{}] Successfully sent{} message to websocket",
-                connection_id,
+                "Successfully sent{} message to websocket",
                 if is_flush { " final" } else { "" }
             );
         } else {
-            debug!("[{}] No message to send", connection_id);
+            debug!("No message to send");
         }
 
         Ok(new_state)
     }
 
     loop {
-        debug!("[{}] Message loop iteration starting", connection_id);
+        debug!("Message loop iteration starting");
         tokio::select! {
             biased;
 
             _ = cancellation_token.cancelled() => {
-                debug!("[{}] Connection cancellation token triggered, starting graceful connection shutdown", connection_id);
+                debug!("Connection cancellation token triggered, starting graceful connection shutdown");
 
                 // Flush any pending messages in the channel
                 while let Ok(msg) = server_receiver.try_recv() {
                     let (message, middleware_index) = msg;
-                    debug!("[{}] Flushing pending message from middleware {} before connection close", connection_id, middleware_index);
+                    debug!("Flushing pending message from middleware {} before connection close", middleware_index);
                     state = handle_outgoing_message(
                         connection_id,
                         &mut socket,
@@ -604,20 +575,20 @@ async fn message_loop<
                 }
 
                 // Send a close frame
-                debug!("[{}] Sending WebSocket close frame to client", connection_id);
+                debug!("Sending WebSocket close frame to client");
                 if let Err(e) = socket.send(Message::Close(None)).await {
-                    warn!("[{}] Failed to send WebSocket close frame to client: {}", connection_id, e);
+                    warn!("Failed to send WebSocket close frame to client: {}", e);
                 }
 
-                debug!("[{}] Graceful connection shutdown completed", connection_id);
+                debug!("Graceful connection shutdown completed");
                 return Ok(state);
             }
 
             server_message = server_receiver.recv() => {
-                debug!("[{}] Server receiver got message", connection_id);
+                debug!("Server receiver got message");
                 match server_message {
                     Some((message, middleware_index)) => {
-                        debug!("[{}] Processing outbound message from middleware {}", connection_id, middleware_index);
+                        debug!("Processing outbound message from middleware {}", middleware_index);
                         state = handle_outgoing_message(
                             connection_id,
                             &mut socket,
@@ -628,10 +599,10 @@ async fn message_loop<
                             false,
                         )
                         .await?;
-                        debug!("[{}] Finished processing outbound message", connection_id);
+                        debug!("Finished processing outbound message");
                     }
                     None => {
-                        debug!("[{}] Server receiver closed", connection_id);
+                        debug!("Server receiver closed");
                         return Ok(state);
                     }
                 }
@@ -640,43 +611,43 @@ async fn message_loop<
             message = socket.next() => {
                 match message {
                     Some(Ok(Message::Text(text))) => {
-                        debug!("[{}] Received text message: {}", connection_id, text);
+                        debug!("Received text message: {}", text);
                         state = handler
                             .handle_incoming_message(connection_id.to_string(), text, state)
                             .await?;
-                        debug!("[{}] Finished processing text message", connection_id);
+                        debug!("Finished processing text message");
                     }
                     Some(Ok(Message::Binary(_))) => {
-                        error!("[{}] Protocol violation: received binary message - terminating connection as binary messages are not supported", connection_id);
+                        error!("Protocol violation: received binary message - terminating connection as binary messages are not supported");
                         return Err(WebsocketError::UnsupportedBinaryMessage(state));
                     }
                     Some(Ok(Message::Ping(payload))) => {
-                        debug!("[{}] Received ping, sending pong", connection_id);
+                        debug!("Received ping, sending pong");
                         if let Err(e) = socket.send(Message::Pong(payload)).await {
-                            warn!("[{}] Failed to send pong: {}", connection_id, e);
+                            warn!("Failed to send pong: {}", e);
                         }
                     }
                     Some(Ok(Message::Pong(_))) => {
-                        debug!("[{}] Received pong", connection_id);
+                        debug!("Received pong");
                     }
                     Some(Ok(Message::Close(_))) => {
-                        debug!("[{}] Received close frame from client", connection_id);
+                        debug!("Received close frame from client");
                         // Send close frame in response if we haven't already
                         if let Err(e) = socket.send(Message::Close(None)).await {
-                            debug!("[{}] Failed to send close frame response: {}", connection_id, e);
+                            debug!("Failed to send close frame response: {}", e);
                         }
                         return Ok(state);
                     }
                     Some(Err(e)) => {
                         if e.to_string().contains("without closing handshake") {
-                            debug!("[{}] Client disconnected without closing handshake", connection_id);
+                            debug!("Client disconnected without closing handshake");
                             return Err(WebsocketError::NoClosingHandshake(e, state));
                         }
-                        error!("[{}] WebSocket error: {}", connection_id, e);
+                        error!("WebSocket error: {}", e);
                         return Err(WebsocketError::WebsocketError(e, state));
                     }
                     None => {
-                        debug!("[{}] Client stream ended", connection_id);
+                        debug!("Client stream ended");
                         return Ok(state);
                     }
                 }

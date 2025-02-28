@@ -34,6 +34,7 @@ nostr-database = "0.39.0"
 nostr-lmdb = "0.39.0"
 time = { version = "0.3.37", features = ["local-offset", "macros"] }
 humantime-serde = "1.1.1"
+tracing-futures = "0.2.5"
 
 [features]
 console = ["dep:console-subscriber"]

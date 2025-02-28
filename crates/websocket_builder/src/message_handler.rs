@@ -140,7 +140,7 @@ impl<
 
         // Process through first middleware only - it will handle chain progression
         if let Err(e) = self.middlewares[0].process_inbound(&mut ctx).await {
-            error!("[{}] Error in first middleware: {:?}", connection_id, e);
+            error!("Error in first middleware: {:?}", e);
             return Err(WebsocketError::HandlerError(e.into(), state));
         }
 
@@ -186,8 +186,8 @@ impl<
                 .await
             {
                 error!(
-                    "[{}] Error processing outbound message in middleware {}: {:?}",
-                    connection_id, middleware_index, e
+                    "Error processing outbound message in middleware {}: {:?}",
+                    middleware_index, e
                 );
                 return Err(WebsocketError::HandlerError(e.into(), state));
             };
@@ -202,10 +202,7 @@ impl<
         };
 
         let Ok(string_message) = self.message_converter.outbound_to_string(message) else {
-            error!(
-                "[{}] Failed to convert outbound message to string",
-                connection_id
-            );
+            error!("Failed to convert outbound message to string");
             return Err(WebsocketError::OutboundMessageConversionError(
                 "Failed to convert outbound message to string".to_string(),
                 state,
