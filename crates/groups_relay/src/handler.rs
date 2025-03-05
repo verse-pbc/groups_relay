@@ -1,4 +1,3 @@
-use crate::app_state::HttpServerState;
 use crate::groups::Invite;
 use crate::server::ServerState;
 use axum::{
@@ -104,7 +103,6 @@ pub async fn handle_root(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<ServerState>>,
     headers: axum::http::HeaderMap,
-    uri: axum::http::Uri,
     _request: Request<Body>,
 ) -> impl IntoResponse {
     // 1. WebSocket upgrade: if the upgrade header is present, upgrade the connection.
@@ -116,15 +114,7 @@ pub async fn handle_root(
             .on_upgrade(move |socket| handle_websocket_connection(socket, state.clone(), real_ip));
     }
 
-    // 2. API endpoint: handle groups if the path matches "/api/groups".
-    if uri.path() == "/api/groups" {
-        debug!("Handling API request for groups");
-        return handle_get_groups(State(state.clone()))
-            .await
-            .into_response();
-    }
-
-    // 3. Nostr JSON: if the Accept header is "application/nostr+json", serve Nostr JSON.
+    // 2. Nostr JSON: if the Accept header is "application/nostr+json", serve Nostr JSON.
     if let Some(accept_header) = headers.get(axum::http::header::ACCEPT) {
         if let Ok(value) = accept_header.to_str() {
             if value == "application/nostr+json" {
@@ -136,7 +126,7 @@ pub async fn handle_root(
         }
     }
 
-    // 4. Fallback: serve the static HTML (Vite frontend).
+    // 3. Fallback: serve the static HTML (Vite frontend).
     debug!("Serving frontend HTML for root path");
     let index_req = Request::builder()
         .method(Method::GET)
@@ -158,54 +148,6 @@ pub async fn handle_root(
 
 pub async fn handle_health() -> impl IntoResponse {
     "OK"
-}
-
-pub async fn handle_get_groups(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
-    match try_get_groups(&state.http_state) {
-        Ok(groups) => Ok(Json(groups)),
-        Err(e) => {
-            error!("Error fetching groups: {:?}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-fn try_get_groups(
-    state: &Arc<HttpServerState>,
-) -> Result<Vec<GroupResponse>, Box<dyn std::error::Error>> {
-    let groups = state
-        .groups
-        .iter()
-        .map(|group| {
-            let group = group.value();
-            GroupResponse {
-                id: group.id.clone(),
-                name: group.metadata.name.clone(),
-                about: group.metadata.about.clone(),
-                picture: group.metadata.picture.clone(),
-                private: group.metadata.private,
-                closed: group.metadata.closed,
-                members: group
-                    .members
-                    .values()
-                    .map(|member| MemberResponse {
-                        pubkey: member.pubkey.to_string(),
-                        roles: member.roles.iter().map(|r| r.to_string()).collect(),
-                    })
-                    .collect(),
-                invites: group.invites.clone(),
-                join_requests: group
-                    .join_requests
-                    .iter()
-                    .map(|pk| pk.to_string())
-                    .collect(),
-                created_at: group.created_at.as_u64(),
-                updated_at: group.updated_at.as_u64(),
-            }
-        })
-        .collect();
-
-    Ok(groups)
 }
 
 pub async fn handle_nostr_json(State(state): State<Arc<ServerState>>) -> impl IntoResponse {

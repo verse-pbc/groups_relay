@@ -81,7 +81,6 @@ pub async fn run_server(
     let router = Router::new()
         .route("/", get(handler::handle_root))
         .route("/health", get(handler::handle_health))
-        .route("/api/groups", get(handler::handle_get_groups))
         .route("/metrics", get(handler::handle_metrics))
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .fallback_service(ServeDir::new("frontend/dist"))
