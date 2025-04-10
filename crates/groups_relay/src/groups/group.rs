@@ -114,6 +114,8 @@ pub struct GroupMetadata {
     pub private: bool,
     /// Closed = automatic creation of 9000 events when a 9021 comes
     pub closed: bool,
+    /// Store any unknown tags for preservation
+    pub unknown_tags: Vec<Tag>,
 }
 
 impl GroupMetadata {
@@ -124,6 +126,7 @@ impl GroupMetadata {
             picture: None,
             private: true,
             closed: true,
+            unknown_tags: Vec::new(),
         }
     }
 }
@@ -627,6 +630,9 @@ impl Group {
             return Err(Error::notice("User cannot edit metadata"));
         }
 
+        // Clear existing unknown tags since we're processing a new metadata event
+        self.metadata.unknown_tags.clear();
+
         for tag in event.tags.iter() {
             match tag.kind() {
                 TagKind::Name => {
@@ -652,6 +658,10 @@ impl Group {
                     }
                     "closed" => {
                         self.metadata.closed = true;
+                    }
+                    kind if kind != "h" => {
+                        // Store unknown custom tags
+                        self.metadata.unknown_tags.push(tag.clone());
                     }
                     _ => {}
                 },
@@ -946,6 +956,7 @@ impl Group {
             picture: picture.map(|s| s.to_string()),
             private,
             closed,
+            unknown_tags: Vec::new(),
         };
 
         self.update_timestamps(event);
@@ -1135,6 +1146,9 @@ impl Group {
         if let Some(picture) = &self.metadata.picture {
             tags.push(Tag::custom(TagKind::custom("picture"), [picture.clone()]));
         }
+
+        // Add any unknown tags
+        tags.extend(self.metadata.unknown_tags.iter().cloned());
 
         UnsignedEvent::new(
             *pubkey,
