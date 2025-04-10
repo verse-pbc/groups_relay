@@ -1559,6 +1559,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_metadata_management_handles_unknown_tags() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Name, ["Test Group"]),
+            Tag::custom(TagKind::custom("unknown_tag"), ["unknown_value"]),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002.into(), tags).await;
+
+        assert!(group.set_metadata(&event, &admin_keys.public_key()).is_ok());
+        assert_eq!(group.metadata.name, "Test Group");
+
+        let metadata_event = group.generate_metadata_event(&admin_keys.public_key());
+        let unknown_tag = metadata_event.tags.iter().find(|t| t.kind() == TagKind::custom("unknown_tag"));
+        assert!(unknown_tag.is_some());
+        assert_eq!(unknown_tag.unwrap().content(), Some("unknown_value"));
+    }
+
+    #[tokio::test]
     async fn test_invite_system() {
         let (admin_keys, _, _) = create_test_keys().await;
         let (mut group, group_id) = create_test_group(&admin_keys).await;
