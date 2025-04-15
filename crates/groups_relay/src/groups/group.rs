@@ -1,7 +1,6 @@
 use crate::error::Error;
 use crate::StoreCommand;
-use nostr::prelude::*;
-use nostr::{Tag, TagKind};
+use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -1420,8 +1419,6 @@ mod tests {
         create_test_invite_event, create_test_keys, create_test_metadata_event,
         create_test_role_event, remove_member_from_group,
     };
-    use pretty_assertions::assert_eq;
-
     #[tokio::test]
     async fn test_group_creation() {
         let (admin_keys, _, _) = create_test_keys().await;
