@@ -60,6 +60,7 @@ export class App extends Component<AppProps, AppState> {
         picture: "",
         private: false,
         closed: false,
+        broadcast: false,
         created_at: 0,  // Initialize to 0, will be set when we process the creation event
         updated_at: createdAt,
         members: [],
@@ -125,8 +126,15 @@ export class App extends Component<AppProps, AppState> {
       }
 
       case 39000: { // Group metadata
-        const newMetadata: Partial<Group> = {};
-        for (const [tag, value] of event.tags) {
+        // Start by assuming broadcast is off unless the tag is present
+        const newMetadata: Partial<Group> = {
+          broadcast: false
+        };
+
+        for (const tagArr of event.tags) {
+          const tag = tagArr[0];
+          const value = tagArr[1];
+
           switch (tag) {
             case "name":
               newMetadata.name = value;
@@ -148,6 +156,9 @@ export class App extends Component<AppProps, AppState> {
               break;
             case "open":
               newMetadata.closed = false;
+              break;
+            case "broadcast": // Check for the broadcast tag
+              newMetadata.broadcast = true;
               break;
           }
         }

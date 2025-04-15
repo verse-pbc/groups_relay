@@ -50,6 +50,7 @@ export class CreateGroupForm extends BaseComponent<CreateGroupFormProps, CreateG
         picture: this.state.picture,
         private: false,
         closed: false,
+        broadcast: false,
         created_at: Math.floor(Date.now() / 1000),
         updated_at: Math.floor(Date.now() / 1000),
         members: [],

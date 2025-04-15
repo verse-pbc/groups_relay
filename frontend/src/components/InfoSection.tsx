@@ -24,17 +24,30 @@ export class InfoSection extends Component<InfoSectionProps, InfoSectionState> {
     }
   }
 
-  copyGroupId = () => {
-    navigator.clipboard.writeText(this.props.group.id)
-    this.setState({ copiedId: true })
-
-    if (this.copyTimeout) {
-      window.clearTimeout(this.copyTimeout)
+  copyGroupId = async () => {
+    // Check if Clipboard API is available
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      console.warn('Clipboard API not available in this context.');
+      this.props.showMessage('Copy feature not available in your browser or context (requires HTTPS or localhost).', 'error');
+      return; // Exit if not available
     }
 
-    this.copyTimeout = window.setTimeout(() => {
-      this.setState({ copiedId: false })
-    }, 2000)
+    try {
+      await navigator.clipboard.writeText(this.props.group.id);
+      this.setState({ copiedId: true });
+
+      if (this.copyTimeout) {
+        window.clearTimeout(this.copyTimeout);
+      }
+
+      this.copyTimeout = window.setTimeout(() => {
+        this.setState({ copiedId: false });
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy group ID:', err);
+      this.props.showMessage('Failed to copy ID. Check browser console for details.', 'error');
+      this.setState({ copiedId: false });
+    }
   }
 
   render() {
@@ -65,4 +78,4 @@ export class InfoSection extends Component<InfoSectionProps, InfoSectionState> {
       </div>
     )
   }
-} 
+}

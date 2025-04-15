@@ -5,6 +5,7 @@ export interface Group {
   about?: string;
   private: boolean;
   closed: boolean;
+  broadcast: boolean;
   members: GroupMember[];
   invites: { [key: string]: GroupInvite };
   joinRequests: string[];
