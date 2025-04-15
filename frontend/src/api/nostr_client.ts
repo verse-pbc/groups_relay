@@ -278,6 +278,9 @@ export class NostrClient {
     if (group.picture) metadataTags.push(["picture", group.picture]);
     metadataTags.push([group.private ? "private" : "public"]);
     metadataTags.push([group.closed ? "closed" : "open"]);
+    if (group.broadcast) {
+      metadataTags.push(["broadcast"]);
+    }
 
     await this.publishEvent(GroupEventKind.EditMetadata, metadataTags);
     return group;
@@ -297,6 +300,9 @@ export class NostrClient {
     if (group.about) tags.push(["about", group.about]);
     tags.push([group.private ? "private" : "public"]);
     tags.push([group.closed ? "closed" : "open"]);
+    if (group.broadcast) {
+      tags.push(["broadcast"]);
+    }
 
     return this.publishEvent(GroupEventKind.EditMetadata, tags);
   }

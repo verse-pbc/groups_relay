@@ -24,9 +24,12 @@ interface GroupInfoState {
   isUpdatingImage: boolean
   isAdmin: boolean
   isMember: boolean
+  copiedId: boolean
 }
 
 export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
+  private copyTimeout: number | null = null;
+
   state = {
     editingName: '',
     editingAbout: '',
@@ -38,7 +41,8 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
     editingImage: '',
     isUpdatingImage: false,
     isAdmin: false,
-    isMember: false
+    isMember: false,
+    copiedId: false
   }
 
   async componentDidMount() {
@@ -131,6 +135,9 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
       } else if ('closed' in changes && changes.closed !== undefined) {
         this.props.group.closed = changes.closed
         this.props.showMessage('Group membership setting updated successfully!', 'success')
+      } else if ('broadcast' in changes && changes.broadcast !== undefined) {
+        this.props.group.broadcast = changes.broadcast
+        this.props.showMessage('Group broadcast setting updated successfully!', 'success')
       }
     } catch (error) {
       console.error('Failed to update group settings:', error)
@@ -222,6 +229,25 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
       this.handleHideEditImage();
     } finally {
       this.setState({ isUpdatingImage: false });
+    }
+  }
+
+  copyGroupId = async () => {
+    try {
+      await navigator.clipboard.writeText(this.props.group.id);
+      this.setState({ copiedId: true });
+
+      if (this.copyTimeout) {
+        window.clearTimeout(this.copyTimeout);
+      }
+
+      this.copyTimeout = window.setTimeout(() => {
+        this.setState({ copiedId: false });
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy group ID:', err);
+      this.showError('Failed to copy group ID', err instanceof Error ? err : new Error(String(err)));
+      this.setState({ copiedId: false });
     }
   }
 
@@ -505,6 +531,34 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
                   aria-hidden="true"
                   class={`${
                     group.closed ? 'translate-x-5' : 'translate-x-0'
+                  } pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
+                />
+              </button>
+            </div>
+
+            {/* Broadcast Group Toggle */}
+            <div class="w-full flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <span class="text-lg">📢</span>
+                <div>
+                  <div class="font-medium">Broadcast Group</div>
+                  <div class="text-sm text-[var(--color-text-tertiary)]">Only admins can post messages</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => this.handleMetadataChange({ broadcast: !group.broadcast })}
+                class={`${
+                  group.broadcast ? 'bg-[var(--color-accent)]' : 'bg-[#2A2B2E]'
+                } relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-2`}
+                role="switch"
+                aria-checked={group.broadcast}
+              >
+                <span class="sr-only">Broadcast group setting</span>
+                <span
+                  aria-hidden="true"
+                  class={`${
+                    group.broadcast ? 'translate-x-5' : 'translate-x-0'
                   } pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
                 />
               </button>
