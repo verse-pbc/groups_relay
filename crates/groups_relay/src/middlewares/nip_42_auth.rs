@@ -95,8 +95,10 @@ impl Middleware for Nip42Middleware {
                     if tag_url.as_str_without_trailing_slash() != self.auth_url {
                         error!(
                             target: "auth",
-                            "[{}] Relay mismatch for AUTH message",
-                            ctx.connection_id
+                            "[{}] Relay mismatch for AUTH message, wants {} but got {}",
+                            ctx.connection_id,
+                            self.auth_url,
+                            tag_url.as_str_without_trailing_slash()
                         );
                         return Err(Error::auth_required("Relay mismatch").into());
                     }
