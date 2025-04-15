@@ -130,9 +130,8 @@ impl GroupMetadata {
         }
     }
 
-    /// Process event tags and update metadata fields accordingly.
-    /// Returns a new GroupMetadata instance with the updated fields.
-    pub fn process_metadata_tags(mut metadata: GroupMetadata, event: &Event) -> Self {
+    /// Apply event tags to update metadata fields.
+    pub fn apply_tags(&mut self, event: &Event) {
         let mut found_tags = std::collections::HashMap::new();
 
         // Process all tags in one pass
@@ -140,26 +139,26 @@ impl GroupMetadata {
             match tag.kind() {
                 TagKind::Name => {
                     if let Some(content) = tag.content() {
-                        metadata.name = content.to_string();
+                        self.name = content.to_string();
                     }
                 }
                 TagKind::Custom(kind) => {
                     match kind.as_ref() {
                         "about" => {
                             if let Some(content) = tag.content() {
-                                metadata.about = Some(content.to_string());
+                                self.about = Some(content.to_string());
                             }
                         }
                         "picture" => {
                             if let Some(content) = tag.content() {
-                                metadata.picture = Some(content.to_string());
+                                self.picture = Some(content.to_string());
                             }
                         }
-                        "private" => metadata.private = true,
-                        "closed" => metadata.closed = true,
+                        "private" => self.private = true,
+                        "closed" => self.closed = true,
                         "name" => {
                             if let Some(content) = tag.content() {
-                                metadata.name = content.to_string();
+                                self.name = content.to_string();
                             }
                         }
                         "d" => {} // Identifier tag, ignore
@@ -175,12 +174,9 @@ impl GroupMetadata {
         }
 
         // Update unknown tags, removing any that were replaced
-        metadata
-            .unknown_tags
+        self.unknown_tags
             .retain(|tag| !found_tags.contains_key(&tag.kind()));
-        metadata.unknown_tags.extend(found_tags.into_values());
-
-        metadata
+        self.unknown_tags.extend(found_tags.into_values());
     }
 }
 
@@ -683,7 +679,7 @@ impl Group {
             return Err(Error::notice("User cannot edit metadata"));
         }
 
-        self.metadata = GroupMetadata::process_metadata_tags(self.metadata.clone(), event);
+        self.metadata.apply_tags(event);
         self.update_state();
         Ok(())
     }
@@ -950,7 +946,7 @@ impl Group {
 
     // State loading methods - used during startup to rebuild state from stored events
     pub fn load_metadata_from_event(&mut self, event: &Event) -> Result<(), Error> {
-        self.metadata = GroupMetadata::process_metadata_tags(self.metadata.clone(), event);
+        self.metadata.apply_tags(event);
         self.update_timestamps(event);
         Ok(())
     }
