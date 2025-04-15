@@ -630,8 +630,8 @@ impl Group {
             return Err(Error::notice("User cannot edit metadata"));
         }
 
-        // Clear existing unknown tags since we're processing a new metadata event
-        self.metadata.unknown_tags.clear();
+        // Keep existing unknown tags
+        let mut unknown_tags = self.metadata.unknown_tags.clone();
 
         for tag in event.tags.iter() {
             match tag.kind() {
@@ -660,8 +660,10 @@ impl Group {
                         self.metadata.closed = true;
                     }
                     kind if kind != "h" => {
-                        // Store unknown custom tags
-                        self.metadata.unknown_tags.push(tag.clone());
+                        // Remove any existing tag with the same kind
+                        unknown_tags.retain(|t| t.kind() != tag.kind());
+                        // Add the new tag
+                        unknown_tags.push(tag.clone());
                     }
                     _ => {}
                 },
@@ -669,6 +671,7 @@ impl Group {
             }
         }
 
+        self.metadata.unknown_tags = unknown_tags;
         self.update_state();
         Ok(())
     }
@@ -2210,4 +2213,63 @@ mod tests {
         assert_eq!(group.metadata.about, Some("new_about".to_string()), "About should be updated");
     }
 
+    #[tokio::test]
+    async fn test_metadata_management_preserves_tags_across_updates() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+
+        // First metadata update with name, about, and unknown tag
+        let tags1 = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Name, ["first_name"]),
+            Tag::custom(TagKind::custom("about"), ["first_about"]),
+            Tag::custom(TagKind::custom("unknown_tag"), ["initial_value"]),
+        ];
+        let event1 = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002.as_u16(), tags1).await;
+        assert!(group.set_metadata(&event1, &admin_keys.public_key()).is_ok());
+
+        // Verify initial state
+        assert_eq!(group.metadata.name, "first_name");
+        assert_eq!(group.metadata.about, Some("first_about".to_string()));
+        assert_eq!(group.metadata.unknown_tags.len(), 1);
+        let unknown_tag = group.metadata.unknown_tags.iter().find(|t| t.kind() == TagKind::custom("unknown_tag"));
+        assert!(unknown_tag.is_some());
+        assert_eq!(unknown_tag.unwrap().content(), Some("initial_value"));
+
+        // Second metadata update with only name change
+        let tags2 = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Name, ["second_name"]),
+        ];
+        let event2 = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002.as_u16(), tags2).await;
+        assert!(group.set_metadata(&event2, &admin_keys.public_key()).is_ok());
+
+        // Verify that only name was updated, other fields preserved
+        assert_eq!(group.metadata.name, "second_name", "Name should be updated");
+        assert_eq!(group.metadata.about, Some("first_about".to_string()), "About should be preserved");
+        
+        // Verify unknown tag is still preserved
+        assert_eq!(group.metadata.unknown_tags.len(), 1, "Unknown tag should still be present");
+        let unknown_tag = group.metadata.unknown_tags.iter().find(|t| t.kind() == TagKind::custom("unknown_tag"));
+        assert!(unknown_tag.is_some(), "Original unknown tag should be preserved");
+        assert_eq!(unknown_tag.unwrap().content(), Some("initial_value"), "Unknown tag value should be unchanged");
+
+        // Third update with only about field
+        let tags3 = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("about"), ["new_about"]),
+        ];
+        let event3 = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002.as_u16(), tags3).await;
+        assert!(group.set_metadata(&event3, &admin_keys.public_key()).is_ok());
+
+        // Verify that only about was updated, other fields preserved
+        assert_eq!(group.metadata.name, "second_name", "Name should be preserved");
+        assert_eq!(group.metadata.about, Some("new_about".to_string()), "About should be updated");
+        
+        // Verify unknown tag is still preserved
+        assert_eq!(group.metadata.unknown_tags.len(), 1, "Unknown tag should still be present");
+        let unknown_tag = group.metadata.unknown_tags.iter().find(|t| t.kind() == TagKind::custom("unknown_tag"));
+        assert!(unknown_tag.is_some(), "Original unknown tag should be preserved");
+        assert_eq!(unknown_tag.unwrap().content(), Some("initial_value"), "Unknown tag value should be unchanged");
+    }
 }
