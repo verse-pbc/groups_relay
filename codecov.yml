@@ -21,3 +21,4 @@ ignore:
   - "**/*_test.rs"
   - "**/*.test.rs"
   - "**/tests/**"
+  - "**/bin/delete_event.rs"
