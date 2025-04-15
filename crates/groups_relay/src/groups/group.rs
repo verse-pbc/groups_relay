@@ -132,8 +132,7 @@ impl GroupMetadata {
 
     /// Process event tags and update metadata fields accordingly.
     /// Returns a new GroupMetadata instance with the updated fields.
-    pub fn process_metadata_tags(base: GroupMetadata, event: &Event) -> Self {
-        let mut metadata = base;
+    pub fn process_metadata_tags(mut metadata: GroupMetadata, event: &Event) -> Self {
         let mut found_tags = std::collections::HashMap::new();
 
         // Process all tags in one pass
