@@ -119,6 +119,8 @@ pub struct GroupMetadata {
     pub private: bool,
     /// Closed = automatic creation of 9000 events when a 9021 comes
     pub closed: bool,
+    /// Broadcast = only admins can publish content events (except join/leave)
+    pub is_broadcast: bool,
 }
 
 impl GroupMetadata {
@@ -129,6 +131,7 @@ impl GroupMetadata {
             picture: None,
             private: true,
             closed: true,
+            is_broadcast: false, // Default to false
         }
     }
 }
@@ -316,7 +319,8 @@ impl std::fmt::Debug for Group {
             writeln!(f, "    picture: \"{}\",", picture)?;
         }
         writeln!(f, "    private: {},", self.metadata.private)?;
-        writeln!(f, "    closed: {}", self.metadata.closed)?;
+        writeln!(f, "    closed: {},", self.metadata.closed)?;
+        writeln!(f, "    is_broadcast: {},", self.metadata.is_broadcast)?;
         writeln!(f, "  }},")?;
         writeln!(f, "  members: {{")?;
         for (pubkey, member) in &self.members {
@@ -408,13 +412,9 @@ impl Group {
         }
 
         // Add the creator as an admin
-        group.members.insert(
-            event.pubkey,
-            GroupMember {
-                pubkey: event.pubkey,
-                roles: HashSet::from([GroupRole::Admin]),
-            },
-        );
+        group
+            .members
+            .insert(event.pubkey, GroupMember::new_admin(event.pubkey));
 
         Ok(group)
     }
@@ -632,6 +632,12 @@ impl Group {
             return Err(Error::notice("User cannot edit metadata"));
         }
 
+        // Explicitly check for broadcast tag presence *in the incoming event*
+        let broadcast_tag_present = event.tags.find(TagKind::custom("broadcast")).is_some();
+
+        // Assume false unless the tag is explicitly present
+        self.metadata.is_broadcast = broadcast_tag_present;
+
         for tag in event.tags.iter() {
             match tag.kind() {
                 TagKind::Name => {
@@ -804,8 +810,29 @@ impl Group {
         event: Box<Event>,
         relay_pubkey: &PublicKey,
     ) -> Result<Vec<StoreCommand>, Error> {
+        let is_admin = self.is_admin(&event.pubkey);
         let is_member = self.is_member(&event.pubkey);
         let event_pubkey = event.pubkey;
+        let event_kind = event.kind;
+        let event_id = event.id;
+
+        // Check broadcast restrictions first
+        if self.metadata.is_broadcast
+            && !is_admin
+            && ![
+                KIND_GROUP_USER_JOIN_REQUEST_9021,
+                KIND_GROUP_USER_LEAVE_REQUEST_9022,
+            ]
+            .contains(&event_kind)
+        {
+            warn!(
+                "Blocked non-admin event {} (kind {}) in broadcast group {}",
+                event_id, event_kind, self.id
+            );
+            // Use Error::restricted as planned
+            return Err(Error::restricted("Only admins can post in broadcast mode"));
+        }
+
         let mut commands = vec![StoreCommand::SaveSignedEvent(event)];
 
         // For private and closed groups, only members can post
@@ -944,6 +971,7 @@ impl Group {
             .and_then(|t| t.content());
         let private = event.tags.find(TagKind::custom("private")).is_some();
         let closed = event.tags.find(TagKind::custom("closed")).is_some();
+        let is_broadcast = event.tags.find(TagKind::custom("broadcast")).is_some();
 
         self.metadata = GroupMetadata {
             name: name.unwrap_or(&self.id).to_string(),
@@ -951,6 +979,7 @@ impl Group {
             picture: picture.map(|s| s.to_string()),
             private,
             closed,
+            is_broadcast,
         };
 
         self.update_timestamps(event);
@@ -1139,6 +1168,11 @@ impl Group {
 
         if let Some(picture) = &self.metadata.picture {
             tags.push(Tag::custom(TagKind::custom("picture"), [picture.clone()]));
+        }
+
+        // Add broadcast tag if needed
+        if self.metadata.is_broadcast {
+            tags.push(Tag::custom(TagKind::custom("broadcast"), &[] as &[String]));
         }
 
         UnsignedEvent::new(
@@ -1437,6 +1471,7 @@ mod tests {
             Some("test_picture"),
             true,
             true,
+            None, // is_broadcast
         )
         .await;
 
@@ -1461,6 +1496,7 @@ mod tests {
             None,
             true,
             true,
+            None, // is_broadcast
         )
         .await;
 
@@ -1483,6 +1519,7 @@ mod tests {
             None,
             true,
             true,
+            None, // is_broadcast
         )
         .await;
 
@@ -1505,6 +1542,7 @@ mod tests {
             Some("picture_url"),
             true,
             true,
+            None, // is_broadcast
         )
         .await;
 
@@ -1521,7 +1559,8 @@ mod tests {
 
         // Test setting to public
         let public_event =
-            create_test_metadata_event(&admin_keys, &group_id, None, None, None, false, true).await;
+            create_test_metadata_event(&admin_keys, &group_id, None, None, None, false, true, None)
+                .await;
 
         assert!(group
             .set_metadata(&public_event, &admin_keys.public_key())
@@ -1530,7 +1569,8 @@ mod tests {
 
         // Test setting back to private
         let private_event =
-            create_test_metadata_event(&admin_keys, &group_id, None, None, None, true, true).await;
+            create_test_metadata_event(&admin_keys, &group_id, None, None, None, true, true, None)
+                .await;
 
         assert!(group
             .set_metadata(&private_event, &admin_keys.public_key())
@@ -1551,6 +1591,7 @@ mod tests {
             Some("picture_url"),
             false,
             true,
+            None, // is_broadcast
         )
         .await;
 
@@ -2083,5 +2124,173 @@ mod tests {
         // Verify admin still has admin role
         let stored_member = group.members.get(&admin_keys.public_key()).unwrap();
         assert!(stored_member.roles.contains(&GroupRole::Admin));
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_mode_restrictions() {
+        let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
+        let relay_keys = Keys::generate(); // For generating state events
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+
+        // Add member
+        add_member_to_group(&mut group, &admin_keys, &member_keys, &group_id).await;
+
+        // --- Scenario 1: Broadcast Mode Enabled ---
+        // Setup: Update metadata via kind:9002 to include ["broadcast"] tag.
+        let broadcast_metadata_event = create_test_metadata_event(
+            &admin_keys,
+            &group_id,
+            None,       // name
+            None,       // about
+            None,       // picture
+            true,       // is_private
+            true,       // is_closed
+            Some(true), // is_broadcast
+        )
+        .await;
+        assert!(group
+            .set_metadata(&broadcast_metadata_event, &admin_keys.public_key())
+            .is_ok());
+        assert!(group.metadata.is_broadcast);
+
+        // Test Admin Publishing (succeeds)
+        let admin_text_note = create_test_event(
+            &admin_keys,
+            Kind::TextNote.as_u16(),
+            vec![Tag::custom(TagKind::h(), [group_id.clone()])],
+        )
+        .await;
+        assert!(group
+            .handle_group_content(Box::new(admin_text_note), &relay_keys.public_key())
+            .is_ok());
+
+        // Test Member Publishing Standard Content (blocked)
+        let member_text_note = create_test_event(
+            &member_keys,
+            Kind::TextNote.as_u16(),
+            vec![Tag::custom(TagKind::h(), [group_id.clone()])],
+        )
+        .await;
+        let result =
+            group.handle_group_content(Box::new(member_text_note), &relay_keys.public_key());
+        assert!(matches!(result, Err(Error::Restricted { .. }))); // Use Error::Restricted
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Restricted: Only admins can post in broadcast mode"
+        );
+
+        // Test Non-Member Publishing Standard Content (blocked, handled by membership check)
+        let non_member_text_note = create_test_event(
+            &non_member_keys,
+            Kind::TextNote.as_u16(),
+            vec![Tag::custom(TagKind::h(), [group_id.clone()])],
+        )
+        .await;
+        let result_non_member =
+            group.handle_group_content(Box::new(non_member_text_note), &relay_keys.public_key());
+        // In a closed, broadcast group, the broadcast restriction for non-admins takes precedence
+        assert!(matches!(result_non_member, Err(Error::Restricted { .. })));
+        assert_eq!(
+            result_non_member.unwrap_err().to_string(),
+            "Restricted: Only admins can post in broadcast mode" // Broadcast check happens first
+        );
+
+        // Test Member Publishing Join Request (allowed)
+        // Note: A member trying to join again is pointless, but the broadcast check shouldn't block it.
+        // We need a separate test for the join_request function's logic.
+        // Here, we just test if handle_group_content would block it based on broadcast.
+        // Let's assume, hypothetically, join requests went through handle_group_content.
+        // We know they don't, but this checks the broadcast logic isolation.
+        let member_join_request = create_test_event(
+            &member_keys,
+            KIND_GROUP_USER_JOIN_REQUEST_9021.as_u16(),
+            vec![Tag::custom(TagKind::h(), [group_id.clone()])],
+        )
+        .await;
+        // We expect this *not* to fail with Error::Restricted, but it might fail other checks.
+        // The `handle_group_content` doesn't handle join/leave, so we can't directly assert here.
+        // We rely on the code inspection: the check explicitly allows these kinds.
+
+        // Test Member Publishing Leave Request (allowed)
+        // Similar to join requests, leave requests are handled separately.
+        let member_leave_request = create_test_event(
+            &member_keys,
+            KIND_GROUP_USER_LEAVE_REQUEST_9022.as_u16(),
+            vec![Tag::custom(TagKind::h(), [group_id.clone()])],
+        )
+        .await;
+        // We expect this *not* to fail with Error::Restricted.
+
+        // --- Scenario 2: Broadcast Mode Disabled (Default) ---
+        // Setup: Create a new group without the broadcast tag.
+        let (admin_keys_2, member_keys_2, _) = create_test_keys().await;
+        let (mut group_2, group_id_2) = create_test_group(&admin_keys_2).await;
+        add_member_to_group(&mut group_2, &admin_keys_2, &member_keys_2, &group_id_2).await;
+        assert!(!group_2.metadata.is_broadcast); // Should be false by default
+
+        // Test Member Publishing (succeeds)
+        let member_text_note_2 = create_test_event(
+            &member_keys_2,
+            Kind::TextNote.as_u16(),
+            vec![Tag::custom(TagKind::h(), [group_id_2.clone()])],
+        )
+        .await;
+        assert!(group_2
+            .handle_group_content(Box::new(member_text_note_2), &relay_keys.public_key())
+            .is_ok());
+
+        // --- Scenario 3: Disabling Broadcast Mode ---
+        // Setup: Enable broadcast mode, then disable it.
+        let (admin_keys_3, member_keys_3, _) = create_test_keys().await;
+        let (mut group_3, group_id_3) = create_test_group(&admin_keys_3).await;
+        add_member_to_group(&mut group_3, &admin_keys_3, &member_keys_3, &group_id_3).await;
+
+        // Enable broadcast
+        let broadcast_metadata_event_3 = create_test_metadata_event(
+            &admin_keys_3,
+            &group_id_3,
+            None,
+            None,
+            None,
+            true,
+            true,
+            Some(true),
+        )
+        .await;
+        assert!(group_3
+            .set_metadata(&broadcast_metadata_event_3, &admin_keys_3.public_key())
+            .is_ok());
+        assert!(group_3.metadata.is_broadcast);
+
+        // Disable broadcast by sending metadata event *without* the broadcast tag
+        let no_broadcast_metadata_event_3 = create_test_metadata_event(
+            &admin_keys_3,
+            &group_id_3,
+            None, // name
+            None, // about
+            None, // picture
+            true, // is_private
+            true, // is_closed
+            None, // is_broadcast -> defaults to None/false
+        )
+        .await;
+        assert!(group_3
+            .set_metadata(&no_broadcast_metadata_event_3, &admin_keys_3.public_key())
+            .is_ok());
+        assert!(!group_3.metadata.is_broadcast);
+
+        // Test Member Publishing (succeeds again)
+        let member_text_note_3 = create_test_event(
+            &member_keys_3,
+            Kind::TextNote.as_u16(),
+            vec![Tag::custom(TagKind::h(), [group_id_3.clone()])],
+        )
+        .await;
+        assert!(group_3
+            .handle_group_content(Box::new(member_text_note_3), &relay_keys.public_key())
+            .is_ok());
+
+        // Remove the panic! as the test should now pass (or fail meaningfully)
+        // panic!("Test structure added, but logic and assertions are pending implementation.");
     }
 }

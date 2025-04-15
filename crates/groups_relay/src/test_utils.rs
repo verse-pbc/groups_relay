@@ -157,6 +157,7 @@ pub async fn create_test_metadata_event(
     picture: Option<&str>,
     is_private: bool,
     is_closed: bool,
+    is_broadcast: Option<bool>,
 ) -> Event {
     let mut tags = vec![Tag::custom(TagKind::h(), [group_id])];
 
@@ -178,6 +179,11 @@ pub async fn create_test_metadata_event(
         tags.push(Tag::custom(TagKind::Custom("closed".into()), [""]));
     } else {
         tags.push(Tag::custom(TagKind::Custom("open".into()), [""]));
+    }
+
+    // Add broadcast tag if specified
+    if let Some(true) = is_broadcast {
+        tags.push(Tag::custom(TagKind::Custom("broadcast".into()), [""]));
     }
 
     create_test_event(admin_keys, 9002, tags).await
