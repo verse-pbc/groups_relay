@@ -13,8 +13,8 @@ WORKDIR /usr/src/app
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-# Build the relay binary
-RUN cargo build --release --package groups_relay
+# Build all workspace binaries
+RUN cargo build --release --workspace
 
 FROM node:20-slim AS frontend-builder
 
@@ -51,6 +51,7 @@ WORKDIR /app
 
 # Copy pre-built artifacts and default config
 COPY --from=rust-builder /usr/src/app/target/release/groups_relay ./groups_relay
+COPY --from=rust-builder /usr/src/app/target/release/delete_event ./delete_event
 COPY crates/groups_relay/config/settings.yml ./config/
 COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
 
