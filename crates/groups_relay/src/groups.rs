@@ -1194,10 +1194,16 @@ mod tests {
         let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event =
             create_test_event(&admin_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
-        assert!(!groups.handle_leave_request(leave_event).unwrap().is_empty());
 
+        // The last admin should not be able to leave
+        let result = groups.handle_leave_request(leave_event);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Cannot remove last admin");
+
+        // Verify admin is still in the group
         let group = groups.get_group(&group_id).unwrap();
-        assert!(!group.is_member(&admin_keys.public_key()));
+        assert!(group.is_member(&admin_keys.public_key()));
+        assert!(group.is_admin(&admin_keys.public_key()));
     }
 
     #[tokio::test]
