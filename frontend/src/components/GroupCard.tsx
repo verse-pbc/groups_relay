@@ -37,7 +37,7 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
     const { isRelayAdmin } = this.state
 
     return (
-      <article class="h-full bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] overflow-hidden flex flex-col">
+      <article class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] flex flex-col">
         {isRelayAdmin && (
           <div class="p-4 bg-yellow-500/10 border-b border-yellow-500/20">
             <div class="flex items-center gap-2 text-yellow-500">

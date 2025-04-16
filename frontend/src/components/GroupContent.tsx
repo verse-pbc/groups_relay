@@ -1,4 +1,4 @@
-import { Component } from 'preact'
+import { Component, createElement } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
 import { ContentSection } from './ContentSection'
@@ -20,12 +20,14 @@ type TabType = 'content' | 'members' | 'invites' | 'requests' | 'info'
 interface GroupContentState {
   activeTab: TabType
   deletedInvites: Set<string>
+  isAdmin: boolean
 }
 
 export class GroupContent extends Component<GroupContentProps, GroupContentState> {
   state: GroupContentState = {
     activeTab: 'content',
-    deletedInvites: new Set<string>()
+    deletedInvites: new Set<string>(),
+    isAdmin: false
   }
 
   handleTabChange = (tab: TabType) => {
@@ -40,62 +42,54 @@ export class GroupContent extends Component<GroupContentProps, GroupContentState
 
   render() {
     const { group, client, showMessage, updateGroupsMap } = this.props
-    const { activeTab, deletedInvites } = this.state
+    const { activeTab, isAdmin } = this.state
 
-    // Filter invites for both the tabs and invite section
-    const filteredInvites = Object.entries(group.invites || {})
-      .filter(([code]) => !deletedInvites.has(code))
-      .reduce((acc, [code, invite]) => ({ ...acc, [code]: invite }), {})
-
+    // Filter invites before passing to tabs or sections
     const groupWithFilteredInvites = {
       ...group,
-      invites: filteredInvites
-    }
+      invites: Object.fromEntries(
+        Object.entries(group.invites || {}).filter(([code]) => !this.state.deletedInvites.has(code))
+      )
+    };
+
+    const sections = [
+      // Keep section definitions for mapping, but GroupTabs will use the group prop
+      { id: 'content', label: 'Content', component: ContentSection },
+      { id: 'members', label: 'Members', component: MembersSection },
+      { id: 'invites', label: 'Invites', component: InviteSection },
+      { id: 'requests', label: 'Requests', component: JoinRequestSection },
+      { id: 'info', label: 'Info', component: InfoSection }
+    ] as const; // Use const assertion for type safety
+
+    const ActiveSection = sections.find(s => s.id === activeTab)?.component
 
     return (
-      <div class="flex flex-col flex-1">
+      <div class="flex flex-col p-4 lg:p-6">
         <GroupTabs
+          // Pass group object back to GroupTabs
           group={groupWithFilteredInvites}
           activeTab={activeTab}
           onTabChange={this.handleTabChange}
         />
-
-        <div class="flex-grow px-6 py-6">
-          {activeTab === 'content' && (
+        <div class="mt-4">
+          {/* Conditionally pass isAdmin only if the component is NOT ContentSection */}
+          {ActiveSection && activeTab === 'content' && (
             <ContentSection
               group={group}
               client={client}
               showMessage={showMessage}
             />
           )}
-          {activeTab === 'members' && (
-            <MembersSection
-              group={group}
-              client={client}
-              showMessage={showMessage}
-            />
-          )}
-          {activeTab === 'invites' && (
-            <InviteSection
-              group={groupWithFilteredInvites}
-              client={client}
-              updateGroupsMap={updateGroupsMap}
-              showMessage={showMessage}
-              onInviteDelete={this.handleInviteDelete}
-            />
-          )}
-          {activeTab === 'requests' && (
-            <JoinRequestSection
-              group={group}
-              client={client}
-              showMessage={showMessage}
-            />
-          )}
-          {activeTab === 'info' && (
-            <InfoSection
-              group={group}
-              showMessage={showMessage}
-            />
+          {ActiveSection && activeTab !== 'content' && (
+            createElement(ActiveSection as any, {
+              group: group, // Pass original group or filtered one as needed by section
+              client: client,
+              showMessage: showMessage,
+              updateGroupsMap: updateGroupsMap,
+              isAdmin: isAdmin, // Pass isAdmin to other sections
+              // Pass onInviteDelete specifically to InviteSection if needed
+              ...(activeTab === 'invites' && { onInviteDelete: this.handleInviteDelete })
+            })
           )}
         </div>
       </div>

@@ -710,8 +710,8 @@ export class App extends Component<AppProps, AppState> {
                  />
              )}
 
-            {/* Main Content Area */}
-            <main class="flex-grow p-4 lg:p-8 overflow-y-auto h-[calc(100vh-4rem)]"> {/* Ensure content area scrolls */}
+            {/* Main Content Area - Remove fixed height and overflow */}
+            <main class="flex-grow p-4 lg:p-8"> {/* Removed overflow-y-auto h-[calc(...)] */}
                  {isLoadingHistory ? (
                      <div class="text-center text-[var(--color-text-secondary)] mt-8">
                          <p>Loading historical messages...</p>
