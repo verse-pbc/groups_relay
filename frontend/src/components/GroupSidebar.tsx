@@ -5,8 +5,9 @@ import { NostrClient } from '../api/nostr_client';
 interface GroupSidebarProps {
   groups: Group[];
   selectedGroupId?: string;
-  onSelectGroup: (group: Group) => void;
+  onSelectGroup: (group: Group | string) => void;
   client: NostrClient;
+  isLoading: boolean;
 }
 
 interface GroupSidebarState {
@@ -72,15 +73,15 @@ export class GroupSidebar extends Component<GroupSidebarProps, GroupSidebarState
   };
 
   renderGroupButton = (group: Group) => {
-    const { selectedGroupId, onSelectGroup } = this.props;
+    const { selectedGroupId: _selectedGroupId, onSelectGroup: _onSelectGroup } = this.props;
     const { adminGroups, memberGroups } = this.state;
 
     return (
       <button
         key={group.id}
-        onClick={() => onSelectGroup(group)}
+        onClick={() => _onSelectGroup(group)}
         class={`w-full p-3 rounded-lg border text-left transition-colors
-               ${selectedGroupId === group.id
+               ${_selectedGroupId === group.id
                  ? 'bg-[var(--color-bg-primary)] border-[var(--color-border-hover)]'
                  : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] hover:border-[var(--color-border-hover)]'
                }`}
@@ -132,7 +133,7 @@ export class GroupSidebar extends Component<GroupSidebarProps, GroupSidebarState
   };
 
   render() {
-    const { groups } = this.props;
+    const { groups, selectedGroupId: _selectedGroupId, onSelectGroup: _onSelectGroup, isLoading } = this.props;
     const { adminGroups, memberGroups, showOtherGroups } = this.state;
 
     // Empty groups where user is not a member
@@ -172,7 +173,17 @@ export class GroupSidebar extends Component<GroupSidebarProps, GroupSidebarState
       <div class="mt-8 space-y-6">
         {/* Main Groups */}
         <div class="space-y-2">
-          {mainGroups.map(this.renderGroupButton)}
+          {isLoading ? (
+            <div class="text-center text-xs text-[var(--color-text-secondary)] py-4">
+              Loading...
+            </div>
+          ) : groups.length > 0 ? (
+            mainGroups.map(this.renderGroupButton)
+          ) : (
+            <div class="text-center text-xs text-[var(--color-text-secondary)] py-4">
+              No groups found.
+            </div>
+          )}
         </div>
 
         {/* Other Groups */}
