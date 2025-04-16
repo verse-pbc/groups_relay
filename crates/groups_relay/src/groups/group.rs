@@ -133,7 +133,7 @@ impl GroupMetadata {
             picture: None,
             private: true,
             closed: true,
-            is_broadcast: false, // Default to false
+            is_broadcast: false,
             unknown_tags: Vec::new(),
         }
     }
@@ -1171,6 +1171,11 @@ impl Group {
         // Add broadcast tag if needed
         if self.metadata.is_broadcast {
             tags.push(Tag::custom(TagKind::custom("broadcast"), &[] as &[String]));
+        } else {
+            tags.push(Tag::custom(
+                TagKind::custom("nonbroadcast"),
+                &[] as &[String],
+            ));
         }
 
         UnsignedEvent::new(
@@ -1469,7 +1474,7 @@ mod tests {
             Some("test_picture"),
             true,
             true,
-            None, // is_broadcast
+            false, // is_broadcast
         )
         .await;
 
@@ -1494,7 +1499,7 @@ mod tests {
             None,
             true,
             true,
-            None, // is_broadcast
+            false, // is_broadcast
         )
         .await;
 
@@ -1517,7 +1522,7 @@ mod tests {
             None,
             true,
             true,
-            None, // is_broadcast
+            false, // is_broadcast
         )
         .await;
 
@@ -1540,7 +1545,7 @@ mod tests {
             Some("picture_url"),
             true,
             true,
-            None, // is_broadcast
+            false, // is_broadcast
         )
         .await;
 
@@ -1556,9 +1561,17 @@ mod tests {
         let (mut group, group_id) = create_test_group(&admin_keys).await;
 
         // Test setting to public
-        let public_event =
-            create_test_metadata_event(&admin_keys, &group_id, None, None, None, false, true, None)
-                .await;
+        let public_event = create_test_metadata_event(
+            &admin_keys,
+            &group_id,
+            None,
+            None,
+            None,
+            false,
+            true,
+            false,
+        )
+        .await;
 
         assert!(group
             .set_metadata(&public_event, &admin_keys.public_key())
@@ -1567,7 +1580,7 @@ mod tests {
 
         // Test setting back to private
         let private_event =
-            create_test_metadata_event(&admin_keys, &group_id, None, None, None, true, true, None)
+            create_test_metadata_event(&admin_keys, &group_id, None, None, None, true, true, false)
                 .await;
 
         assert!(group
@@ -1589,7 +1602,7 @@ mod tests {
             Some("picture_url"),
             false,
             true,
-            None, // is_broadcast
+            false, // is_broadcast
         )
         .await;
 
@@ -2376,12 +2389,12 @@ mod tests {
         let broadcast_metadata_event = create_test_metadata_event(
             &admin_keys,
             &group_id,
-            None,       // name
-            None,       // about
-            None,       // picture
-            true,       // is_private
-            true,       // is_closed
-            Some(true), // is_broadcast
+            None, // name
+            None, // about
+            None, // picture
+            true, // is_private
+            true, // is_closed
+            true, // is_broadcast
         )
         .await;
         assert!(group
@@ -2437,7 +2450,7 @@ mod tests {
         // Here, we just test if handle_group_content would block it based on broadcast.
         // Let's assume, hypothetically, join requests went through handle_group_content.
         // We know they don't, but this checks the broadcast logic isolation.
-        let member_join_request = create_test_event(
+        let _member_join_request = create_test_event(
             &member_keys,
             KIND_GROUP_USER_JOIN_REQUEST_9021.as_u16(),
             vec![Tag::custom(TagKind::h(), [group_id.clone()])],
@@ -2449,7 +2462,7 @@ mod tests {
 
         // Test Member Publishing Leave Request (allowed)
         // Similar to join requests, leave requests are handled separately.
-        let member_leave_request = create_test_event(
+        let _member_leave_request = create_test_event(
             &member_keys,
             KIND_GROUP_USER_LEAVE_REQUEST_9022.as_u16(),
             vec![Tag::custom(TagKind::h(), [group_id.clone()])],
@@ -2490,7 +2503,7 @@ mod tests {
             None,
             true,
             true,
-            Some(true),
+            true,
         )
         .await;
         assert!(group_3
@@ -2502,12 +2515,12 @@ mod tests {
         let no_broadcast_metadata_event_3 = create_test_metadata_event(
             &admin_keys_3,
             &group_id_3,
-            None, // name
-            None, // about
-            None, // picture
-            true, // is_private
-            true, // is_closed
-            None, // is_broadcast -> defaults to None/false
+            None,  // name
+            None,  // about
+            None,  // picture
+            true,  // is_private
+            true,  // is_closed
+            false, // is_broadcast
         )
         .await;
         assert!(group_3
@@ -2525,8 +2538,5 @@ mod tests {
         assert!(group_3
             .handle_group_content(Box::new(member_text_note_3), &relay_keys.public_key())
             .is_ok());
-
-        // Remove the panic! as the test should now pass (or fail meaningfully)
-        // panic!("Test structure added, but logic and assertions are pending implementation.");
     }
 }
