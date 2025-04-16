@@ -163,8 +163,11 @@ impl GroupMetadata {
                             }
                         }
                         "private" => self.private = true,
+                        "public" => self.private = false,
+                        "open" => self.closed = false,
                         "closed" => self.closed = true,
                         "broadcast" => self.is_broadcast = true,
+                        "nonbroadcast" => self.is_broadcast = false,
                         "name" => {
                             if let Some(content) = tag.content() {
                                 self.name = content.to_string();
