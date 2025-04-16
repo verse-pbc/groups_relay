@@ -1,7 +1,6 @@
 use crate::error::Error;
 use crate::StoreCommand;
-use nostr::prelude::*;
-use nostr::{Tag, TagKind};
+use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -948,14 +947,30 @@ impl Group {
         }
 
         self.join_requests.remove(&event.pubkey);
+
+        // Check if the user is an admin and if they're the last admin
+        let is_admin = self.is_admin(&event.pubkey);
+        if is_admin && self.admin_pubkeys().len() == 1 {
+            return Err(Error::notice("Cannot remove last admin"));
+        }
+
         let removed = self.members.remove(&event.pubkey).is_some();
         self.update_state();
+
         if removed {
+            let mut commands = vec![StoreCommand::SaveSignedEvent(event)];
+
+            // If the user was an admin, also generate an updated admins event
+            if is_admin {
+                let admins_event = self.generate_admins_event(relay_pubkey);
+                commands.push(StoreCommand::SaveUnsignedEvent(admins_event));
+            }
+
+            // Always generate a members event
             let members_event = self.generate_members_event(relay_pubkey);
-            Ok(vec![
-                StoreCommand::SaveSignedEvent(event),
-                StoreCommand::SaveUnsignedEvent(members_event),
-            ])
+            commands.push(StoreCommand::SaveUnsignedEvent(members_event));
+
+            Ok(commands)
         } else {
             Ok(vec![])
         }
@@ -1423,8 +1438,6 @@ mod tests {
         create_test_invite_event, create_test_keys, create_test_metadata_event,
         create_test_role_event, remove_member_from_group,
     };
-    use pretty_assertions::assert_eq;
-
     #[tokio::test]
     async fn test_group_creation() {
         let (admin_keys, _, _) = create_test_keys().await;
@@ -2538,5 +2551,53 @@ mod tests {
         assert!(group_3
             .handle_group_content(Box::new(member_text_note_3), &relay_keys.public_key())
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_leave_request_admin_behavior() {
+        let (admin_keys, member_keys, relay_pubkey) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+
+        // Add a regular member
+        add_member_to_group(&mut group, &admin_keys, &member_keys, &group_id).await;
+        assert!(group.is_member(&member_keys.public_key()));
+
+        // Make the member an admin
+        let add_admin_event =
+            create_test_role_event(&admin_keys, &group_id, member_keys.public_key(), "admin").await;
+        group
+            .set_roles(Box::new(add_admin_event), &admin_keys.public_key())
+            .unwrap();
+        assert!(group.is_admin(&member_keys.public_key()));
+
+        // Now we have two admins
+        assert_eq!(group.admin_pubkeys().len(), 2);
+
+        // Test 1: When an admin (not the last one) leaves, both admins and members events are generated
+        let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let leave_event = create_test_event(&member_keys, 9022, leave_tags).await;
+
+        let result = group.leave_request(Box::new(leave_event), &relay_pubkey.public_key());
+        assert!(result.is_ok());
+
+        let commands = result.unwrap();
+        assert_eq!(
+            commands.len(),
+            3,
+            "Should generate 3 events: original leave request, updated admins, and updated members"
+        );
+
+        // Test 2: When the last admin tries to leave, it should fail
+        let last_admin_leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
+        let last_admin_leave_event =
+            create_test_event(&admin_keys, 9022, last_admin_leave_tags).await;
+
+        let last_admin_result =
+            group.leave_request(Box::new(last_admin_leave_event), &relay_pubkey.public_key());
+        assert!(last_admin_result.is_err());
+        assert_eq!(
+            last_admin_result.unwrap_err().to_string(),
+            "Cannot remove last admin"
+        );
     }
 }

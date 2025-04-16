@@ -1,9 +1,6 @@
 import { Component } from "preact";
 import { NostrClient, GroupEventKind } from "../api/nostr_client";
-import type {
-  Group,
-  GroupContent as GroupChatMessage,
-} from "../types";
+import type { Group, GroupContent as GroupChatMessage } from "../types";
 import { CreateGroupForm } from "./CreateGroupForm";
 import { GroupCard } from "./GroupCard";
 import { FlashMessage } from "./FlashMessage";
@@ -11,10 +8,39 @@ import { GroupSidebar } from "./GroupSidebar";
 import { BurgerButton } from "./BurgerButton";
 import { ProfileMenu } from "./ProfileMenu";
 
-// Define NDKKind type since we can't import it
+// Import NDK types if possible from your client setup, otherwise define them
+// Assuming they might be available like this (adjust if needed):
+// import type { NDK, NDKEvent, NDKFilter, NDKKind } from "@nostr-dev-kit/ndk";
+// If not available via import, define NDKKind:
+// --- Start Local Type Definitions ---
 type NDKKind = number;
+type NDKFilter = Record<string, any>; // Basic type
+type NDKEvent = { // Define structure based on usage
+    id: string;
+    kind: NDKKind;
+    pubkey: string;
+    created_at: number;
+    content: string;
+    tags: string[][];
+    sig?: string; // Make sig optional
+    rawEvent: () => any; // Function returning the raw event data
+};
+// Remove unused NDK type
+// type NDK = Record<string, any>;
+// --- End Local Type Definitions ---
 
-const metadataKinds = [39000, 39001, 39002, 39003];
+const metadataKinds: NDKKind[] = [39000, 39001, 39002 /*, 39003 removed if not used */];
+
+// Define all kinds to fetch historically and subscribe to live
+const relevantKinds: NDKKind[] = [
+  ...metadataKinds,
+  GroupEventKind.CreateGroup,
+  GroupEventKind.CreateInvite,
+  GroupEventKind.JoinRequest,
+  9, // Chat message
+  11, // DM (Note: DMs might require specific handling/decryption not shown here)
+  // Add other kinds if needed, e.g., deletions (Kind 5) if you handle them
+];
 
 export interface FlashMessageData {
   message: string;
@@ -22,7 +48,7 @@ export interface FlashMessageData {
 }
 
 interface AppProps {
-  client: NostrClient;
+  client: NostrClient; // Assuming NostrClient exposes the NDK instance
   onLogout: () => void;
 }
 
@@ -32,11 +58,13 @@ interface AppState {
   groupsMap: Map<string, Group>;
   selectedGroup: Group | null;
   isMobileMenuOpen: boolean;
-  pendingGroupSelection: string | null;  // Queue of one for simplicity
+  pendingGroupSelection: string | null; // Queue of one for simplicity
+  isLoadingHistory: boolean; // Added state to indicate loading
 }
 
 export class App extends Component<AppProps, AppState> {
-  private cleanup: (() => void) | null = null;
+  // No cleanup needed for historical fetch using fetchEvents
+  private liveSubscriptionCleanup: (() => void) | null = null; // For the live subscription
 
   constructor(props: AppProps) {
     super(props);
@@ -47,10 +75,15 @@ export class App extends Component<AppProps, AppState> {
       selectedGroup: null,
       isMobileMenuOpen: false,
       pendingGroupSelection: null,
+      isLoadingHistory: true, // Start in loading state
     };
   }
 
-  private getOrCreateGroup = (groupId: string, createdAt: number, groupsMap: Map<string, Group>): Group => {
+  private getOrCreateGroup = (
+    groupId: string,
+    createdAt: number,
+    groupsMap: Map<string, Group>
+  ): Group => {
     const existingGroup = groupsMap.get(groupId);
     if (!existingGroup) {
       const group: Group = {
@@ -61,8 +94,8 @@ export class App extends Component<AppProps, AppState> {
         private: false,
         closed: false,
         broadcast: false,
-        created_at: 0,  // Initialize to 0, will be set when we process the creation event
-        updated_at: createdAt,
+        created_at: 0, // Initialize, set by CreateGroup event
+        updated_at: createdAt, // Track latest interaction
         members: [],
         invites: {},
         joinRequests: [],
@@ -71,335 +104,468 @@ export class App extends Component<AppProps, AppState> {
       return group;
     }
 
+    // Return existing group but update the 'updated_at' timestamp
     return {
       ...existingGroup,
-      updated_at: Math.max(existingGroup.updated_at, createdAt)
+      updated_at: Math.max(existingGroup.updated_at, createdAt),
     };
   };
 
-  processEvent = (event: any, groupsMap: Map<string, Group>) => {
-    const groupId = event.tags.find((t: string[]) => t[0] === "h" || t[0] === "d")?.[1];
-    if (!groupId) return groupsMap;
+  // Modified processEvent to mutate the map passed in, or ensure it's reassigned
+  processEvent = (event: any, groupsMap: Map<string, Group>): Map<string, Group> => {
+      const groupId = event.tags.find((t: string[]) => t[0] === "h" || t[0] === "d")?.[1];
+      if (!groupId) return groupsMap; // Return unchanged map if no group ID
 
-    const group = this.getOrCreateGroup(groupId, event.created_at, groupsMap);
+      const group = this.getOrCreateGroup(groupId, event.created_at, groupsMap);
 
-    if (!groupsMap.has(groupId)) {
-      groupsMap.set(groupId, group);
-    }
+      // Ensure the group exists in the map before proceeding
+      if (!groupsMap.has(groupId)) {
+          groupsMap.set(groupId, group);
+      }
 
-    const baseGroup = {
-      ...group,
-      members: [...group.members],
-      joinRequests: [...group.joinRequests],
-      invites: { ...group.invites },
-      content: group.content ? [...group.content] : []
-    };
+      // Create a mutable copy of the group's state if needed, but modifying the map entry directly is okay
+      const baseGroup = groupsMap.get(groupId)!; // We know it exists now
 
-    let updatedGroup: Group | null = null;
-
-    switch (event.kind) {
-      case GroupEventKind.CreateGroup: {
-        updatedGroup = {
+      // Create copies of arrays/objects that will be modified to avoid direct state mutation issues
+      // if not mutating the map entry directly. If mutating map entry, this spread is just for safety.
+      const mutableGroup = {
           ...baseGroup,
-          created_at: event.created_at  // Set created_at only for creation events
-        };
-        break;
-      }
+          members: [...baseGroup.members],
+          joinRequests: [...baseGroup.joinRequests],
+          invites: { ...baseGroup.invites },
+          content: baseGroup.content ? [...baseGroup.content] : []
+      };
 
-      case GroupEventKind.CreateInvite: {
-        const codeTag = event.tags.find((t: string[]) => t[0] === "code");
-        if (codeTag) {
-          const [_, code] = codeTag;
-          const invites = { ...baseGroup.invites };
-          invites[code] = {
-            code,
-            pubkey: event.pubkey,
-            roles: ["member"],
-            id: event.id
-          };
-          updatedGroup = {
-            ...baseGroup,
-            invites
-          };
-        }
-        break;
-      }
+      let updated = false; // Flag to check if we actually changed the group
 
-      case 39000: { // Group metadata
-        // Start by assuming broadcast is off unless the tag is present
-        const newMetadata: Partial<Group> = {
-          broadcast: false
-        };
-
-        for (const tagArr of event.tags) {
-          const tag = tagArr[0];
-          const value = tagArr[1];
-
-          switch (tag) {
-            case "name":
-              newMetadata.name = value;
-              break;
-            case "about":
-              newMetadata.about = value;
-              break;
-            case "picture":
-              newMetadata.picture = value;
-              break;
-            case "private":
-              newMetadata.private = true;
-              break;
-            case "public":
-              newMetadata.private = false;
-              break;
-            case "closed":
-              newMetadata.closed = true;
-              break;
-            case "open":
-              newMetadata.closed = false;
-              break;
-            case "broadcast": // Check for the broadcast tag
-              newMetadata.broadcast = true;
+      switch (event.kind as NDKKind) {
+          case GroupEventKind.CreateGroup: {
+              mutableGroup.created_at = event.created_at;
+              updated = true;
               break;
           }
-        }
 
-        updatedGroup = {
-          ...baseGroup,
-          ...newMetadata,
-          members: baseGroup.members // Explicitly preserve members
-        };
-        break;
-      }
-
-      case 39001: { // Group admins
-        const currentMembers = new Map(baseGroup.members.map(m => [m.pubkey, { ...m }]));
-
-        // Get all pubkeys from the event
-        const eventPubkeys = new Set(
-          event.tags
-            .filter((t: string[]) => t[0] === "p")
-            .map((t: string[]) => t[1])
-        );
-
-        // Remove members who are no longer in the admin list and have no other roles
-        for (const [pubkey, member] of currentMembers.entries()) {
-          const isCurrentlyAdmin = member.roles.some(r => r.toLowerCase() === 'admin');
-          if (isCurrentlyAdmin) {
-            if (!eventPubkeys.has(pubkey)) {
-              // This member is no longer an admin
-              member.roles = member.roles.filter(r => r.toLowerCase() !== 'admin');
-              if (member.roles.length === 0) {
-                member.roles = ["Member"];
+          case GroupEventKind.CreateInvite: {
+              const codeTag = event.tags.find((t: string[]) => t[0] === "code");
+              if (codeTag) {
+                  const [_, code] = codeTag;
+                  // Ensure invites object exists
+                  mutableGroup.invites = mutableGroup.invites || {};
+                  mutableGroup.invites[code] = {
+                      code,
+                      pubkey: event.pubkey,
+                      roles: ["member"], // Default role
+                      id: event.id
+                  };
+                  updated = true;
               }
-            }
+              break;
           }
-        }
 
-        // Update roles for members in the event
-        event.tags
-          .filter((t: string[]) => t[0] === "p")
-          .forEach((t: string[]) => {
-            const [_, pubkey, ...roles] = t;
-            // Create or update member
-            const member = currentMembers.get(pubkey) || { pubkey, roles: [] };
+          case 39000: { // Group metadata
+              const newMetadata: Partial<Group> = { broadcast: false }; // Default broadcast to false
+              let metadataChanged = false;
 
-            // Ensure we're setting the roles exactly as they come from relay
-            member.roles = roles.length > 0 ? roles : ["Member"];
-            currentMembers.set(pubkey, member);
-          });
+              for (const tagArr of event.tags) {
+                  const tag = tagArr[0];
+                  const value = tagArr[1];
+                  let changed = true; // Assume change unless value is same
 
-        const newMembers = Array.from(currentMembers.values());
-        updatedGroup = {
-          ...baseGroup,
-          members: newMembers
-        };
-        break;
-      }
-
-      case 39002: { // Group members metadata
-        // Get all pubkeys from the event
-        const eventPubkeys = new Set(
-          event.tags
-            .filter((t: string[]) => t[0] === "p")
-            .map((t: string[]) => t[1])
-        );
-
-        // Create a new map with only members that are in the event
-        const currentMembers = new Map();
-
-        // First, add existing members that are still in the event
-        baseGroup.members.forEach(member => {
-          if (eventPubkeys.has(member.pubkey)) {
-            currentMembers.set(member.pubkey, { ...member });
+                  switch (tag) {
+                      case "name": if (mutableGroup.name !== value) mutableGroup.name = value; else changed = false; break;
+                      case "about": if (mutableGroup.about !== value) mutableGroup.about = value; else changed = false; break;
+                      case "picture": if (mutableGroup.picture !== value) mutableGroup.picture = value; else changed = false; break;
+                      case "private": if (!mutableGroup.private) mutableGroup.private = true; else changed = false; break;
+                      case "public": if (mutableGroup.private) mutableGroup.private = false; else changed = false; break;
+                      case "closed": if (!mutableGroup.closed) mutableGroup.closed = true; else changed = false; break;
+                      case "open": if (mutableGroup.closed) mutableGroup.closed = false; else changed = false; break;
+                      case "broadcast": if (!mutableGroup.broadcast) mutableGroup.broadcast = true; else changed = false; break;
+                      default: changed = false; // Ignore unknown tags for change tracking
+                  }
+                  if (changed) metadataChanged = true;
+              }
+              // Apply the collected metadata changes if any occurred
+              if (metadataChanged) {
+                  Object.assign(mutableGroup, newMetadata); // Apply changes
+                  updated = true;
+              }
+              break;
           }
-        });
 
-        // Then add any new members from the event
-        event.tags
-          .filter((t: string[]) => t[0] === "p")
-          .forEach((t: string[]) => {
-            const pubkey = t[1];
-            if (!currentMembers.has(pubkey)) {
-              currentMembers.set(pubkey, {
-                pubkey,
-                roles: ["Member"]
-              });
-            }
-          });
+          case 39001: { // Group admins - Replace logic
+              const currentMembers = new Map(mutableGroup.members.map(m => [m.pubkey, { ...m }]));
+              const eventAdmins = new Map(
+                  event.tags
+                      .filter((t: string[]) => t[0] === "p")
+                      .map((t: string[]) => [t[1], t.slice(2)]) // [pubkey, roles_array]
+              );
 
-        const newMembers = Array.from(currentMembers.values());
-        updatedGroup = {
-          ...baseGroup,
-          members: newMembers,
-          joinRequests: baseGroup.joinRequests.filter(pubkey =>
-            !newMembers.some(m => m.pubkey === pubkey)
-          )
-        };
-        break;
-      }
+              let membersChanged = false;
 
-      case 9:
-      case 11: {
-        const content: GroupChatMessage = {
-          id: event.id,
-          pubkey: event.pubkey,
-          kind: event.kind,
-          content: event.content,
-          created_at: event.created_at,
-        };
+              // Update existing members or add new ones from the event
+              for (const [pubkey, roles] of eventAdmins.entries()) {
+                  // Explicitly cast pubkey to string
+                  const pubkeyStr = pubkey as string;
+                  const member = currentMembers.get(pubkeyStr) || { pubkey: pubkeyStr, roles: [] };
+                  // Explicitly type roles as string[]
+                  const newRoles = (roles as string[]).length > 0 ? (roles as string[]) : ["Admin"];
+                  if (JSON.stringify(member.roles.sort()) !== JSON.stringify(newRoles.sort())) {
+                      member.roles = newRoles;
+                      currentMembers.set(pubkeyStr, member); // Use casted pubkeyStr
+                      membersChanged = true;
+                  }
+              }
 
-        // Sort content by created_at in ascending order (oldest first)
-        const allContent = [...(baseGroup.content || []), content]
-          .sort((a, b) => a.created_at - b.created_at)
-          .slice(-50);  // Keep last 50 messages
+              // Iterate over current members to potentially remove admin role if not in event
+              for (const [pubkey, member] of currentMembers.entries()) {
+                   if (member.roles.includes('Admin') || member.roles.includes('admin')) { // Check if they were admin
+                       if (!eventAdmins.has(pubkey)) { // And are no longer in the admin event
+                           const nonAdminRoles = member.roles.filter(r => r.toLowerCase() !== 'admin');
+                            if (nonAdminRoles.length === 0) nonAdminRoles.push("Member"); // Fallback to member if no other roles
+                            if (JSON.stringify(member.roles.sort()) !== JSON.stringify(nonAdminRoles.sort())) {
+                               member.roles = nonAdminRoles;
+                               membersChanged = true;
+                            }
+                       }
+                   }
+              }
 
-        updatedGroup = {
-          ...baseGroup,
-          content: allContent
-        };
-        break;
-      }
 
-      case GroupEventKind.JoinRequest: {
-        // Only add the join request if the user isn't already a member
-        // and if this event is newer than our last metadata update
-        if (!baseGroup.members.some(member => member.pubkey === event.pubkey)) {
-          const updatedJoinRequests = [...baseGroup.joinRequests];
-          if (!updatedJoinRequests.includes(event.pubkey)) {
-            updatedJoinRequests.push(event.pubkey);
+              if (membersChanged) {
+                  mutableGroup.members = Array.from(currentMembers.values());
+                  updated = true;
+              }
+              break;
           }
-          updatedGroup = {
-            ...baseGroup,
-            joinRequests: updatedJoinRequests
-          };
-        }
-        break;
+
+
+          case 39002: { // Group members metadata - Replace logic (Full replacement)
+              const eventMembers = new Map(
+                  event.tags
+                      .filter((t: string[]) => t[0] === "p")
+                      .map((t: string[]) => [t[1], t.slice(2)]) // [pubkey, roles_array]
+              );
+
+              const newMemberList: { pubkey: string; roles: string[] }[] = [];
+              let listChanged = false;
+
+              for(const [pubkey, roles] of eventMembers.entries()) {
+                  // Explicitly type roles as string[]
+                  newMemberList.push({ pubkey: pubkey as string, roles: (roles as string[]).length > 0 ? (roles as string[]) : ["Member"] });
+              }
+
+              // Simple check if the lists differ (could be more sophisticated)
+              if (mutableGroup.members.length !== newMemberList.length ||
+                  JSON.stringify(mutableGroup.members.map(m => m.pubkey).sort()) !== JSON.stringify(newMemberList.map(m => m.pubkey).sort())) {
+                  listChanged = true;
+              }
+              // Add role comparison if needed for more accuracy
+
+              if (listChanged) {
+                  mutableGroup.members = newMemberList;
+                  // Clear join requests for users who are now members
+                   mutableGroup.joinRequests = mutableGroup.joinRequests.filter(pubkey =>
+                       !newMemberList.some(m => m.pubkey === pubkey)
+                   );
+                  updated = true;
+              }
+              break;
+          }
+
+          case 9: // Chat message
+          case 11: // DM
+          {
+              const content: GroupChatMessage = {
+                  id: event.id,
+                  pubkey: event.pubkey,
+                  kind: event.kind,
+                  content: event.content, // Assuming plain text, decryption might be needed for kind 11 or encrypted kind 9
+                  created_at: event.created_at,
+              };
+
+              // Avoid duplicates and sort
+              const contentMap = new Map(mutableGroup.content.map(c => [c.id, c]));
+              if (!contentMap.has(content.id)) {
+                  contentMap.set(content.id, content);
+                  mutableGroup.content = Array.from(contentMap.values())
+                      .sort((a, b) => a.created_at - b.created_at) // Oldest first
+                      .slice(-100); // Keep last 100 messages (adjust limit as needed)
+                  updated = true;
+              }
+              break;
+          }
+
+          case GroupEventKind.JoinRequest: {
+              // Add join request if user is not already a member
+              if (!mutableGroup.members.some(member => member.pubkey === event.pubkey)) {
+                  if (!mutableGroup.joinRequests.includes(event.pubkey)) {
+                      mutableGroup.joinRequests = [...mutableGroup.joinRequests, event.pubkey];
+                      updated = true;
+                  }
+              }
+              break;
+          }
+
+          // Add case for Kind 5 (Deletion) if you want to handle message deletions
+          // case 5: {
+          //   const deletedEventIds = event.tags.filter(t => t[0] === 'e').map(t => t[1]);
+          //   const initialContentLength = mutableGroup.content.length;
+          //   mutableGroup.content = mutableGroup.content.filter(c => !deletedEventIds.includes(c.id));
+          //   if (mutableGroup.content.length !== initialContentLength) {
+          //       updated = true;
+          //   }
+          //   break;
+          // }
+
+          default: {
+              // Ignore unknown kinds for processing, but the group was touched so update timestamp
+              // No 'updated = true' here unless the timestamp logic below handles it.
+              break;
+          }
       }
 
-      default: {
-        updatedGroup = baseGroup;
-        break;
+      // Always update the group's updated_at timestamp if an event related to it was processed
+      mutableGroup.updated_at = Math.max(baseGroup.updated_at, event.created_at);
+
+      // If any part of the group was updated, or just the timestamp changed, update the map entry
+      if (updated || mutableGroup.updated_at !== baseGroup.updated_at) {
+          groupsMap.set(groupId, mutableGroup);
       }
-    }
 
-    if (updatedGroup) {
-      groupsMap.set(groupId, updatedGroup);
-    }
-
-    return groupsMap;
+      return groupsMap; // Return the potentially modified map
   };
+
+
+  // New method for paginated historical fetch
+  private async fetchHistoricalDataPaginated(
+      kinds: NDKKind[],
+      batchSize: number
+  ): Promise<{ groupsMap: Map<string, Group>; latestTimestamp: number }> {
+      let groupsMap = new Map<string, Group>(); // Initialize map locally for this fetch
+      let oldestTimestampInBatch = Math.floor(Date.now() / 1000); // Start from now
+      let newestHistoricalTimestamp = 0;
+      let continueFetching = true;
+      let totalFetched = 0;
+
+      console.log("Starting paginated historical fetch...");
+
+      while (continueFetching) {
+          // Prevent infinite loops in case of unexpected issues
+           if (totalFetched > 50000) { // Safety break after fetching a large number of events
+              console.warn("Safety break triggered: fetched over 50,000 events during pagination.");
+              break;
+           }
+
+          const filter: NDKFilter = { kinds: kinds, limit: batchSize, until: oldestTimestampInBatch };
+          console.log(`Workspaceing batch with filter: limit=${batchSize}, until=${oldestTimestampInBatch}`);
+
+          try {
+              // Use the NDK instance from props
+              // Cast the result to Set<NDKEvent> based on our local type
+              const events = await this.props.client.ndkInstance.fetchEvents(filter) as Set<NDKEvent>;
+              totalFetched += events.size;
+
+              if (events.size === 0) {
+                  console.log("No more events found for this filter range. Stopping.");
+                  continueFetching = false;
+                  break;
+              }
+
+              let batchOldest = oldestTimestampInBatch;
+              let batchNewest = 0;
+
+              events.forEach((event: NDKEvent) => {
+                  // Ensure event.created_at exists and is a number
+                  if (typeof event.created_at === 'number') {
+                      // Process event using the class method, updating the local map
+                       groupsMap = this.processEvent(event.rawEvent(), groupsMap); // Reassign map
+
+                      batchOldest = Math.min(batchOldest, event.created_at);
+                      batchNewest = Math.max(batchNewest, event.created_at);
+
+                       // Update the overall newest timestamp seen so far
+                       newestHistoricalTimestamp = Math.max(newestHistoricalTimestamp, event.created_at);
+                  } else {
+                      console.warn("Event received without valid created_at:", event.id, event.rawEvent());
+                  }
+              });
+
+
+              console.log(`Workspaceed ${events.size} events. Oldest in batch: ${batchOldest}, Newest overall: ${newestHistoricalTimestamp}`);
+
+              if (events.size < batchSize) {
+                  console.log(`Workspaceed ${events.size} events (less than batch size ${batchSize}). Assuming end of history.`);
+                  continueFetching = false;
+              } else {
+                  // If we got a full batch and the oldest didn't change, something is wrong (e.g., duplicate timestamps exactly at the boundary)
+                  // Prevent infinite loop by stopping. Or could try decrementing timestamp by 1.
+                  if (oldestTimestampInBatch === batchOldest) {
+                      console.warn(`Oldest timestamp (${batchOldest}) did not change after fetching a full batch. Stopping pagination to prevent potential loop.`);
+                       // Option: Try decrementing: oldestTimestampInBatch = batchOldest - 1;
+                       // Or just stop:
+                      continueFetching = false;
+                  } else {
+                      oldestTimestampInBatch = batchOldest;
+                  }
+
+                  // Optional delay between fetches to be kind to relays
+                  // await new Promise(resolve => setTimeout(resolve, 100));
+              }
+          } catch (error) {
+              console.error("Error fetching batch:", error);
+              // Decide how to handle errors - maybe retry once, or stop?
+              continueFetching = false; // Stop on error for simplicity
+          }
+      }
+
+      console.log(`Paginated fetch complete. ${totalFetched} events fetched. ${groupsMap.size} groups processed. Newest historical timestamp: ${newestHistoricalTimestamp}`);
+      return { groupsMap, latestTimestamp: newestHistoricalTimestamp };
+  }
+
 
   async componentDidMount() {
-    const fetchGroups = async () => {
-      try {
-        const sub = this.props.client.ndkInstance.subscribe(
-          {
-            kinds: [
-              ...metadataKinds,
-              9,
-              11,
-              GroupEventKind.CreateGroup,
-              GroupEventKind.CreateInvite,
-              GroupEventKind.JoinRequest,
-            ].map((k) => k as NDKKind),
-          },
-          { closeOnEose: false }
+    this.setState({ isLoadingHistory: true }); // Ensure loading state is true
+    const batchSize = 100; // Adjust batch size as needed
+
+    try {
+      // Fetch historical data using the new paginated method
+      const { groupsMap: initialGroupsMap, latestTimestamp: newestHistoricalTimestamp } =
+        await this.fetchHistoricalDataPaginated(
+          relevantKinds,
+          batchSize
         );
 
-        sub.on("event", async (event: any) => {
-          const newGroupsMap = new Map(this.state.groupsMap);
-          this.processEvent(event, newGroupsMap);
+      // Update state with the initially fetched groups
+      const sortedGroups = Array.from(initialGroupsMap.values()).sort(
+        (a, b) => b.updated_at - a.updated_at // Sort by latest interaction
+      );
+       const pendingUpdate = this.checkPendingSelection(initialGroupsMap);
+       const initialSelectedGroup = pendingUpdate?.selectedGroup || (sortedGroups.length === 1 ? sortedGroups[0] : null);
 
-          const sortedGroups = Array.from(newGroupsMap.values()).sort(
-            (a, b) => b.created_at - a.created_at
-          );
 
-          // Check if we can fulfill any pending selection
-          const pendingUpdate = this.checkPendingSelection(newGroupsMap);
+      this.setState({
+        groupsMap: initialGroupsMap,
+        groups: sortedGroups,
+         selectedGroup: initialSelectedGroup,
+         isLoadingHistory: false, // Turn off loading indicator
+         ...(pendingUpdate || {})
+      }, () => {
+        // Step 2: Start live subscription AFTER initial state is set
+        console.log("Starting live subscription since:", newestHistoricalTimestamp + 1);
+        const liveSub = this.props.client.ndkInstance.subscribe(
+          { kinds: relevantKinds, since: newestHistoricalTimestamp + 1 },
+          { closeOnEose: false } // Keep it open for live updates
+        );
 
-          // Only update the selected group reference if we have one selected
-          const newSelectedGroup = pendingUpdate?.selectedGroup || (
-            this.state.selectedGroup
-              ? newGroupsMap.get(this.state.selectedGroup.id) || this.state.selectedGroup
-              : sortedGroups.length === 1 ? sortedGroups[0] : null  // Auto-select first group if it's the only one
-          );
+        liveSub.on("event", (event: NDKEvent, _relay: any, _sub: any, _fromCache: any, _optimisticPublish: any) => {
+          // Use setState callback to ensure we're working with the latest state
+          this.setState((prevState) => {
+              // Create a new map instance based on previous state for modification
+              let newGroupsMap = new Map(prevState.groupsMap);
+              // Process the live event, mutating the new map instance
+              newGroupsMap = this.processEvent(event.rawEvent(), newGroupsMap); // Reassign map
 
-          this.setState({
-            groupsMap: newGroupsMap,
-            groups: sortedGroups,
-            selectedGroup: newSelectedGroup,
-            ...(pendingUpdate || {})
+              const sortedGroups = Array.from(newGroupsMap.values()).sort(
+                  (a, b) => b.updated_at - a.updated_at
+              );
+
+               const pendingUpdate = this.checkPendingSelection(newGroupsMap);
+
+              // Update selected group reference if it still exists in the map
+              const currentSelectedId = prevState.selectedGroup?.id;
+              let newSelectedGroup = prevState.selectedGroup;
+              if (currentSelectedId) {
+                  newSelectedGroup = newGroupsMap.get(currentSelectedId) || null; // Update or nullify if group disappears
+              }
+              // If a pending selection was fulfilled, it takes precedence
+               if (pendingUpdate?.selectedGroup) {
+                   newSelectedGroup = pendingUpdate.selectedGroup;
+               } else if (!newSelectedGroup && sortedGroups.length === 1) {
+                   // Auto-select if only one group exists and none was selected
+                   newSelectedGroup = sortedGroups[0];
+               }
+
+
+              return {
+                  groupsMap: newGroupsMap,
+                  groups: sortedGroups,
+                   selectedGroup: newSelectedGroup,
+                   ...(pendingUpdate || {}) // Apply pending selection changes
+              };
           });
         });
 
-        this.cleanup = () => {
-          sub.stop();
+        // Store cleanup for the live subscription
+        this.liveSubscriptionCleanup = () => {
+          console.log("Stopping live subscription");
+          liveSub.stop();
         };
-      } catch (error) {
-        console.error("Error fetching groups:", error);
-      }
-    };
-
-    fetchGroups();
+      });
+    } catch (error) {
+      console.error("Failed to fetch historical group data:", error);
+      this.setState({ isLoadingHistory: false }); // Turn off loading even on error
+      this.showMessage("Failed to load historical data.", "error");
+      // Handle failure appropriately
+    }
   }
 
   componentWillUnmount() {
-    if (this.cleanup) {
-      this.cleanup();
-    }
+    // Only need to clean up the live subscription
+    this.liveSubscriptionCleanup?.();
   }
 
-  updateGroupsMap = (updater: (map: Map<string, Group>) => void) => {
+   updateGroupsMap = (updater: (map: Map<string, Group>) => void) => {
+       this.setState((prevState) => {
+           // Create a deep enough copy to safely pass to the updater
+           const newGroupsMap = new Map(
+               Array.from(prevState.groupsMap.entries()).map(([id, group]) => [
+                   id,
+                   { // Deep copy relevant parts
+                       ...group,
+                       members: [...group.members],
+                       joinRequests: [...group.joinRequests],
+                       invites: { ...group.invites },
+                       content: group.content ? [...group.content] : []
+                   }
+               ])
+           );
+
+           updater(newGroupsMap); // Let updater modify the copy
+
+           // Re-sort and potentially re-select
+           const sortedGroups = Array.from(newGroupsMap.values()).sort(
+               (a, b) => b.updated_at - a.updated_at // Use updated_at for sorting
+           );
+           const currentSelectedId = prevState.selectedGroup?.id;
+           let newSelectedGroup = prevState.selectedGroup;
+            if (currentSelectedId) {
+                newSelectedGroup = newGroupsMap.get(currentSelectedId) || null;
+            } else if (sortedGroups.length === 1) {
+                 newSelectedGroup = sortedGroups[0];
+             }
+
+
+           return {
+               groupsMap: newGroupsMap,
+               groups: sortedGroups,
+               selectedGroup: newSelectedGroup
+           };
+       });
+   };
+
+  // handleGroupDelete remains the same, but uses updated_at for sorting
+  handleGroupDelete = (groupId: string) => {
     this.setState((prevState) => {
       const newGroupsMap = new Map(
-        Array.from(prevState.groupsMap.entries()).map(([id, group]) => [
-          id,
-          {
-            ...group,
-            members: [...group.members],
-            joinRequests: [...group.joinRequests],
-            invites: { ...group.invites },
-            content: group.content ? [...group.content] : []
-          }
-        ])
+        Array.from(prevState.groupsMap.entries()).filter(([id]) => id !== groupId)
       );
-
-      updater(newGroupsMap);
-
-      // Verify no members were cleared
-      newGroupsMap.forEach((group, id) => {
-        const prevGroup = prevState.groupsMap.get(id);
-        if (prevGroup?.members.length && !group.members.length) {
-          group.members = [...prevGroup.members];
-        }
-      });
 
       const sortedGroups = Array.from(newGroupsMap.values()).sort(
-        (a, b) => b.created_at - a.created_at
+        (a, b) => b.updated_at - a.updated_at // Consistent sorting
       );
 
-      // Auto-select the only group if there's exactly one
-      const newSelectedGroup = sortedGroups.length === 1 ? sortedGroups[0] : prevState.selectedGroup;
+      // If the deleted group was selected, deselect
+      const newSelectedGroup = prevState.selectedGroup?.id === groupId ? null : prevState.selectedGroup;
 
       return {
         groupsMap: newGroupsMap,
@@ -409,56 +575,30 @@ export class App extends Component<AppProps, AppState> {
     });
   };
 
-  handleGroupDelete = (groupId: string) => {
-    this.setState((prevState) => {
-      const newGroupsMap = new Map(
-        Array.from(prevState.groupsMap.entries())
-          .filter(([id]) => id !== groupId)
-          .map(([id, group]) => [
-            id,
-            {
-              ...group,
-              members: [...group.members],
-              joinRequests: [...group.joinRequests],
-              invites: { ...group.invites },
-              content: group.content ? [...group.content] : []
-            }
-          ])
-      );
-
-      const sortedGroups = Array.from(newGroupsMap.values()).sort(
-        (a, b) => b.created_at - a.created_at
-      );
-
-      return {
-        groupsMap: newGroupsMap,
-        groups: sortedGroups,
-        selectedGroup: null,
-      };
-    });
-  };
-
   toggleMobileMenu = () => {
-    this.setState(state => ({ isMobileMenuOpen: !state.isMobileMenuOpen }));
+    this.setState((state) => ({ isMobileMenuOpen: !state.isMobileMenuOpen }));
   };
 
-  handleGroupSelect = (group: Group) => {
-    // If the group exists in the map, select it immediately
-    const existingGroup = this.state.groupsMap.get(group.id);
-    if (existingGroup) {
-      this.setState({
-        selectedGroup: existingGroup,
-        isMobileMenuOpen: false,
-        pendingGroupSelection: null
-      });
-    } else {
-      // Otherwise, queue it for selection when it becomes available
-      this.setState({
-        pendingGroupSelection: group.id,
-        isMobileMenuOpen: false
-      });
-    }
-  };
+   handleGroupSelect = (group: Group | string) => {
+       const groupId = typeof group === 'string' ? group : group.id;
+       const existingGroup = this.state.groupsMap.get(groupId);
+
+       if (existingGroup) {
+           this.setState({
+               selectedGroup: existingGroup,
+               isMobileMenuOpen: false, // Close menu on selection
+               pendingGroupSelection: null // Clear pending
+           });
+       } else {
+           // Group data hasn't arrived yet, queue it
+           console.log(`Group ${groupId} not found in map yet, queuing selection.`);
+           this.setState({
+               pendingGroupSelection: groupId,
+               isMobileMenuOpen: false, // Close menu
+               selectedGroup: null // Deselect current while waiting
+           });
+       }
+   };
 
   showMessage = (
     message: string,
@@ -467,30 +607,34 @@ export class App extends Component<AppProps, AppState> {
     this.setState({
       flashMessage: { message, type },
     });
+     // Optional: Auto-dismiss after a few seconds
+     // setTimeout(() => this.dismissMessage(), 5000);
   };
 
   dismissMessage = () => {
     this.setState({ flashMessage: null });
   };
 
-  // Add method to check pending selections
+  // Checks if a pending selection can now be fulfilled
   private checkPendingSelection = (groupsMap: Map<string, Group>) => {
-    const { pendingGroupSelection } = this.state;
-    if (pendingGroupSelection) {
-      const group = groupsMap.get(pendingGroupSelection);
-      if (group) {
-        return {
-          selectedGroup: group,
-          pendingGroupSelection: null
-        };
+      const { pendingGroupSelection } = this.state;
+      if (pendingGroupSelection) {
+          const group = groupsMap.get(pendingGroupSelection);
+          if (group) {
+               console.log(`Pending selection ${pendingGroupSelection} fulfilled.`);
+              return {
+                  selectedGroup: group,
+                  pendingGroupSelection: null // Clear the pending flag
+              };
+          }
       }
-    }
-    return null;
+      return null; // No pending selection or not found yet
   }
 
   render() {
     const { client, onLogout } = this.props;
-    const { flashMessage, groupsMap, selectedGroup, isMobileMenuOpen } = this.state;
+    const { flashMessage, groupsMap, selectedGroup, isMobileMenuOpen, isLoadingHistory } = this.state;
+    // Always derive groups from the map for consistency
     const groups = Array.from(groupsMap.values()).sort((a, b) => b.updated_at - a.updated_at);
 
     return (
@@ -506,6 +650,7 @@ export class App extends Component<AppProps, AppState> {
                 />
               </div>
               <h1 class="text-xl font-bold whitespace-nowrap">Nostr Groups</h1>
+               {isLoadingHistory && <span class="ml-4 text-sm text-[var(--color-text-secondary)] animate-pulse">Loading history...</span>}
             </div>
 
             {/* Profile Menu */}
@@ -525,59 +670,73 @@ export class App extends Component<AppProps, AppState> {
           />
         )}
 
-        <div class="container mx-auto px-8 py-8 lg:py-8 pt-24 lg:pt-24">
-          <div class="flex flex-col lg:flex-row gap-8 min-h-[calc(100vh-9rem)]">
+        {/* Main container adjusted for fixed header */}
+        <div class="flex flex-col lg:flex-row gap-8 pt-16 min-h-screen">
             {/* Left Sidebar */}
             <div
-              class={`
-                fixed lg:relative inset-0 z-40
-                w-full lg:w-80 lg:flex-shrink-0
-                transform transition-transform duration-300 ease-in-out
-                ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-                bg-[var(--color-bg-primary)] lg:bg-transparent
-                p-4 lg:p-0
-                overflow-y-auto
-              `}
+                class={`
+                    fixed lg:sticky top-16 inset-y-0 left-0 z-40 lg:z-auto
+                    w-full sm:w-80 lg:w-80 lg:flex-shrink-0
+                    transform transition-transform duration-300 ease-in-out
+                    ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+                    bg-[var(--color-bg-primary)] lg:bg-transparent border-r border-[var(--color-border)]
+                    p-4 lg:p-4
+                    overflow-y-auto h-[calc(100vh-4rem)] /* Full height minus header */
+                `}
+                // style={{ height: 'calc(100vh - 4rem)' }} /* Alt height style */
             >
-              <CreateGroupForm
-                client={client}
-                updateGroupsMap={this.updateGroupsMap}
-                showMessage={this.showMessage}
-                onGroupCreated={this.handleGroupSelect}
-              />
-              <GroupSidebar
-                groups={groups}
-                selectedGroupId={selectedGroup?.id}
-                onSelectGroup={this.handleGroupSelect}
-                client={client}
-              />
+                <CreateGroupForm
+                    client={client}
+                    updateGroupsMap={this.updateGroupsMap}
+                    showMessage={this.showMessage}
+                     onGroupCreated={this.handleGroupSelect} // Pass handleGroupSelect
+                />
+                <hr class="my-4 border-[var(--color-border)]" />
+                <GroupSidebar
+                    groups={groups}
+                    selectedGroupId={selectedGroup?.id}
+                    onSelectGroup={this.handleGroupSelect} // Pass handleGroupSelect
+                    client={client} // Pass client if needed by Sidebar
+                    isLoading={isLoadingHistory}
+                />
             </div>
+
 
             {/* Overlay for mobile */}
-            {isMobileMenuOpen && (
-              <div
-                class="fixed inset-0 z-30 bg-black bg-opacity-50 lg:hidden"
-                onClick={this.toggleMobileMenu}
-              />
-            )}
+             {isMobileMenuOpen && (
+                 <div
+                     class="fixed inset-0 z-30 bg-black bg-opacity-50 lg:hidden"
+                     onClick={this.toggleMobileMenu}
+                 />
+             )}
 
-            {/* Main Content */}
-            <div class="flex-grow lg:min-h-full">
-              {selectedGroup ? (
-                <GroupCard
-                  group={selectedGroup}
-                  client={client}
-                  updateGroupsMap={this.updateGroupsMap}
-                  showMessage={this.showMessage}
-                  onDelete={this.handleGroupDelete}
-                />
-              ) : (
-                <div class="text-center text-[var(--color-text-secondary)] mt-8">
-                  <p>Select a group from the sidebar or create a new one to get started</p>
-                </div>
-              )}
-            </div>
-          </div>
+            {/* Main Content Area - Remove fixed height and overflow */}
+            <main class="flex-grow p-4 lg:p-8"> {/* Removed overflow-y-auto h-[calc(...)] */}
+                 {isLoadingHistory ? (
+                     <div class="text-center text-[var(--color-text-secondary)] mt-8">
+                         <p>Loading historical messages...</p>
+                         {/* Optional: add a spinner */}
+                     </div>
+                 ) : selectedGroup ? (
+                    <GroupCard
+                        key={selectedGroup.id} // Add key for efficient updates when selection changes
+                        group={selectedGroup}
+                        client={client}
+                        updateGroupsMap={this.updateGroupsMap}
+                        showMessage={this.showMessage}
+                        onDelete={this.handleGroupDelete}
+                    />
+                ) : groups.length > 0 ? (
+                     <div class="text-center text-[var(--color-text-secondary)] mt-8">
+                         <p>Select a group from the sidebar.</p>
+                     </div>
+                 ) : (
+                    <div class="text-center text-[var(--color-text-secondary)] mt-8">
+                        <p>Create a new group or join one to get started.</p>
+                        <p class="text-xs mt-2">(If you recently created/joined a group, it might still be loading)</p>
+                    </div>
+                 )}
+            </main>
         </div>
       </div>
     );
