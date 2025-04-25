@@ -785,7 +785,7 @@ impl Group {
         // If user is already a member, do nothing
         if self.members.contains_key(&event.pubkey) {
             info!("User {} is already a member", event.pubkey);
-            return Err(Error::notice("User is already a member"));
+            return Err(Error::duplicate("User is already a member"));
         }
 
         if !self.metadata.closed {
@@ -1413,7 +1413,8 @@ impl Group {
             return Ok(true);
         }
 
-        // Members can see everything except invites
+        // Members can see everything except invites (if not, they can see the
+        // un-used invite codes)
         if self.is_member(authed_pubkey) && event.kind != KIND_GROUP_CREATE_INVITE_9009 {
             debug!(
                 "User {} is a member, can see event {}, kind {}",
@@ -1754,13 +1755,13 @@ mod tests {
         let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let join_event = create_test_event(&member_keys, 9021, join_tags).await;
 
-        // Should return error with message "User is already a member"
+        // Should return error with message "duplicate: User is already a member"
         assert_eq!(
             group
                 .join_request(Box::new(join_event), &member_keys.public_key())
                 .unwrap_err()
                 .to_string(),
-            "User is already a member"
+            "duplicate: User is already a member"
         );
 
         // Verify member is still there with same role

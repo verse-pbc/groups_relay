@@ -1,3 +1,17 @@
+#![warn(clippy::missing_errors_doc)]
+#![warn(clippy::missing_panics_doc)]
+#![warn(clippy::missing_safety_doc)]
+#![warn(clippy::clone_on_ref_ptr)]
+#![warn(clippy::default_trait_access)]
+#![warn(clippy::explicit_deref_methods)]
+#![warn(clippy::explicit_iter_loop)]
+#![warn(clippy::implicit_clone)]
+#![warn(clippy::unnecessary_to_owned)]
+#![warn(clippy::redundant_clone)]
+#![warn(clippy::needless_collect)]
+#![warn(clippy::missing_const_for_fn)]
+#![warn(clippy::module_name_repetitions)]
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use groups_relay::{config, groups::Groups, nostr_database::RelayDatabase, server};
@@ -88,7 +102,8 @@ async fn main() -> Result<()> {
         settings.db_path.clone(),
         relay_keys.clone(),
     )?);
-    let groups = Arc::new(Groups::load_groups(database.clone(), relay_keys.public_key()).await?);
+    let groups =
+        Arc::new(Groups::load_groups(Arc::clone(&database), relay_keys.public_key()).await?);
 
     server::run_server(settings, relay_keys, database, groups).await?;
 

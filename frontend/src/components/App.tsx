@@ -357,7 +357,7 @@ export class App extends Component<AppProps, AppState> {
            }
 
           const filter: NDKFilter = { kinds: kinds, limit: batchSize, until: oldestTimestampInBatch };
-          console.log(`Workspaceing batch with filter: limit=${batchSize}, until=${oldestTimestampInBatch}`);
+          console.log(`Fetching batch with filter: limit=${batchSize}, until=${oldestTimestampInBatch}`);
 
           try {
               // Use the NDK instance from props
@@ -391,10 +391,10 @@ export class App extends Component<AppProps, AppState> {
               });
 
 
-              console.log(`Workspaceed ${events.size} events. Oldest in batch: ${batchOldest}, Newest overall: ${newestHistoricalTimestamp}`);
+              console.log(`Fetched ${events.size} events. Oldest in batch: ${batchOldest}, Newest overall: ${newestHistoricalTimestamp}`);
 
               if (events.size < batchSize) {
-                  console.log(`Workspaceed ${events.size} events (less than batch size ${batchSize}). Assuming end of history.`);
+                  console.log(`Fetched ${events.size} events (less than batch size ${batchSize}). Assuming end of history.`);
                   continueFetching = false;
               } else {
                   // If we got a full batch and the oldest didn't change, something is wrong (e.g., duplicate timestamps exactly at the boundary)

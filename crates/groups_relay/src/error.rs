@@ -28,6 +28,12 @@ pub enum Error {
         backtrace: Backtrace,
     },
 
+    #[snafu(display("duplicate: {message}"))]
+    Duplicate {
+        message: String,
+        backtrace: Backtrace,
+    },
+
     #[snafu(display("Internal error: {message}"))]
     Internal {
         message: String,
@@ -65,6 +71,13 @@ impl Error {
 
     pub fn restricted<S: Into<String>>(message: S) -> Self {
         Error::Restricted {
+            message: message.into(),
+            backtrace: Backtrace::capture(),
+        }
+    }
+
+    pub fn duplicate<S: Into<String>>(message: S) -> Self {
+        Error::Duplicate {
             message: message.into(),
             backtrace: Backtrace::capture(),
         }
@@ -149,6 +162,13 @@ impl Error {
                     Cow::Borrowed(message.as_str()),
                 )]
             }
+            Error::Duplicate { message, .. } => {
+                warn!("Duplicate: {}", message);
+                vec![RelayMessage::closed(
+                    subscription_id,
+                    Cow::Borrowed(message.as_str()),
+                )]
+            }
             Error::Internal { message, .. } => {
                 error!("Internal error: {}", message);
                 vec![RelayMessage::closed(
@@ -190,6 +210,13 @@ impl Error {
             Error::Restricted { message, .. } => {
                 let msg = format!("restricted: {}", message);
                 vec![RelayMessage::ok(event_id, false, Cow::Owned(msg))]
+            }
+            Error::Duplicate { message, .. } => {
+                vec![RelayMessage::ok(
+                    event_id,
+                    false,
+                    Cow::Borrowed(message.as_str()),
+                )]
             }
             Error::Internal { message, .. } => {
                 error!("Internal error: {}", message);
