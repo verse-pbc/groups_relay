@@ -203,6 +203,19 @@ pub async fn create_test_invite_event(
     create_test_event(admin_keys, 9009, tags).await
 }
 
+pub async fn create_test_reusable_invite_event(
+    admin_keys: &Keys,
+    group_id: &str,
+    invite_code: &str,
+) -> Event {
+    let tags = vec![
+        Tag::custom(TagKind::h(), [group_id]),
+        Tag::custom(TagKind::Custom("code".into()), [invite_code]),
+        Tag::custom(TagKind::Custom("reusable".into()), Vec::<String>::new()),
+    ];
+    create_test_event(admin_keys, 9009, tags).await
+}
+
 pub async fn create_test_delete_event(
     keys: &Keys,
     group_id: &str,

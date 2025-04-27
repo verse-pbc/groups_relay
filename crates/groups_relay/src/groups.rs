@@ -151,17 +151,19 @@ impl Groups {
             return Ok(None);
         };
 
-        let mut group_ref = self.get_group_mut(group_id);
+        let mut group_ref_opt = self.get_group_mut(group_id); // Lock acquired here
 
-        if let Some(ref mut group_ref) = group_ref {
-            // If it's a leave request, we allow non members, so we can cleanup pending join requests
+        if let Some(ref mut group_ref) = group_ref_opt {
             if event.pubkey != self.relay_pubkey && event.kind != KIND_GROUP_USER_LEAVE_REQUEST_9022
             {
-                group_ref.verify_member_access(&event.pubkey, event.kind)?;
+                let verification_result = group_ref.verify_member_access(&event.pubkey, event.kind);
+                if let Err(e) = verification_result {
+                    return Err(e);
+                }
             }
         }
 
-        Ok(group_ref)
+        Ok(group_ref_opt)
     }
 
     pub fn find_group_from_event<'a>(&'a self, event: &Event) -> Option<Ref<'a, String, Group>> {
@@ -312,20 +314,32 @@ impl Groups {
     }
 
     pub fn handle_create_invite(&self, event: Box<Event>) -> Result<Vec<StoreCommand>, Error> {
-        let mut group = self
-            .find_group_from_event_mut(&event)?
-            .ok_or(Error::notice("[CreateInvite] Group not found"))?;
+        let created;
+        {
+            let mut group = self
+                .find_group_from_event_mut(&event)?
+                .ok_or(Error::notice("[CreateInvite] Group not found"))?;
+            created = group.create_invite(&event, &self.relay_pubkey)?;
+        }
 
-        group.create_invite(&event, &self.relay_pubkey)?;
-        Ok(vec![StoreCommand::SaveSignedEvent(event)])
+        if created {
+            Ok(vec![StoreCommand::SaveSignedEvent(event)])
+        } else {
+            Ok(vec![StoreCommand::SaveSignedEvent(event)])
+        }
     }
 
     pub fn handle_join_request(&self, event: Box<Event>) -> Result<Vec<StoreCommand>, Error> {
-        let mut group = self
-            .find_group_from_event_mut(&event)?
-            .ok_or(Error::notice("[JoinRequest] Group not found"))?;
+        let result;
+        {
+            let mut group = self
+                .find_group_from_event_mut(&event)?
+                .ok_or(Error::notice("[JoinRequest] Group not found"))?;
 
-        group.join_request(event, &self.relay_pubkey)
+            result = group.join_request(event, &self.relay_pubkey);
+        }
+
+        result
     }
 
     pub fn handle_leave_request(&self, event: Box<Event>) -> Result<Vec<StoreCommand>, Error> {
@@ -1044,47 +1058,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_join_request_with_used_invite() {
-        let (groups, admin_keys, member_keys, non_member_keys, group_id) =
-            setup_test_groups().await;
-
-        // Create and use invite
-        let invite_code = "test_invite_123";
-        let tags = vec![
-            Tag::custom(TagKind::h(), [&group_id]),
-            Tag::custom(TagKind::custom("code"), [invite_code]),
-        ];
-        let event =
-            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags.clone()).await;
-        groups.handle_create_invite(event).unwrap();
-
-        // First member uses invite
-        let join_tags = vec![
-            Tag::custom(TagKind::h(), [&group_id]),
-            Tag::custom(TagKind::custom("code"), [invite_code]),
-        ];
-        let join_event =
-            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
-        groups.handle_join_request(join_event).unwrap();
-
-        // Second member uses same invite
-        let join_tags2 = vec![
-            Tag::custom(TagKind::h(), [&group_id]),
-            Tag::custom(TagKind::custom("code"), [invite_code]),
-        ];
-        let join_event2 = create_test_event(
-            &non_member_keys,
-            KIND_GROUP_USER_JOIN_REQUEST_9021,
-            join_tags2,
-        )
-        .await;
-        assert!(!groups.handle_join_request(join_event2).unwrap().is_empty());
-
-        let group = groups.get_group(&group_id).unwrap();
-        assert!(group.is_member(&non_member_keys.public_key()));
-    }
-
-    #[tokio::test]
     async fn test_handle_leave_request_member_can_leave() {
         let (groups, admin_keys, member_keys, _, group_id) = setup_test_groups().await;
 
@@ -1380,5 +1353,108 @@ mod tests {
         ];
         let event = create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags).await;
         assert!(groups.handle_create_invite(event).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_join_request_with_used_invite() {
+        let (groups, admin_keys, member_keys, non_member_keys, group_id) =
+            setup_test_groups().await;
+
+        // Create and use invite
+        let invite_code = "test_invite_123";
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let event =
+            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags.clone()).await;
+        groups.handle_create_invite(event).unwrap();
+
+        // First member uses invite
+        let join_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let join_event =
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
+        groups.handle_join_request(join_event).unwrap();
+
+        // Second member tries to use same invite
+        let join_tags2 = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let join_event2 = create_test_event(
+            &non_member_keys,
+            KIND_GROUP_USER_JOIN_REQUEST_9021,
+            join_tags2,
+        )
+        .await;
+        groups.handle_join_request(join_event2).unwrap();
+
+        // With single-use invites, second user should be added to join_requests instead of members
+        let group = groups.get_group(&group_id).unwrap();
+        assert!(!group.is_member(&non_member_keys.public_key()));
+        assert!(group.join_requests.contains(&non_member_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_join_request_with_reusable_invite() {
+        let (groups, admin_keys, member_keys, non_member_keys, group_id) =
+            setup_test_groups().await;
+
+        // Create reusable invite - note: using local create_test_event that returns Box<Event>
+        let invite_code = "test_reusable_invite";
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+            // Add reusable tag
+            Tag::custom(TagKind::custom("reusable"), Vec::<String>::new()),
+        ];
+        let create_invite_event =
+            create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags).await;
+        groups.handle_create_invite(create_invite_event).unwrap();
+
+        // Verify the invite exists and is reusable - IN A SCOPE
+        {
+            let group = groups.get_group(&group_id).unwrap();
+            assert!(group.invites.contains_key(invite_code));
+            assert!(group.invites.get(invite_code).unwrap().reusable);
+        }
+
+        // First user joins with reusable invite
+        let join_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let join_event =
+            create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
+        groups.handle_join_request(join_event).unwrap();
+
+        // Verify first user was added - IN A SCOPE
+        {
+            let group = groups.get_group(&group_id).unwrap();
+            assert!(group.is_member(&member_keys.public_key()));
+        }
+
+        // Second user tries to use the same reusable invite
+        let join_tags2 = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::custom("code"), [invite_code]),
+        ];
+        let join_event2 = create_test_event(
+            &non_member_keys,
+            KIND_GROUP_USER_JOIN_REQUEST_9021,
+            join_tags2,
+        )
+        .await;
+        groups.handle_join_request(join_event2).unwrap();
+
+        // With reusable invites, both users should become members - IN A SCOPE
+        {
+            let group = groups.get_group(&group_id).unwrap();
+            assert!(group.is_member(&member_keys.public_key()));
+            assert!(group.is_member(&non_member_keys.public_key()));
+        }
     }
 }

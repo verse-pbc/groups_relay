@@ -291,11 +291,34 @@ impl TryFrom<&Tag> for GroupMember {
 pub struct Invite {
     pub event_id: EventId,
     pub roles: HashSet<GroupRole>,
+    pub reusable: bool,
+    pub redeemed_by: Option<(PublicKey, Timestamp)>,
 }
 
 impl Invite {
     pub fn new(event_id: EventId, roles: HashSet<GroupRole>) -> Self {
-        Self { event_id, roles }
+        Self {
+            event_id,
+            roles,
+            reusable: false,
+            redeemed_by: None,
+        }
+    }
+
+    pub fn can_use(&self) -> bool {
+        self.reusable || self.redeemed_by.is_none()
+    }
+
+    pub fn mark_used(&mut self, pubkey: PublicKey, timestamp: Timestamp) {
+        // println!("[mark_used] Marking invite as used, reusable={}", self.reusable);
+        if !self.reusable {
+            // println!("[mark_used] Setting redeemed_by for single-use invite");
+            self.redeemed_by = Some((pubkey, timestamp));
+        } // else {
+          // println!("[mark_used] Not setting redeemed_by for reusable invite");
+          // }
+          // println!("[mark_used] After marking: reusable={}, redeemed_by={:?}",
+          //          self.reusable, self.redeemed_by.as_ref().map(|(pk, _)| pk.to_string()));
     }
 }
 
@@ -433,8 +456,15 @@ impl std::fmt::Debug for Group {
 
 impl Group {
     fn update_state(&mut self) {
+        // println!("[update_state] Updating timestamp");
         self.updated_at = Timestamp::now();
-        info!("Group state: {:?}", self);
+        // Temporarily comment out the full state debug print to reduce noise
+        info!(
+            "Group state updated: {} ({} members)",
+            self.id,
+            self.members.len()
+        );
+        // println!("[update_state] Updated timestamp to {}", self.updated_at.as_u64());
     }
 
     /// Checks if an event kind is a group management kind that requires a managed group to exist
@@ -775,7 +805,9 @@ impl Group {
         event: Box<Event>,
         relay_pubkey: &PublicKey,
     ) -> Result<Vec<StoreCommand>, Error> {
+        // println!("[join_request] Starting join request processing");
         if event.kind != KIND_GROUP_USER_JOIN_REQUEST_9021 {
+            // println!("[join_request] Invalid event kind: {}", event.kind);
             return Err(Error::notice(format!(
                 "Invalid event kind for join request {}",
                 event.kind
@@ -784,41 +816,124 @@ impl Group {
 
         // If user is already a member, do nothing
         if self.members.contains_key(&event.pubkey) {
+            // println!("[join_request] User {} is already a member", event.pubkey);
             info!("User {} is already a member", event.pubkey);
             return Err(Error::duplicate("User is already a member"));
         }
 
+        // println!(
+        //     "[join_request] Checking if group is closed: {}",
+        //     self.metadata.closed
+        // );
         if !self.metadata.closed {
+            // println!(
+            //     "[join_request] Public group, adding member {}",
+            //     event.pubkey
+            // );
             info!("Public group, adding member {}", event.pubkey);
             self.members
                 .entry(event.pubkey)
                 .or_insert(GroupMember::new_member(event.pubkey));
             self.join_requests.remove(&event.pubkey);
             self.update_state();
+            // println!("[join_request] Creating commands for open group join");
             return self.create_join_request_commands(true, event, relay_pubkey);
         }
 
+        // println!("[join_request] Checking for invite code");
         let code = event
             .tags
             .find(TagKind::custom("code"))
-            .and_then(|t| t.content())
-            .and_then(|code| self.invites.get_mut(code));
+            .and_then(|t| t.content());
 
-        let Some(invite) = code else {
-            info!("Invite not found, adding join request for {}", event.pubkey);
-            self.join_requests.insert(event.pubkey);
-            self.update_state();
-            return self.create_join_request_commands(false, event, relay_pubkey);
+        // println!("[join_request] Invite code: {:?}", code);
+
+        // First determine if we have a valid invite, and if so, collect the necessary data
+        // without holding a mutable reference to the invite
+        let invite_data = match code {
+            Some(code) => {
+                // println!("[join_request] Looking up invite with code: {}", code);
+                if let Some(invite) = self.invites.get(code) {
+                    // println!("[join_request] Invite found, can_use={}", invite.can_use());
+                    // Only collect the data we need and release the reference
+                    let can_use = invite.can_use();
+                    let reusable = invite.reusable;
+                    let roles = invite.roles.clone();
+
+                    // Return the data we need
+                    Some((code, can_use, reusable, roles))
+                } else {
+                    // println!("[join_request] Invite not found");
+                    None
+                }
+            }
+            None => {
+                // println!("[join_request] No invite code provided");
+                None
+            }
         };
 
-        info!("Invite code matched, adding member {}", event.pubkey);
-        let roles = invite.roles.clone();
-        self.members
-            .insert(event.pubkey, GroupMember::new(event.pubkey, roles));
+        match invite_data {
+            // Valid invite that can be used
+            Some((invite_code, true, reusable, roles)) => {
+                // println!(
+                //     "[join_request] Invite code matched, adding member {}",
+                //     event.pubkey
+                // );
+                info!("Invite code matched, adding member {}", event.pubkey);
 
-        self.join_requests.remove(&event.pubkey);
-        self.update_state();
-        self.create_join_request_commands(true, event, relay_pubkey)
+                // Now modify the invite if needed (for single-use invites)
+                if !reusable {
+                    // For single-use invites, mark it as used
+                    // println!("[join_request] Single-use invite, marking as used");
+                    if let Some(invite) = self.invites.get_mut(invite_code) {
+                        invite.mark_used(event.pubkey, event.created_at);
+                        // Let the RefMut be dropped automatically at the end of this scope
+                    }
+                } else {
+                    // println!("[join_request] Reusable invite, no need to mark as used");
+                }
+
+                // Add the member with the roles we collected earlier
+                self.members
+                    .insert(event.pubkey, GroupMember::new(event.pubkey, roles));
+                self.join_requests.remove(&event.pubkey);
+
+                // println!("[join_request] Updating state...");
+                self.update_state();
+                // println!("[join_request] Creating commands for join with invite");
+                return self.create_join_request_commands(true, event, relay_pubkey);
+            }
+            // Invite exists but cannot be used (already used and not reusable)
+            Some((_, false, _, _)) => {
+                // println!(
+                //     "[join_request] Invite already used, adding join request for {}",
+                //     event.pubkey
+                // );
+                info!(
+                    "Invite already used, adding join request for {}",
+                    event.pubkey
+                );
+                self.join_requests.insert(event.pubkey);
+                self.update_state();
+                // println!("[join_request] Creating commands for adding to join requests");
+                return self.create_join_request_commands(false, event, relay_pubkey);
+            }
+            // No matching invite code
+            None => {
+                // println!(
+                //     "[join_request] Invite not found, adding join request for {}",
+                //     event.pubkey
+                // );
+                info!("Invite not found, adding join request for {}", event.pubkey);
+                self.join_requests.insert(event.pubkey);
+                self.update_state();
+                // println!(
+                //     "[join_request] Creating commands for adding to join requests (no invite)"
+                // );
+                return self.create_join_request_commands(false, event, relay_pubkey);
+            }
+        }
     }
 
     /// Handles group management events (add/remove users).
@@ -880,7 +995,15 @@ impl Group {
         event: Box<Event>,
         relay_pubkey: &PublicKey,
     ) -> Result<Vec<StoreCommand>, Error> {
+        // println!(
+        //     "[create_join_request_commands] Starting, auto_joined={}",
+        //     auto_joined
+        // );
         if event.kind != KIND_GROUP_USER_JOIN_REQUEST_9021 {
+            // println!(
+            //     "[create_join_request_commands] Invalid event kind: {}",
+            //     event.kind
+            // );
             return Err(Error::notice(format!(
                 "Invalid event kind for join request {}",
                 event.kind
@@ -888,14 +1011,33 @@ impl Group {
         }
 
         let mut commands = vec![StoreCommand::SaveSignedEvent(event)];
+        // println!("[create_join_request_commands] Added SaveSignedEvent to commands");
+
         if auto_joined {
+            // println!(
+            //     "[create_join_request_commands] User auto-joined, generating membership events"
+            // );
+            let membership_events = self.generate_membership_events(relay_pubkey);
+            // println!(
+            //     "[create_join_request_commands] Generated {} membership events",
+            //     membership_events.len()
+            // );
+
             commands.extend(
-                self.generate_membership_events(relay_pubkey)
+                membership_events
                     .into_iter()
                     .map(StoreCommand::SaveUnsignedEvent),
             );
+            // println!(
+            //     "[create_join_request_commands] Extended commands, now have {} total",
+            //     commands.len()
+            // );
         }
 
+        // println!(
+        //     "[create_join_request_commands] Returning {} commands",
+        //     commands.len()
+        // );
         Ok(commands)
     }
 
@@ -927,7 +1069,14 @@ impl Group {
             return Err(Error::notice("Invite code already exists"));
         }
 
-        let invite = Invite::new(invite_event.id, HashSet::from([GroupRole::Member]));
+        // Check if the invite is reusable
+        let is_reusable = invite_event
+            .tags
+            .iter()
+            .any(|t| t.kind() == TagKind::custom("reusable"));
+
+        let mut invite = Invite::new(invite_event.id, HashSet::from([GroupRole::Member]));
+        invite.reusable = is_reusable;
 
         self.invites.insert(invite_code.to_string(), invite);
         self.update_state();
@@ -1044,6 +1193,12 @@ impl Group {
             .find(TagKind::custom("code"))
             .and_then(|t| t.content())
         {
+            // Check if the invite is reusable
+            let is_reusable = event
+                .tags
+                .iter()
+                .any(|t| t.kind() == TagKind::custom("reusable"));
+
             let roles = event
                 .tags
                 .iter()
@@ -1052,7 +1207,8 @@ impl Group {
                 .map(|r| GroupRole::from_str(r).unwrap_or(GroupRole::Member))
                 .collect();
 
-            let invite = Invite::new(event.id, roles);
+            let mut invite = Invite::new(event.id, roles);
+            invite.reusable = is_reusable;
 
             self.invites.insert(code.to_string(), invite);
             self.update_timestamps(event);
@@ -1072,10 +1228,12 @@ impl Group {
     }
 
     pub fn extract_group_id(event: &Event) -> Option<&str> {
-        match event.kind {
+        let result = match event.kind {
             k if k.is_addressable() => event.tags.find(TagKind::d()).and_then(|t| t.content()),
             _ => event.tags.find(TagKind::h()).and_then(|t| t.content()),
-        }
+        };
+        // println!("[extract_group_id] result: {:?}", result);
+        result
     }
 
     pub fn extract_group_h_tag(event: &Event) -> Option<&str> {
@@ -1106,11 +1264,98 @@ impl Group {
 
     /// Generates all membership-related events for the group
     pub fn generate_membership_events(&self, relay_pubkey: &PublicKey) -> Vec<UnsignedEvent> {
-        vec![
-            self.generate_put_user_event(relay_pubkey),
-            self.generate_admins_event(relay_pubkey),
-            self.generate_members_event(relay_pubkey),
-        ]
+        // println!("[generate_membership_events] Starting to generate membership events");
+        // println!("[generate_membership_events] Generating put_user_event");
+        let put_user = self.generate_put_user_event(relay_pubkey);
+        // println!("[generate_membership_events] Generating admins_event");
+        let admins = self.generate_admins_event(relay_pubkey);
+        // println!("[generate_membership_events] Generating members_event");
+        let members = self.generate_members_event(relay_pubkey);
+        // println!("[generate_membership_events] Finished generating all events");
+
+        vec![put_user, admins, members]
+    }
+
+    pub fn generate_put_user_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
+        // println!("[generate_put_user_event] Starting");
+        let event = UnsignedEvent::new(
+            *pubkey,
+            Timestamp::now_with_supplier(&Instant::now()),
+            KIND_GROUP_ADD_USER_9000,
+            vec![
+                Tag::custom(
+                    TagKind::p(),
+                    vec![
+                        pubkey.to_string(),
+                        GroupRole::Member.as_tuple().0.to_string(),
+                    ],
+                ),
+                Tag::custom(TagKind::h(), [self.id.clone()]),
+            ],
+            "".to_string(),
+        );
+        // println!("[generate_put_user_event] Finished");
+        event
+    }
+
+    pub fn generate_admins_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
+        // println!("[generate_admins_event] Starting");
+        let admins = self.members.values().filter(|member| {
+            member
+                .roles
+                .iter()
+                .any(|role| matches!(role, GroupRole::Admin))
+        });
+
+        let mut tags = Vec::new();
+        tags.push(Tag::identifier(self.id.clone()));
+
+        // println!("[generate_admins_event] Creating tags for admins");
+        for admin in admins {
+            let mut tag_vals: Vec<String> = vec![admin.pubkey.to_string()];
+            tag_vals.extend(admin.roles.iter().map(|role| format!("{:?}", role)));
+
+            let tag = Tag::custom(TagKind::p(), tag_vals);
+            tags.push(tag);
+        }
+        // println!("[generate_admins_event] Finished creating tags");
+
+        let event = UnsignedEvent::new(
+            *pubkey,
+            Timestamp::now_with_supplier(&Instant::now()),
+            KIND_GROUP_ADMINS_39001,
+            tags,
+            "".to_string(),
+        );
+        // println!("[generate_admins_event] Finished");
+        event
+    }
+
+    pub fn generate_members_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
+        // println!("[generate_members_event] Starting");
+        let members: Vec<&PublicKey> = self.members.keys().collect();
+
+        let mut tags = Vec::new();
+        tags.push(Tag::identifier(self.id.clone()));
+
+        // println!(
+        //     "[generate_members_event] Creating tags for {} members",
+        //     members.len()
+        // );
+        for pubkey in members {
+            tags.push(Tag::public_key(*pubkey));
+        }
+        // println!("[generate_members_event] Finished creating tags");
+
+        let event = UnsignedEvent::new(
+            *pubkey,
+            Timestamp::now_with_supplier(&Instant::now()),
+            KIND_GROUP_MEMBERS_39002,
+            tags,
+            "".to_string(),
+        );
+        // println!("[generate_members_event] Finished");
+        event
     }
 
     /// Generates all metadata-related events for the group
@@ -1131,25 +1376,6 @@ impl Group {
 
 // Event generation based on current state
 impl Group {
-    pub fn generate_put_user_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
-        UnsignedEvent::new(
-            *pubkey,
-            Timestamp::now_with_supplier(&Instant::now()),
-            KIND_GROUP_ADD_USER_9000,
-            vec![
-                Tag::custom(
-                    TagKind::p(),
-                    vec![
-                        pubkey.to_string(),
-                        GroupRole::Member.as_tuple().0.to_string(),
-                    ],
-                ),
-                Tag::custom(TagKind::h(), [self.id.clone()]),
-            ],
-            "".to_string(),
-        )
-    }
-
     pub fn generate_metadata_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
         // Private = needs authentication to read
         let access = if self.metadata.private {
@@ -1197,53 +1423,6 @@ impl Group {
             *pubkey,
             Timestamp::now_with_supplier(&Instant::now()),
             KIND_GROUP_METADATA_39000,
-            tags,
-            "".to_string(),
-        )
-    }
-
-    pub fn generate_admins_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
-        let admins = self.members.values().filter(|member| {
-            member
-                .roles
-                .iter()
-                .any(|role| matches!(role, GroupRole::Admin))
-        });
-
-        let mut tags = Vec::new();
-        tags.push(Tag::identifier(self.id.clone()));
-
-        for admin in admins {
-            let mut tag_vals: Vec<String> = vec![admin.pubkey.to_string()];
-            tag_vals.extend(admin.roles.iter().map(|role| format!("{:?}", role)));
-
-            let tag = Tag::custom(TagKind::p(), tag_vals);
-            tags.push(tag);
-        }
-
-        UnsignedEvent::new(
-            *pubkey,
-            Timestamp::now_with_supplier(&Instant::now()),
-            KIND_GROUP_ADMINS_39001,
-            tags,
-            "".to_string(),
-        )
-    }
-
-    pub fn generate_members_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
-        let members: Vec<&PublicKey> = self.members.keys().collect();
-
-        let mut tags = Vec::new();
-        tags.push(Tag::identifier(self.id.clone()));
-
-        for pubkey in members {
-            tags.push(Tag::public_key(*pubkey));
-        }
-
-        UnsignedEvent::new(
-            *pubkey,
-            Timestamp::now_with_supplier(&Instant::now()),
-            KIND_GROUP_MEMBERS_39002,
             tags,
             "".to_string(),
         )
@@ -2600,5 +2779,188 @@ mod tests {
             last_admin_result.unwrap_err().to_string(),
             "Cannot remove last admin"
         );
+    }
+
+    #[tokio::test]
+    async fn test_single_use_invite_creation() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+
+        // Create a single-use invite (no reusable tag)
+        let invite_code = "test_single_use";
+        let create_invite_event =
+            create_test_invite_event(&admin_keys, &group_id, invite_code).await;
+
+        assert!(group
+            .create_invite(&create_invite_event, &admin_keys.public_key())
+            .unwrap());
+
+        let invite = group.invites.get(invite_code).unwrap();
+        assert!(!invite.reusable, "Invite should be single-use by default");
+        assert_eq!(
+            invite.redeemed_by, None,
+            "New invite should not be used yet"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_reusable_invite_creation() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+
+        // Create a reusable invite with the tag
+        let invite_code = "test_reusable";
+
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Custom("code".into()), [invite_code]),
+            // Add reusable tag
+            Tag::custom(TagKind::Custom("reusable".into()), Vec::<String>::new()),
+        ];
+
+        let reusable_invite_event = create_test_event(&admin_keys, 9009, tags).await;
+
+        assert!(group
+            .create_invite(&reusable_invite_event, &admin_keys.public_key())
+            .unwrap());
+
+        let invite = group.invites.get(invite_code).unwrap();
+        assert!(invite.reusable, "Invite should be marked as reusable");
+    }
+
+    #[tokio::test]
+    async fn test_using_single_use_invite() {
+        let (admin_keys, user1_keys, user2_keys) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+        let relay_keys = Keys::generate();
+
+        // Create a single-use invite
+        let invite_code = "test_single_use";
+        let create_invite_event =
+            create_test_invite_event(&admin_keys, &group_id, invite_code).await;
+
+        group
+            .create_invite(&create_invite_event, &admin_keys.public_key())
+            .unwrap();
+
+        // First user joins with the invite
+        let join_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Custom("code".into()), [invite_code]),
+        ];
+        let join_event = create_test_event(&user1_keys, 9021, join_tags).await;
+
+        let result = group.join_request(Box::new(join_event), &relay_keys.public_key());
+        assert!(result.is_ok());
+        assert!(group.is_member(&user1_keys.public_key()));
+
+        // Verify the invite is marked as used
+        let invite = group.invites.get(invite_code).unwrap();
+        assert!(invite.redeemed_by.is_some());
+        let (redeemed_by, _) = invite.redeemed_by.unwrap();
+        assert_eq!(redeemed_by, user1_keys.public_key());
+
+        // Second user tries to use the same invite
+        let join_tags2 = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Custom("code".into()), [invite_code]),
+        ];
+        let join_event2 = create_test_event(&user2_keys, 9021, join_tags2).await;
+
+        let result2 = group.join_request(Box::new(join_event2), &relay_keys.public_key());
+        assert!(result2.is_ok());
+
+        // Second user should be added to join_requests instead of members
+        assert!(!group.is_member(&user2_keys.public_key()));
+        assert!(group.join_requests.contains(&user2_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_using_reusable_invite() {
+        let (admin_keys, user1_keys, user2_keys) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+        let relay_keys = Keys::generate();
+
+        // Create a reusable invite
+        let invite_code = "test_reusable";
+
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Custom("code".into()), [invite_code]),
+            // Add reusable tag
+            Tag::custom(TagKind::Custom("reusable".into()), Vec::<String>::new()),
+        ];
+
+        let reusable_invite_event = create_test_event(&admin_keys, 9009, tags).await;
+
+        group
+            .create_invite(&reusable_invite_event, &admin_keys.public_key())
+            .unwrap();
+
+        // First user joins with the invite
+        let join_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Custom("code".into()), [invite_code]),
+        ];
+        let join_event = create_test_event(&user1_keys, 9021, join_tags).await;
+
+        let result = group.join_request(Box::new(join_event), &relay_keys.public_key());
+        assert!(result.is_ok());
+        assert!(group.is_member(&user1_keys.public_key()));
+
+        // Verify the invite is still reusable
+        let invite = group.invites.get(invite_code).unwrap();
+        assert!(invite.reusable);
+        assert_eq!(
+            invite.redeemed_by, None,
+            "Reusable invite should not track usage"
+        );
+
+        // Second user tries to use the same invite
+        let join_tags2 = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Custom("code".into()), [invite_code]),
+        ];
+        let join_event2 = create_test_event(&user2_keys, 9021, join_tags2).await;
+
+        let result2 = group.join_request(Box::new(join_event2), &relay_keys.public_key());
+        assert!(result2.is_ok());
+
+        // Second user should also be added as a member
+        assert!(group.is_member(&user2_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_load_invite_state_from_events() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let (mut group, group_id) = create_test_group(&admin_keys).await;
+
+        // Create a single-use invite event
+        let single_use_code = "single_use";
+        let single_use_event =
+            create_test_invite_event(&admin_keys, &group_id, single_use_code).await;
+
+        // Create a reusable invite event
+        let reusable_code = "reusable";
+        let reusable_tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Custom("code".into()), [reusable_code]),
+            Tag::custom(TagKind::Custom("reusable".into()), Vec::<String>::new()),
+        ];
+        let reusable_event = create_test_event(&admin_keys, 9009, reusable_tags).await;
+
+        // Load invite state from events
+        group.load_invite_from_event(&single_use_event).unwrap();
+        group.load_invite_from_event(&reusable_event).unwrap();
+
+        // Verify single-use invite properties
+        let single_use_invite = group.invites.get(single_use_code).unwrap();
+        assert!(!single_use_invite.reusable);
+        assert_eq!(single_use_invite.redeemed_by, None);
+
+        // Verify reusable invite properties
+        let reusable_invite = group.invites.get(reusable_code).unwrap();
+        assert!(reusable_invite.reusable);
+        assert_eq!(reusable_invite.redeemed_by, None);
     }
 }
