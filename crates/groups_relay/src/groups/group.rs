@@ -902,7 +902,7 @@ impl Group {
                 // println!("[join_request] Updating state...");
                 self.update_state();
                 // println!("[join_request] Creating commands for join with invite");
-                return self.create_join_request_commands(true, event, relay_pubkey);
+                self.create_join_request_commands(true, event, relay_pubkey)
             }
             // Invite exists but cannot be used (already used and not reusable)
             Some((_, false, _, _)) => {
@@ -917,7 +917,7 @@ impl Group {
                 self.join_requests.insert(event.pubkey);
                 self.update_state();
                 // println!("[join_request] Creating commands for adding to join requests");
-                return self.create_join_request_commands(false, event, relay_pubkey);
+                self.create_join_request_commands(false, event, relay_pubkey)
             }
             // No matching invite code
             None => {
@@ -931,7 +931,7 @@ impl Group {
                 // println!(
                 //     "[join_request] Creating commands for adding to join requests (no invite)"
                 // );
-                return self.create_join_request_commands(false, event, relay_pubkey);
+                self.create_join_request_commands(false, event, relay_pubkey)
             }
         }
     }
@@ -1278,7 +1278,9 @@ impl Group {
 
     pub fn generate_put_user_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
         // println!("[generate_put_user_event] Starting");
-        let event = UnsignedEvent::new(
+        
+        // println!("[generate_put_user_event] Finished");
+        UnsignedEvent::new(
             *pubkey,
             Timestamp::now_with_supplier(&Instant::now()),
             KIND_GROUP_ADD_USER_9000,
@@ -1293,9 +1295,7 @@ impl Group {
                 Tag::custom(TagKind::h(), [self.id.clone()]),
             ],
             "".to_string(),
-        );
-        // println!("[generate_put_user_event] Finished");
-        event
+        )
     }
 
     pub fn generate_admins_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
@@ -1320,15 +1320,15 @@ impl Group {
         }
         // println!("[generate_admins_event] Finished creating tags");
 
-        let event = UnsignedEvent::new(
+        
+        // println!("[generate_admins_event] Finished");
+        UnsignedEvent::new(
             *pubkey,
             Timestamp::now_with_supplier(&Instant::now()),
             KIND_GROUP_ADMINS_39001,
             tags,
             "".to_string(),
-        );
-        // println!("[generate_admins_event] Finished");
-        event
+        )
     }
 
     pub fn generate_members_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
@@ -1347,15 +1347,15 @@ impl Group {
         }
         // println!("[generate_members_event] Finished creating tags");
 
-        let event = UnsignedEvent::new(
+        
+        // println!("[generate_members_event] Finished");
+        UnsignedEvent::new(
             *pubkey,
             Timestamp::now_with_supplier(&Instant::now()),
             KIND_GROUP_MEMBERS_39002,
             tags,
             "".to_string(),
-        );
-        // println!("[generate_members_event] Finished");
-        event
+        )
     }
 
     /// Generates all metadata-related events for the group

@@ -3,7 +3,7 @@ use crate::{
     groups::Groups,
     middlewares::{
         ErrorHandlingMiddleware, EventVerifierMiddleware, LoggerMiddleware, Nip09Middleware,
-        Nip29Middleware, Nip42Middleware, Nip70Middleware, ValidationMiddleware,
+        Nip29Middleware, Nip40Middleware, Nip42Middleware, Nip70Middleware, ValidationMiddleware,
     },
     nostr_database::RelayDatabase,
     nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
@@ -50,6 +50,7 @@ pub fn build_websocket_handler(
     let logger = LoggerMiddleware;
     let event_verifier = EventVerifierMiddleware;
     let nip_42 = Nip42Middleware::new(auth_url);
+    let nip_40 = Nip40Middleware::new(database.clone());
     let nip_70 = Nip70Middleware;
     let nip_29 = Nip29Middleware::new(groups, relay_keys.public_key(), database.clone());
     let validation_middleware = ValidationMiddleware::new(relay_keys.public_key());
@@ -78,6 +79,7 @@ pub fn build_websocket_handler(
         .with_middleware(nip_42)
         .with_middleware(validation_middleware)
         .with_middleware(event_verifier)
+        .with_middleware(nip_40)
         .with_middleware(nip_70)
         .with_middleware(nip_09)
         .with_middleware(nip_29)

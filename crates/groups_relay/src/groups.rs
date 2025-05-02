@@ -157,9 +157,7 @@ impl Groups {
             if event.pubkey != self.relay_pubkey && event.kind != KIND_GROUP_USER_LEAVE_REQUEST_9022
             {
                 let verification_result = group_ref.verify_member_access(&event.pubkey, event.kind);
-                if let Err(e) = verification_result {
-                    return Err(e);
-                }
+                verification_result?
             }
         }
 
@@ -314,19 +312,16 @@ impl Groups {
     }
 
     pub fn handle_create_invite(&self, event: Box<Event>) -> Result<Vec<StoreCommand>, Error> {
-        let created;
         {
             let mut group = self
                 .find_group_from_event_mut(&event)?
                 .ok_or(Error::notice("[CreateInvite] Group not found"))?;
-            created = group.create_invite(&event, &self.relay_pubkey)?;
+            group.create_invite(&event, &self.relay_pubkey)?;
         }
 
-        if created {
-            Ok(vec![StoreCommand::SaveSignedEvent(event)])
-        } else {
-            Ok(vec![StoreCommand::SaveSignedEvent(event)])
-        }
+        // Regardless of whether the invite was newly created or already existed (created=false),
+        // we save the event that attempted the creation, as per NIP-29.
+        Ok(vec![StoreCommand::SaveSignedEvent(event)])
     }
 
     pub fn handle_join_request(&self, event: Box<Event>) -> Result<Vec<StoreCommand>, Error> {
