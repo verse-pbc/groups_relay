@@ -14,7 +14,7 @@ use tracing::{error, info};
 #[command(
     name = "delete-event",
     version = "0.1.0",
-    about = "Deletes a specific Nostr event or prunes groups from the LMDB database that are either inactive (no activity in 3+ months) or empty (no members)."
+    about = "Deletes a specific Nostr event or prunes groups from the LMDB database that are either inactive (no activity in 1+ month) or empty (no members)."
 )]
 struct Args {
     /// Hex-encoded ID of the Nostr event to delete.
@@ -66,7 +66,7 @@ struct GroupInfo {
 }
 
 async fn analyze_groups(db: &NostrLMDB) -> Result<(HashMap<String, GroupInfo>, PruneStats)> {
-    let three_months_ago = Timestamp::now() - Duration::from_secs(90 * 24 * 60 * 60);
+    let one_month_ago = Timestamp::now() - Duration::from_secs(30 * 24 * 60 * 60);
     let mut stats = PruneStats {
         inactive_groups: 0,
         empty_groups: 0,
@@ -155,9 +155,9 @@ async fn analyze_groups(db: &NostrLMDB) -> Result<(HashMap<String, GroupInfo>, P
             latest_events.extend(db.query(d_filter).await?);
 
             if let Some(latest_event) = latest_events.first() {
-                if latest_event.created_at < three_months_ago {
+                if latest_event.created_at < one_month_ago {
                     should_delete = true;
-                    delete_reason = "inactive (no activity in 3+ months)".to_string();
+                    delete_reason = "inactive (no activity in 1+ month)".to_string();
                     stats.inactive_groups += 1;
                 }
             }
