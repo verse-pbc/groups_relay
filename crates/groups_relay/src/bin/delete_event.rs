@@ -25,7 +25,7 @@ struct Args {
     #[arg(short, long)]
     db: PathBuf,
 
-    /// If set, prunes all groups that haven't had activity in the last 3 months or have no members
+    /// If set, prunes all groups that haven't had activity in the last 1+ month or have no members
     #[arg(long)]
     prune_inactive_groups: bool,
 
