@@ -1,6 +1,5 @@
 use crate::groups::NON_GROUP_ALLOWED_KINDS;
 use crate::nostr_session_state::NostrConnectionState;
-use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use tracing::{debug, warn};
@@ -13,7 +12,7 @@ use crate::groups::{
     KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ValidationMiddleware {
     relay_pubkey: PublicKey,
 }
@@ -95,12 +94,12 @@ impl ValidationMiddleware {
 #[async_trait]
 impl Middleware for ValidationMiddleware {
     type State = NostrConnectionState;
-    type IncomingMessage = ClientMessage;
-    type OutgoingMessage = RelayMessage;
+    type IncomingMessage = ClientMessage<'static>;
+    type OutgoingMessage = RelayMessage<'static>;
 
     async fn process_inbound(
         &self,
-        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+        ctx: &mut InboundContext<'_, Self::State, ClientMessage<'static>, RelayMessage<'static>>,
     ) -> Result<(), anyhow::Error> {
         let Some(ClientMessage::Event(event)) = &ctx.message else {
             return ctx.next().await;
@@ -132,8 +131,10 @@ impl Middleware for ValidationMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use crate::nostr_session_state::NostrConnectionState;
+    use std::borrow::Cow;
     use std::sync::Arc;
+    use websocket_builder::InboundContext;
 
     fn create_test_chain(
         middleware: ValidationMiddleware,
@@ -141,8 +142,8 @@ mod tests {
         Arc<
             dyn Middleware<
                 State = NostrConnectionState,
-                IncomingMessage = ClientMessage,
-                OutgoingMessage = RelayMessage,
+                IncomingMessage = ClientMessage<'static>,
+                OutgoingMessage = RelayMessage<'static>,
             >,
         >,
     > {
@@ -155,18 +156,20 @@ mod tests {
         let middleware = ValidationMiddleware::new(keys.public_key());
         let chain = create_test_chain(middleware);
 
-        let normal_filter = Filter::new()
-            .kind(Kind::Custom(11))
-            .custom_tag(SingleLetterTag::lowercase(Alphabet::H), "test_group");
+        let normal_filter = Filter::default().kind(Kind::Custom(11)).custom_tag(
+            SingleLetterTag::lowercase(Alphabet::H),
+            "test_group".to_string(),
+        );
 
+        let message = ClientMessage::Req {
+            subscription_id: Cow::Owned(SubscriptionId::new("test")),
+            filter: Cow::Owned(normal_filter),
+        };
         let mut state =
             NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
-            Some(ClientMessage::Req {
-                subscription_id: SubscriptionId::new("test"),
-                filter: Box::new(normal_filter),
-            }),
+            Some(message),
             None,
             &mut state,
             chain.as_slice(),
@@ -182,18 +185,19 @@ mod tests {
         let middleware = ValidationMiddleware::new(keys.public_key());
         let chain = create_test_chain(middleware);
 
-        let meta_filter = Filter::new()
+        let meta_filter = Filter::default()
             .kind(Kind::Custom(9007))
-            .custom_tag(SingleLetterTag::lowercase(Alphabet::D), "test_group");
+            .identifier("test_group".to_string());
 
+        let message = ClientMessage::Req {
+            subscription_id: Cow::Owned(SubscriptionId::new("test")),
+            filter: Cow::Owned(meta_filter),
+        };
         let mut state =
             NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
-            Some(ClientMessage::Req {
-                subscription_id: SubscriptionId::new("test"),
-                filter: Box::new(meta_filter),
-            }),
+            Some(message),
             None,
             &mut state,
             chain.as_slice(),
@@ -209,18 +213,20 @@ mod tests {
         let middleware = ValidationMiddleware::new(keys.public_key());
         let chain = create_test_chain(middleware);
 
-        let ref_filter = Filter::new()
-            .kind(Kind::Custom(11))
-            .custom_tag(SingleLetterTag::lowercase(Alphabet::E), "test_id");
+        let event_id =
+            EventId::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                .unwrap_or_else(|_| EventId::all_zeros()); // Placeholder if "test_id" is not valid hex
+        let ref_filter = Filter::default().kind(Kind::Custom(11)).event(event_id);
 
+        let message = ClientMessage::Req {
+            subscription_id: Cow::Owned(SubscriptionId::new("test_id")),
+            filter: Cow::Owned(ref_filter),
+        };
         let mut state =
             NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
         let mut ctx = InboundContext::new(
             "test_conn".to_string(),
-            Some(ClientMessage::Req {
-                subscription_id: SubscriptionId::new("test"),
-                filter: Box::new(ref_filter),
-            }),
+            Some(message),
             None,
             &mut state,
             chain.as_slice(),

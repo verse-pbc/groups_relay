@@ -1,7 +1,9 @@
 use crate::nostr_session_state::NostrConnectionState;
+use anyhow::Result;
 use nostr_database::DatabaseError;
 use nostr_sdk::client::Error as NostrSdkError;
 use nostr_sdk::prelude::*;
+use nostr_sdk::RelayMessage;
 use snafu::{Backtrace, Snafu};
 use std::borrow::Cow;
 use tracing::{error, warn};
@@ -101,8 +103,6 @@ impl From<NostrSdkError> for Error {
             NostrSdkError::GossipFiltersEmpty => {
                 Error::nostr_sdk("Gossip broken down filters are empty")
             }
-            NostrSdkError::DMsRelaysNotFound => Error::nostr_sdk("DMs relays not found"),
-            NostrSdkError::MetadataNotFound => Error::nostr_sdk("Metadata not found"),
             NostrSdkError::Relay(relay_error) => Error::nostr_sdk(relay_error.to_string()),
             NostrSdkError::Database(database_error) => Error::nostr_sdk(database_error.to_string()),
             NostrSdkError::NIP59(nip59_error) => Error::nostr_sdk(nip59_error.to_string()),
@@ -115,6 +115,7 @@ impl From<NostrSdkError> for Error {
             }
             NostrSdkError::Json(json_error) => Error::nostr_sdk(json_error.to_string()),
             NostrSdkError::SharedState(state_error) => Error::nostr_sdk(state_error.to_string()),
+            _ => Error::nostr_sdk(format!("Unhandled Nostr SDK error: {:?}", error)),
         }
     }
 }
@@ -138,13 +139,13 @@ impl Error {
         &self,
         state: &mut NostrConnectionState,
         subscription_id: SubscriptionId,
-    ) -> Vec<RelayMessage> {
+    ) -> Vec<RelayMessage<'static>> {
         match self {
             Error::Notice { message, .. } => {
                 warn!("Notice: {}", message);
                 vec![RelayMessage::closed(
                     subscription_id,
-                    Cow::Borrowed(message.as_str()),
+                    Cow::Owned(message.clone()),
                 )]
             }
             Error::AuthRequired { message, .. } => {
@@ -152,35 +153,35 @@ impl Error {
                 let challenge_event = state.get_challenge_event();
                 vec![
                     challenge_event,
-                    RelayMessage::closed(subscription_id, Cow::Borrowed(message.as_str())),
+                    RelayMessage::closed(subscription_id, Cow::Owned(message.clone())),
                 ]
             }
             Error::Restricted { message, .. } => {
                 warn!("Restricted: {}", message);
                 vec![RelayMessage::closed(
                     subscription_id,
-                    Cow::Borrowed(message.as_str()),
+                    Cow::Owned(message.clone()),
                 )]
             }
             Error::Duplicate { message, .. } => {
                 warn!("Duplicate: {}", message);
                 vec![RelayMessage::closed(
                     subscription_id,
-                    Cow::Borrowed(message.as_str()),
+                    Cow::Owned(message.clone()),
                 )]
             }
             Error::Internal { message, .. } => {
                 error!("Internal error: {}", message);
                 vec![RelayMessage::closed(
                     subscription_id,
-                    Cow::Borrowed("Internal error"),
+                    Cow::Owned("Internal error".to_string()),
                 )]
             }
             Error::NostrSdk { message, .. } => {
                 error!("Nostr SDK error: {}", message);
                 vec![RelayMessage::closed(
                     subscription_id,
-                    Cow::Borrowed("Nostr SDK error"),
+                    Cow::Owned("Nostr SDK error".to_string()),
                 )]
             }
         }
@@ -190,13 +191,13 @@ impl Error {
         &self,
         state: &mut NostrConnectionState,
         event_id: EventId,
-    ) -> Vec<RelayMessage> {
+    ) -> Vec<RelayMessage<'static>> {
         match self {
             Error::Notice { message, .. } => {
                 vec![RelayMessage::ok(
                     event_id,
                     false,
-                    Cow::Borrowed(message.as_str()),
+                    Cow::Owned(message.clone()),
                 )]
             }
             Error::AuthRequired { message, .. } => {
@@ -215,7 +216,7 @@ impl Error {
                 vec![RelayMessage::ok(
                     event_id,
                     false,
-                    Cow::Borrowed(message.as_str()),
+                    Cow::Owned(message.clone()),
                 )]
             }
             Error::Internal { message, .. } => {
@@ -223,7 +224,7 @@ impl Error {
                 vec![RelayMessage::ok(
                     event_id,
                     false,
-                    Cow::Borrowed("error: Internal error"),
+                    Cow::Owned("error: Internal error".to_string()),
                 )]
             }
             Error::NostrSdk { message, .. } => {
@@ -231,23 +232,29 @@ impl Error {
                 vec![RelayMessage::ok(
                     event_id,
                     false,
-                    Cow::Borrowed("error: Internal error"),
+                    Cow::Owned("error: Internal error".to_string()),
                 )]
             }
         }
     }
 
-    pub async fn handle_inbound_error(
+    pub async fn handle_inbound_error<'ctx_life, CM>(
         &self,
-        ctx: &mut InboundContext<'_, NostrConnectionState, ClientMessage, RelayMessage>,
+        ctx: &mut InboundContext<'ctx_life, NostrConnectionState, CM, RelayMessage<'static>>,
         client_message_id: ClientMessageId,
-    ) -> Result<()> {
-        let relay_messages = match client_message_id {
-            ClientMessageId::Event(event_id) => {
-                self.to_relay_messages_from_event(ctx.state, event_id)
-            }
-            ClientMessageId::Subscription(subscription_id) => {
-                self.to_relay_messages_from_subscription_id(ctx.state, subscription_id)
+    ) -> Result<()>
+    where
+        CM: Send + Sync + 'static,
+    {
+        let relay_messages: Vec<RelayMessage<'static>> = {
+            let state = &mut ctx.state;
+            match client_message_id {
+                ClientMessageId::Event(event_id) => {
+                    self.to_relay_messages_from_event(state, event_id)
+                }
+                ClientMessageId::Subscription(subscription_id) => {
+                    self.to_relay_messages_from_subscription_id(state, subscription_id)
+                }
             }
         };
 

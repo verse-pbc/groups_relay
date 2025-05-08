@@ -339,16 +339,19 @@ where
         tokio::select! {
             Ok(notification) = notifications.recv() => {
                 if let RelayPoolNotification::Message { message, .. } = notification {
-                    let RelayMessage::Event { event, subscription_id, .. } = message else { continue };
-                    if subscription_id != sub_id { continue };
-                    if predicate(&event) {
-                        client.unsubscribe(sub_id).await;
-                        return Ok(Some(*event));
+                    let RelayMessage::Event {
+                        subscription_id,
+                        event: msg_event,
+                    } = message else { continue };
+                    if *subscription_id != sub_id { continue };
+                    if predicate(msg_event.as_ref()) {
+                        client.unsubscribe(&sub_id).await;
+                        return Ok(Some(msg_event.into_owned()));
                     }
                 }
             }
             _ = &mut timeout_fut => {
-                client.unsubscribe(sub_id).await;
+                client.unsubscribe(&sub_id).await;
                 return Ok(None);
             }
         }

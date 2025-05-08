@@ -150,38 +150,37 @@ impl Nip09Middleware {
 #[async_trait]
 impl Middleware for Nip09Middleware {
     type State = NostrConnectionState;
-    type IncomingMessage = ClientMessage;
-    type OutgoingMessage = RelayMessage;
+    type IncomingMessage = ClientMessage<'static>;
+    type OutgoingMessage = RelayMessage<'static>;
 
     async fn process_inbound(
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        let Some(ClientMessage::Event(event)) = &ctx.message else {
+        let Some(ClientMessage::Event(event_cow)) = &ctx.message else {
             return ctx.next().await;
         };
 
-        if event.kind == Kind::EventDeletion {
-            if let Err(e) = self.handle_deletion_request(event).await {
+        if event_cow.kind == Kind::EventDeletion {
+            if let Err(e) = self.handle_deletion_request(event_cow.as_ref()).await {
                 error!(
                     target: "nip09",
                     "Failed to process deletion request {}: {}",
-                    event.id,
+                    event_cow.id,
                     e
                 );
                 return ctx
                     .send_message(RelayMessage::ok(
-                        event.id,
+                        event_cow.id,
                         false,
                         format!("Failed to process deletion request: {}", e),
                     ))
                     .await;
             }
 
-            // Send OK for the deletion request itself
             return ctx
                 .send_message(RelayMessage::ok(
-                    event.id,
+                    event_cow.id,
                     true,
                     "Deletion request processed successfully",
                 ))
@@ -196,6 +195,7 @@ impl Middleware for Nip09Middleware {
 mod tests {
     use super::*;
     use crate::test_utils::{create_test_event, setup_test};
+    use std::borrow::Cow;
     use std::time::Duration;
     use tokio::time::sleep;
 
@@ -221,7 +221,7 @@ mod tests {
         let mut state = NostrConnectionState::default();
         let mut ctx = InboundContext::new(
             "test".to_string(),
-            Some(ClientMessage::Event(Box::new(deletion_request.clone()))),
+            Some(ClientMessage::Event(Cow::Owned(deletion_request.clone()))),
             None,
             &mut state,
             &[],
@@ -263,7 +263,7 @@ mod tests {
         let mut state = NostrConnectionState::default();
         let mut ctx = InboundContext::new(
             "test".to_string(),
-            Some(ClientMessage::Event(Box::new(deletion_request.clone()))),
+            Some(ClientMessage::Event(Cow::Owned(deletion_request.clone()))),
             None,
             &mut state,
             &[],
@@ -305,7 +305,7 @@ mod tests {
         let mut state = NostrConnectionState::default();
         let mut ctx = InboundContext::new(
             "test".to_string(),
-            Some(ClientMessage::Event(Box::new(deletion_request.clone()))),
+            Some(ClientMessage::Event(Cow::Owned(deletion_request.clone()))),
             None,
             &mut state,
             &[],
@@ -339,7 +339,7 @@ mod tests {
         let mut state = NostrConnectionState::default();
         let mut ctx = InboundContext::new(
             "test".to_string(),
-            Some(ClientMessage::Event(Box::new(event.clone()))),
+            Some(ClientMessage::Event(Cow::Owned(event.clone()))),
             None,
             &mut state,
             &[],
@@ -377,7 +377,7 @@ mod tests {
         let mut state = NostrConnectionState::default();
         let mut ctx = InboundContext::new(
             "test".to_string(),
-            Some(ClientMessage::Event(Box::new(deletion_event.clone()))),
+            Some(ClientMessage::Event(Cow::Owned(deletion_event.clone()))),
             None,
             &mut state,
             &[],

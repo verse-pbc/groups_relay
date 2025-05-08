@@ -25,8 +25,8 @@ pub struct ServerState {
     pub ws_handler: Arc<
         websocket_server::WebSocketHandler<
             NostrConnectionState,
-            ClientMessage,
-            RelayMessage,
+            ClientMessage<'static>,
+            RelayMessage<'static>,
             NostrMessageConverter,
             NostrConnectionFactory,
         >,
@@ -55,8 +55,10 @@ pub async fn run_server(
     info!("Relay URL: {}", settings.relay_url);
     info!("Auth requests must match this URL: {}", settings.auth_url);
 
+    let relay_url_parsed = RelayUrl::parse(&settings.relay_url)?;
+
     let ws_handler = Arc::new(websocket_server::build_websocket_handler(
-        settings.relay_url.clone(),
+        relay_url_parsed,
         settings.auth_url.clone(),
         groups.clone(),
         &relay_keys,

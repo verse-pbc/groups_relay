@@ -86,7 +86,7 @@ main() {
 
     echo -e "\n=== First user lists all events for -h tag without auth ==="
     run_step 9 "First user lists all events for -h tag (9000)" \
-        "nak req -t h='${GROUP_ID}' --sec='${NEW_USER_PRIVATE_KEY}' '${RELAY_URL}'"
+        "nak req -t h='${GROUP_ID}' '${RELAY_URL}'"
 
     echo -e "\n=== First user lists all events for -h tag with auth ==="
     run_step 10 "First user lists all events for -h tag (9000)" \

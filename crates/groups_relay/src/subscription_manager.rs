@@ -2,6 +2,7 @@ use crate::error::Error;
 use crate::nostr_database::RelayDatabase;
 use nostr_sdk::prelude::*;
 use snafu::Backtrace;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -22,7 +23,7 @@ enum SubscriptionMessage {
 pub struct SubscriptionManager {
     database: Arc<RelayDatabase>,
     subscription_sender: mpsc::UnboundedSender<SubscriptionMessage>,
-    outgoing_sender: Option<MessageSender<RelayMessage>>,
+    outgoing_sender: Option<MessageSender<RelayMessage<'static>>>,
     local_subscription_count: Arc<AtomicUsize>,
     task_token: CancellationToken,
 }
@@ -30,7 +31,7 @@ pub struct SubscriptionManager {
 impl SubscriptionManager {
     pub async fn new(
         database: Arc<RelayDatabase>,
-        outgoing_sender: MessageSender<RelayMessage>,
+        outgoing_sender: MessageSender<RelayMessage<'static>>,
     ) -> Result<Self, Error> {
         let local_subscription_count = Arc::new(AtomicUsize::new(0));
         let task_token = CancellationToken::new();
@@ -55,7 +56,7 @@ impl SubscriptionManager {
     }
 
     fn start_subscription_task(
-        mut outgoing_sender: MessageSender<RelayMessage>,
+        mut outgoing_sender: MessageSender<RelayMessage<'static>>,
         local_subscription_count: Arc<AtomicUsize>,
         task_token: CancellationToken,
     ) -> Result<mpsc::UnboundedSender<SubscriptionMessage>, Error> {
@@ -98,8 +99,8 @@ impl SubscriptionManager {
                                             .any(|filter| filter.match_event(event.as_ref()))
                                         {
                                             let message = RelayMessage::Event {
-                                                subscription_id: subscription_id.clone(),
-                                                event: event.clone(),
+                                                subscription_id: Cow::Owned(subscription_id.clone()),
+                                                event: Cow::Owned(*event.clone()),
                                             };
                                             if let Err(e) = outgoing_sender.send(message).await {
                                                 error!("Failed to send event: {:?}", e);
@@ -171,7 +172,7 @@ impl SubscriptionManager {
             .map_or(0, |sender| sender.capacity())
     }
 
-    pub fn set_outgoing_sender(&mut self, sender: MessageSender<RelayMessage>) {
+    pub fn set_outgoing_sender(&mut self, sender: MessageSender<RelayMessage<'static>>) {
         self.outgoing_sender = Some(sender);
     }
 
@@ -223,17 +224,17 @@ impl SubscriptionManager {
         &self,
         subscription_id: &SubscriptionId,
         filters: &[Filter],
-        mut sender: MessageSender<RelayMessage>,
+        mut sender: MessageSender<RelayMessage<'static>>,
     ) -> Result<usize, Error> {
         let events = self.fetch_events(filters.to_vec()).await?;
         let capacity = sender.capacity() / 2;
         let events_len = events.len();
 
-        for event in events.into_iter().take(capacity) {
+        for event_item in events.into_iter().take(capacity) {
             if let Err(e) = sender
                 .send(RelayMessage::Event {
-                    subscription_id: subscription_id.clone(),
-                    event: Box::new(event),
+                    subscription_id: Cow::Owned(subscription_id.clone()),
+                    event: Cow::Owned(event_item),
                 })
                 .await
             {
@@ -245,7 +246,9 @@ impl SubscriptionManager {
         }
 
         if let Err(e) = sender
-            .send(RelayMessage::EndOfStoredEvents(subscription_id.clone()))
+            .send(RelayMessage::EndOfStoredEvents(Cow::Owned(
+                subscription_id.clone(),
+            )))
             .await
         {
             return Err(Error::Internal {
@@ -402,7 +405,7 @@ mod tests {
                 },
                 _idx,
             )) => {
-                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
                 assert_eq!(*event, historical_event, "Event content mismatch");
             }
             other => panic!("Expected Event message, got: {:?}", other),
@@ -411,7 +414,7 @@ mod tests {
         // Verify we receive EOSE
         match rx.recv().await {
             Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
-                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
             }
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
@@ -450,7 +453,7 @@ mod tests {
         // Verify we receive EOSE since there are no historical events
         match rx.recv().await {
             Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
-                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
             }
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
@@ -477,8 +480,8 @@ mod tests {
                 },
                 _idx,
             )) => {
-                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
-                assert_eq!(event, new_event_clone, "Event content mismatch");
+                assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(*event, *new_event_clone, "Event content mismatch");
             }
             other => panic!("Expected Event message, got: {:?}", other),
         }
@@ -535,7 +538,7 @@ mod tests {
                 },
                 _idx,
             )) => {
-                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
                 assert_eq!(
                     *event, historical_event,
                     "Historical event content mismatch"
@@ -547,7 +550,7 @@ mod tests {
         // Verify we receive EOSE
         match rx.recv().await {
             Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
-                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
             }
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
@@ -574,8 +577,8 @@ mod tests {
                 },
                 _idx,
             )) => {
-                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
-                assert_eq!(event, new_event_clone, "New event content mismatch");
+                assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(*event, *new_event_clone, "New event content mismatch");
             }
             other => panic!("Expected Event message, got: {:?}", other),
         }
@@ -640,8 +643,8 @@ mod tests {
                     },
                     _idx,
                 )) => {
-                    assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
-                    received_events.push(*event);
+                    assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
+                    received_events.push(event.clone());
                 }
                 other => panic!("Expected Event message, got: {:?}", other),
             }
@@ -650,7 +653,7 @@ mod tests {
         // Verify we receive EOSE
         match rx.recv().await {
             Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
-                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
             }
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
@@ -726,7 +729,7 @@ mod tests {
                 },
                 _idx,
             )) => {
-                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
                 assert_eq!(event.kind, Kind::TextNote, "Event was not a text note");
             }
             other => panic!("Expected Event message, got: {:?}", other),
@@ -735,7 +738,7 @@ mod tests {
         // Verify we receive EOSE
         match rx.recv().await {
             Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
-                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
             }
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
@@ -794,7 +797,7 @@ mod tests {
                 },
                 _idx,
             )) => {
-                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
                 assert_eq!(event.kind, Kind::Metadata, "Event was not a metadata event");
             }
             other => panic!("Expected Event message, got: {:?}", other),
@@ -803,7 +806,7 @@ mod tests {
         // Verify we receive EOSE
         match rx.recv().await {
             Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
-                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
             }
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
@@ -860,7 +863,7 @@ mod tests {
                 },
                 _idx,
             )) => {
-                assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
                 assert_eq!(
                     event.kind,
                     Kind::ContactList,
@@ -873,7 +876,7 @@ mod tests {
         // Verify we receive EOSE
         match rx.recv().await {
             Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
-                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
             }
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
@@ -938,8 +941,8 @@ mod tests {
                     },
                     _idx,
                 )) => {
-                    assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
-                    received_events.push(*event);
+                    assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
+                    received_events.push(event.clone());
                 }
                 other => panic!("Expected Event message, got: {:?}", other),
             }
@@ -948,7 +951,7 @@ mod tests {
         // Verify we receive EOSE
         match rx.recv().await {
             Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
-                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
             }
             other => panic!("Expected EOSE message, got: {:?}", other),
         }
@@ -1039,7 +1042,7 @@ mod tests {
                     },
                     _idx,
                 )) => {
-                    assert_eq!(sub_id, subscription_id, "Subscription ID mismatch");
+                    assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
                     received_kinds.push(event.kind);
                 }
                 other => panic!("Expected Event message, got: {:?}", other),
@@ -1048,7 +1051,7 @@ mod tests {
 
         match rx.recv().await {
             Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
-                assert_eq!(sub_id, subscription_id, "EOSE subscription ID mismatch");
+                assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
             }
             other => panic!("Expected EOSE message, got: {:?}", other),
         }

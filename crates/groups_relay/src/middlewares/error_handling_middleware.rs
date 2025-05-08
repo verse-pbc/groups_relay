@@ -12,8 +12,8 @@ pub struct ErrorHandlingMiddleware;
 #[async_trait]
 impl Middleware for ErrorHandlingMiddleware {
     type State = NostrConnectionState;
-    type IncomingMessage = ClientMessage;
-    type OutgoingMessage = RelayMessage;
+    type IncomingMessage = ClientMessage<'static>;
+    type OutgoingMessage = RelayMessage<'static>;
 
     async fn process_inbound(
         &self,
@@ -23,12 +23,12 @@ impl Middleware for ErrorHandlingMiddleware {
             Some(ClientMessage::Event(event)) => ClientMessageId::Event(event.id),
             Some(ClientMessage::Req {
                 subscription_id, ..
-            }) => ClientMessageId::Subscription(subscription_id.clone()),
+            }) => ClientMessageId::Subscription(subscription_id.as_ref().clone()),
             Some(ClientMessage::ReqMultiFilter {
                 subscription_id, ..
-            }) => ClientMessageId::Subscription(subscription_id.clone()),
+            }) => ClientMessageId::Subscription(subscription_id.as_ref().clone()),
             Some(ClientMessage::Close(subscription_id)) => {
-                ClientMessageId::Subscription(subscription_id.clone())
+                ClientMessageId::Subscription(subscription_id.as_ref().clone())
             }
             Some(ClientMessage::Auth(auth)) => ClientMessageId::Event(auth.id),
             _ => {

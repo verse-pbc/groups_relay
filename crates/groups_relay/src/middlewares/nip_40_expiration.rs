@@ -24,7 +24,7 @@ impl Nip40Middleware {
         Self { database }
     }
 
-    fn check_expiration(&self, event: &Event) -> Result<Option<Timestamp>, RelayMessage> {
+    fn check_expiration(event: &Event) -> Result<Option<Timestamp>, RelayMessage<'static>> {
         if let Some(tag) = event.tags.iter().find(|t| t.kind() == TagKind::Expiration) {
             if let Some(timestamp_str) = tag.content() {
                 if let Ok(timestamp_secs) = timestamp_str.parse::<u64>() {
@@ -76,18 +76,18 @@ impl Nip40Middleware {
 #[async_trait]
 impl Middleware for Nip40Middleware {
     type State = NostrConnectionState;
-    type IncomingMessage = ClientMessage;
-    type OutgoingMessage = RelayMessage;
+    type IncomingMessage = ClientMessage<'static>;
+    type OutgoingMessage = RelayMessage<'static>;
 
     async fn process_inbound(
         &self,
-        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+        ctx: &mut InboundContext<'_, Self::State, ClientMessage<'static>, RelayMessage<'static>>,
     ) -> Result<(), anyhow::Error> {
         let Some(ClientMessage::Event(event)) = &ctx.message else {
             return ctx.next().await;
         };
 
-        match self.check_expiration(event) {
+        match Nip40Middleware::check_expiration(event) {
             Ok(expiration_status) => {
                 if expiration_status.is_some() {
                     debug!(
@@ -106,7 +106,7 @@ impl Middleware for Nip40Middleware {
     /// Filters outgoing event messages, dropping events that have expired.
     async fn process_outbound(
         &self,
-        ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+        ctx: &mut OutboundContext<'_, Self::State, ClientMessage<'static>, RelayMessage<'static>>,
     ) -> Result<(), anyhow::Error> {
         let Some(RelayMessage::Event { ref event, .. }) = ctx.message else {
             return ctx.next().await;
@@ -171,6 +171,7 @@ impl Middleware for Nip40Middleware {
 mod tests {
     use super::*;
     use crate::test_utils::{create_test_event, create_test_state, setup_test};
+    use std::borrow::Cow;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::mpsc;
@@ -194,19 +195,20 @@ mod tests {
     }
 
     fn setup_test_context<'a>(
-        message: Option<ClientMessage>,
-        sender_channel: Option<mpsc::Sender<(RelayMessage, usize)>>,
+        message: Option<ClientMessage<'static>>,
+        sender_channel: Option<mpsc::Sender<(RelayMessage<'static>, usize)>>,
         state: &'a mut NostrConnectionState,
         middlewares: &'a [Arc<
             dyn Middleware<
                 State = NostrConnectionState,
-                IncomingMessage = ClientMessage,
-                OutgoingMessage = RelayMessage,
+                IncomingMessage = ClientMessage<'static>,
+                OutgoingMessage = RelayMessage<'static>,
             >,
         >],
         current_middleware_index: usize,
-    ) -> InboundContext<'a, NostrConnectionState, ClientMessage, RelayMessage> {
-        InboundContext::<'a, NostrConnectionState, ClientMessage, RelayMessage>::new(
+    ) -> InboundContext<'a, NostrConnectionState, ClientMessage<'static>, RelayMessage<'static>>
+    {
+        InboundContext::<'a, NostrConnectionState, ClientMessage<'static>, RelayMessage<'static>>::new(
             "test_conn".to_string(),
             message,
             sender_channel,
@@ -217,19 +219,20 @@ mod tests {
     }
 
     fn setup_outbound_test_context<'a>(
-        message: RelayMessage,
-        sender_channel: Option<mpsc::Sender<(RelayMessage, usize)>>,
+        message: RelayMessage<'static>,
+        sender_channel: Option<mpsc::Sender<(RelayMessage<'static>, usize)>>,
         state: &'a mut NostrConnectionState,
         middlewares: &'a [Arc<
             dyn Middleware<
                 State = NostrConnectionState,
-                IncomingMessage = ClientMessage,
-                OutgoingMessage = RelayMessage,
+                IncomingMessage = ClientMessage<'static>,
+                OutgoingMessage = RelayMessage<'static>,
             >,
         >],
         current_middleware_index: usize,
-    ) -> OutboundContext<'a, NostrConnectionState, ClientMessage, RelayMessage> {
-        OutboundContext::<'a, NostrConnectionState, ClientMessage, RelayMessage>::new(
+    ) -> OutboundContext<'a, NostrConnectionState, ClientMessage<'static>, RelayMessage<'static>>
+    {
+        OutboundContext::<'a, NostrConnectionState, ClientMessage<'static>, RelayMessage<'static>>::new(
             "test_conn".to_string(),
             message,
             sender_channel,
@@ -244,7 +247,7 @@ mod tests {
         let (_tmp_dir, database, keys) = setup_test().await;
         let middleware_under_test = Nip40Middleware::new(database.clone());
         let event = create_non_expiring_event(&keys, "test").await;
-        let message = ClientMessage::Event(event);
+        let message = ClientMessage::Event(Cow::Owned(*event));
 
         let (sender, mut receiver) = mpsc::channel(10);
         let mut state = create_test_state(None);
@@ -253,8 +256,8 @@ mod tests {
             Arc<
                 dyn Middleware<
                     State = NostrConnectionState,
-                    IncomingMessage = ClientMessage,
-                    OutgoingMessage = RelayMessage,
+                    IncomingMessage = ClientMessage<'static>,
+                    OutgoingMessage = RelayMessage<'static>,
                 >,
             >,
         > = vec![Arc::new(middleware_under_test.clone())];
@@ -281,7 +284,7 @@ mod tests {
         let (_tmp_dir, database, keys) = setup_test().await;
         let middleware_under_test = Nip40Middleware::new(database.clone());
         let event = create_expiring_event(&keys, "future", 3600).await;
-        let message = ClientMessage::Event(event);
+        let message = ClientMessage::Event(Cow::Owned(*event));
 
         let (sender, mut receiver) = mpsc::channel(10);
         let mut state = create_test_state(None);
@@ -290,8 +293,8 @@ mod tests {
             Arc<
                 dyn Middleware<
                     State = NostrConnectionState,
-                    IncomingMessage = ClientMessage,
-                    OutgoingMessage = RelayMessage,
+                    IncomingMessage = ClientMessage<'static>,
+                    OutgoingMessage = RelayMessage<'static>,
                 >,
             >,
         > = vec![Arc::new(middleware_under_test.clone())];
@@ -315,7 +318,7 @@ mod tests {
         let middleware_under_test = Nip40Middleware::new(database.clone());
         let event = create_expiring_event(&keys, "past", -3600).await;
         let event_id = event.id;
-        let message = ClientMessage::Event(event);
+        let message = ClientMessage::Event(Cow::Owned(*event));
 
         let (sender, mut receiver) = mpsc::channel(10);
         let mut state = create_test_state(None);
@@ -324,8 +327,8 @@ mod tests {
             Arc<
                 dyn Middleware<
                     State = NostrConnectionState,
-                    IncomingMessage = ClientMessage,
-                    OutgoingMessage = RelayMessage,
+                    IncomingMessage = ClientMessage<'static>,
+                    OutgoingMessage = RelayMessage<'static>,
                 >,
             >,
         > = vec![Arc::new(middleware_under_test.clone())];
@@ -370,8 +373,8 @@ mod tests {
             Arc<
                 dyn Middleware<
                     State = NostrConnectionState,
-                    IncomingMessage = ClientMessage,
-                    OutgoingMessage = RelayMessage,
+                    IncomingMessage = ClientMessage<'static>,
+                    OutgoingMessage = RelayMessage<'static>,
                 >,
             >,
         > = vec![Arc::new(middleware_under_test.clone())];
@@ -420,8 +423,8 @@ mod tests {
             Arc<
                 dyn Middleware<
                     State = NostrConnectionState,
-                    IncomingMessage = ClientMessage,
-                    OutgoingMessage = RelayMessage,
+                    IncomingMessage = ClientMessage<'static>,
+                    OutgoingMessage = RelayMessage<'static>,
                 >,
             >,
         > = vec![Arc::new(middleware_under_test.clone())];
@@ -447,8 +450,8 @@ mod tests {
             Arc<
                 dyn Middleware<
                     State = NostrConnectionState,
-                    IncomingMessage = ClientMessage,
-                    OutgoingMessage = RelayMessage,
+                    IncomingMessage = ClientMessage<'static>,
+                    OutgoingMessage = RelayMessage<'static>,
                 >,
             >,
         > = vec![Arc::new(middleware_under_test.clone())];
@@ -480,8 +483,8 @@ mod tests {
             Arc<
                 dyn Middleware<
                     State = NostrConnectionState,
-                    IncomingMessage = ClientMessage,
-                    OutgoingMessage = RelayMessage,
+                    IncomingMessage = ClientMessage<'static>,
+                    OutgoingMessage = RelayMessage<'static>,
                 >,
             >,
         > = vec![Arc::new(middleware_under_test.clone())];
@@ -522,8 +525,8 @@ mod tests {
             Arc<
                 dyn Middleware<
                     State = NostrConnectionState,
-                    IncomingMessage = ClientMessage,
-                    OutgoingMessage = RelayMessage,
+                    IncomingMessage = ClientMessage<'static>,
+                    OutgoingMessage = RelayMessage<'static>,
                 >,
             >,
         > = vec![Arc::new(middleware_under_test.clone())];

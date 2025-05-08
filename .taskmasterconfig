@@ -1,0 +1,30 @@
+{
+  "models": {
+    "main": {
+      "provider": "google",
+      "modelId": "gemini-2.5-pro-exp-03-25",
+      "maxTokens": 64000,
+      "temperature": 0.2
+    },
+    "research": {
+      "provider": "google",
+      "modelId": "google/gemini-2.5-pro-exp-03-25",
+      "maxTokens": 8700,
+      "temperature": 0.1
+    },
+    "fallback": {
+      "provider": "google",
+      "modelId": "google/gemini-2.5-pro-exp-03-25",
+      "maxTokens": 64000,
+      "temperature": 0.2
+    }
+  },
+  "global": {
+    "logLevel": "info",
+    "debug": false,
+    "defaultSubtasks": 5,
+    "defaultPriority": "medium",
+    "projectName": "Task Master",
+    "ollamaBaseUrl": "http://localhost:11434/api"
+  }
+}

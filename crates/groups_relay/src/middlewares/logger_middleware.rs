@@ -27,8 +27,8 @@ impl LoggerMiddleware {
 #[async_trait]
 impl Middleware for LoggerMiddleware {
     type State = NostrConnectionState;
-    type IncomingMessage = ClientMessage;
-    type OutgoingMessage = RelayMessage;
+    type IncomingMessage = ClientMessage<'static>;
+    type OutgoingMessage = RelayMessage<'static>;
 
     async fn process_inbound(
         &self,
@@ -37,18 +37,22 @@ impl Middleware for LoggerMiddleware {
         match &ctx.message {
             Some(ClientMessage::Event(event)) => {
                 let start_time = Instant::now();
-                info!("> EVENT kind {}: {}", event.kind.as_u16(), event.as_json());
+                info!(
+                    "> EVENT kind {}: {}",
+                    event.as_ref().kind.as_u16(),
+                    event.as_ref().as_json()
+                );
 
                 // Store start time and kind in state for outbound processing
                 ctx.state.event_start_time = Some(start_time);
-                ctx.state.event_kind = Some(event.kind.as_u16());
+                ctx.state.event_kind = Some(event.as_ref().kind.as_u16());
                 ctx.next().await
             }
             Some(ClientMessage::Req {
                 subscription_id,
                 filter,
             }) => {
-                info!("> REQ {}: {}", subscription_id, filter.as_json());
+                info!("> REQ {}: {}", subscription_id.as_ref(), filter.as_json());
                 ctx.next().await
             }
             Some(ClientMessage::ReqMultiFilter {
@@ -57,17 +61,17 @@ impl Middleware for LoggerMiddleware {
             }) => {
                 info!(
                     "> REQ {}: {:?}",
-                    subscription_id,
+                    subscription_id.as_ref(),
                     filters.iter().map(|f| f.as_json()).collect::<Vec<String>>()
                 );
                 ctx.next().await
             }
             Some(ClientMessage::Close(subscription_id)) => {
-                info!("> CLOSE {}", subscription_id);
+                info!("> CLOSE {}", subscription_id.as_ref());
                 ctx.next().await
             }
             Some(ClientMessage::Auth(event)) => {
-                info!("> AUTH {}", event.as_json());
+                info!("> AUTH {}", event.as_ref().as_json());
                 ctx.next().await
             }
             _ => {
@@ -109,13 +113,17 @@ impl Middleware for LoggerMiddleware {
                     subscription_id,
                     event,
                 } => {
-                    info!("< EVENT {} {}", subscription_id, event.as_json());
+                    info!(
+                        "< EVENT {} {}",
+                        subscription_id.as_ref(),
+                        event.as_ref().as_json()
+                    );
                 }
                 RelayMessage::Notice(message) => {
                     info!("< NOTICE {}", message);
                 }
                 RelayMessage::EndOfStoredEvents(subscription_id) => {
-                    info!("< EOSE {}", subscription_id);
+                    info!("< EOSE {}", subscription_id.as_ref());
                 }
                 RelayMessage::Auth { challenge } => {
                     info!("< AUTH {}", challenge);
@@ -160,8 +168,8 @@ mod tests {
         Arc<
             dyn Middleware<
                 State = NostrConnectionState,
-                IncomingMessage = ClientMessage,
-                OutgoingMessage = RelayMessage,
+                IncomingMessage = ClientMessage<'static>,
+                OutgoingMessage = RelayMessage<'static>,
             >,
         >,
     > {
@@ -175,7 +183,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_connection".to_string(),
-            Some(ClientMessage::Close(SubscriptionId::new("test_sub"))),
+            Some(ClientMessage::close(SubscriptionId::new("test_sub"))),
             None,
             &mut state,
             chain.as_slice(),
@@ -193,7 +201,7 @@ mod tests {
 
         let mut ctx = OutboundContext::new(
             "test_connection".to_string(),
-            RelayMessage::Notice("test notice".to_string()),
+            RelayMessage::notice("test notice".to_string()),
             None,
             &mut state,
             chain.as_slice(),

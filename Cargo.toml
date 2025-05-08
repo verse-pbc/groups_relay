@@ -24,8 +24,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 futures = "0.3.31"
 clap = { version = "4.5.17", features = ["derive"] }
-nostr-sdk = { version = "0.39.0", features = ["all-nips"] }
-nostr = { version = "0.39.0", features = ["std"] }
+nostr-sdk = { version = "0.41.0", features = ["all-nips"] }
+nostr = { version = "0.41.0", features = ["std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 metrics = "0.24.1"
 metrics-exporter-prometheus = "0.16.2"

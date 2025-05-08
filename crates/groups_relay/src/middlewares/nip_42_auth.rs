@@ -4,6 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::time::Duration;
 use tracing::{debug, error};
 use websocket_builder::{
     ConnectionContext, InboundContext, Middleware, OutboundContext, SendMessage,
@@ -23,125 +24,179 @@ impl Nip42Middleware {
 #[async_trait]
 impl Middleware for Nip42Middleware {
     type State = NostrConnectionState;
-    type IncomingMessage = ClientMessage;
-    type OutgoingMessage = RelayMessage;
+    type IncomingMessage = ClientMessage<'static>;
+    type OutgoingMessage = RelayMessage<'static>;
 
     async fn process_inbound(
         &self,
-        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+        ctx: &mut InboundContext<'_, Self::State, ClientMessage<'static>, RelayMessage<'static>>,
     ) -> Result<(), anyhow::Error> {
-        match &ctx.message {
-            Some(ClientMessage::Auth(event)) => {
+        match ctx.message.as_ref() {
+            Some(ClientMessage::Auth(auth_event_cow)) => {
+                let auth_event = auth_event_cow.as_ref();
                 debug!(
                     target: "auth",
-                    "[{}] Processing AUTH message",
-                    ctx.connection_id
+                    "[{}] Processing AUTH message for event ID {}",
+                    ctx.connection_id, auth_event.id
                 );
 
-                // Verify the challenge matches
-                let Some(challenge) = &ctx.state.challenge else {
+                let Some(expected_challenge) = ctx.state.challenge.as_ref() else {
                     error!(
                         target: "auth",
-                        "[{}] No challenge found for AUTH message",
-                        ctx.connection_id
+                        "[{}] No challenge found in state for AUTH message (event ID {}).",
+                        ctx.connection_id, auth_event.id
                     );
-                    return Err(Error::auth_required("No challenge found").into());
+                    ctx.send_message(RelayMessage::ok(
+                        auth_event.id,
+                        false,
+                        "auth-required: no challenge pending",
+                    ))
+                    .await?;
+                    return Err(Error::auth_required("No challenge found in state").into());
                 };
 
-                // Verify the event is a NIP-42 auth event
-                if event.kind != Kind::Authentication {
+                if auth_event.kind != Kind::Authentication {
                     error!(
                         target: "auth",
-                        "[{}] Invalid event kind for AUTH message: {}",
-                        ctx.connection_id,
-                        event.kind
+                        "[{}] Invalid event kind for AUTH message: {} (event ID {}).",
+                        ctx.connection_id, auth_event.kind, auth_event.id
                     );
+                    ctx.send_message(RelayMessage::ok(
+                        auth_event.id,
+                        false,
+                        "auth-required: invalid event kind",
+                    ))
+                    .await?;
                     return Err(Error::auth_required("Invalid event kind").into());
                 }
 
-                // Verify the event is signed by the correct pubkey
-                if event.verify().is_err() {
+                if auth_event.verify().is_err() {
                     error!(
                         target: "auth",
-                        "[{}] Invalid signature for AUTH message",
-                        ctx.connection_id
+                        "[{}] Invalid signature for AUTH message (event ID {}).",
+                        ctx.connection_id, auth_event.id
                     );
+                    ctx.send_message(RelayMessage::ok(
+                        auth_event.id,
+                        false,
+                        "auth-required: invalid signature",
+                    ))
+                    .await?;
                     return Err(Error::auth_required("Invalid signature").into());
                 }
 
-                // Verify the challenge tag matches
-                let challenge_tag = event.tags.find_standardized(TagKind::Challenge);
-                if let Some(TagStandard::Challenge(tag_challenge)) = challenge_tag {
-                    if tag_challenge != challenge {
+                let found_challenge_in_tag: Option<String> =
+                    auth_event.tags.iter().find_map(|tag_ref: &Tag| {
+                        match tag_ref.as_standardized() {
+                            Some(TagStandard::Challenge(s)) => Some(s.clone()),
+                            _ => None,
+                        }
+                    });
+
+                match found_challenge_in_tag {
+                    Some(tag_challenge_str) => {
+                        if tag_challenge_str != *expected_challenge {
+                            error!(
+                                target: "auth",
+                                "[{}] Challenge mismatch for AUTH. Expected '{}', got '{}'. Event ID: {}.",
+                                ctx.connection_id, expected_challenge, tag_challenge_str, auth_event.id
+                            );
+                            ctx.send_message(RelayMessage::ok(
+                                auth_event.id,
+                                false,
+                                "auth-required: challenge mismatch",
+                            ))
+                            .await?;
+                            return Err(Error::auth_required("Challenge mismatch").into());
+                        }
+                    }
+                    None => {
                         error!(
                             target: "auth",
-                            "[{}] Challenge mismatch for AUTH message",
-                            ctx.connection_id
+                            "[{}] No challenge tag found in AUTH message. Event ID: {}.",
+                            ctx.connection_id, auth_event.id
                         );
-                        return Err(Error::auth_required("Challenge mismatch").into());
+                        ctx.send_message(RelayMessage::ok(
+                            auth_event.id,
+                            false,
+                            "auth-required: missing challenge tag",
+                        ))
+                        .await?;
+                        return Err(Error::auth_required("No challenge tag found").into());
                     }
-                } else {
-                    error!(
-                        target: "auth",
-                        "[{}] No challenge tag found in AUTH message",
-                        ctx.connection_id
-                    );
-                    return Err(Error::auth_required("No challenge tag found").into());
                 }
 
-                // Verify the relay tag matches
-                let relay_tag = event.tags.find_standardized(TagKind::Relay);
-                if let Some(TagStandard::Relay(tag_url)) = relay_tag {
-                    if tag_url.as_str_without_trailing_slash() != self.auth_url {
+                let found_relay_in_tag: Option<RelayUrl> =
+                    auth_event.tags.iter().find_map(|tag_ref: &Tag| {
+                        match tag_ref.as_standardized() {
+                            Some(TagStandard::Relay(r)) => Some(r.clone()),
+                            _ => None,
+                        }
+                    });
+
+                match found_relay_in_tag {
+                    Some(tag_relay_url) => {
+                        if tag_relay_url.as_str_without_trailing_slash()
+                            != self.auth_url.trim_end_matches('/')
+                        {
+                            error!(
+                                target: "auth",
+                                "[{}] Relay URL mismatch for AUTH. Expected '{}', got '{}'. Event ID: {}.",
+                                ctx.connection_id, self.auth_url, tag_relay_url.as_str_without_trailing_slash(), auth_event.id
+                            );
+                            ctx.send_message(RelayMessage::ok(
+                                auth_event.id,
+                                false,
+                                "auth-required: relay mismatch",
+                            ))
+                            .await?;
+                            return Err(Error::auth_required("Relay mismatch").into());
+                        }
+                    }
+                    None => {
                         error!(
                             target: "auth",
-                            "[{}] Relay mismatch for AUTH message, wants {} but got {}",
-                            ctx.connection_id,
-                            self.auth_url,
-                            tag_url.as_str_without_trailing_slash()
+                            "[{}] No relay tag found in AUTH message. Event ID: {}.",
+                            ctx.connection_id, auth_event.id
                         );
-                        return Err(Error::auth_required("Relay mismatch").into());
+                        ctx.send_message(RelayMessage::ok(
+                            auth_event.id,
+                            false,
+                            "auth-required: missing relay tag",
+                        ))
+                        .await?;
+                        return Err(Error::auth_required("No relay tag found").into());
                     }
-                } else {
-                    error!(
-                        target: "auth",
-                        "[{}] No relay tag found in AUTH message",
-                        ctx.connection_id
-                    );
-                    return Err(Error::auth_required("No relay tag found").into());
                 }
 
-                // Verify the event is not expired
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_else(|_| Duration::from_secs(0))
                     .as_secs();
-                if event.created_at.as_u64() < now - 600 {
+                if auth_event.created_at.as_u64() < now.saturating_sub(600) {
                     error!(
                         target: "auth",
-                        "[{}] Expired AUTH message",
-                        ctx.connection_id
+                        "[{}] Expired AUTH message (event ID {}). Created at: {}, Now: {}",
+                        ctx.connection_id, auth_event.id, auth_event.created_at.as_u64(), now
                     );
+                    ctx.send_message(RelayMessage::ok(
+                        auth_event.id,
+                        false,
+                        "auth-required: expired auth event",
+                    ))
+                    .await?;
                     return Err(Error::auth_required("Expired auth event").into());
                 }
 
-                // Set the authed pubkey
-                ctx.state.authed_pubkey = Some(event.pubkey);
+                ctx.state.authed_pubkey = Some(auth_event.pubkey);
+                ctx.state.challenge = None;
                 debug!(
                     target: "auth",
-                    "[{}] Successfully authenticated pubkey {}",
-                    ctx.connection_id,
-                    event.pubkey
+                    "[{}] Successfully authenticated pubkey {} (event ID {}).",
+                    ctx.connection_id, auth_event.pubkey, auth_event.id
                 );
-
-                // Send OK message
-                ctx.send_message(RelayMessage::ok(
-                    event.id,
-                    true,
-                    "Successfully authenticated",
-                ))
-                .await?;
-
+                ctx.send_message(RelayMessage::ok(auth_event.id, true, "authenticated"))
+                    .await?;
                 Ok(())
             }
             _ => ctx.next().await,
@@ -179,16 +234,19 @@ impl Middleware for Nip42Middleware {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nostr_session_state::NostrConnectionState;
     use crate::test_utils::create_test_state;
+    use nostr_sdk::{ClientMessage, EventBuilder, Keys, Kind, RelayMessage, Tag, Timestamp};
+    use std::borrow::Cow;
     use std::sync::Arc;
-    use std::time::Instant;
+    use websocket_builder::{ConnectionContext, InboundContext};
 
     fn create_middleware_chain() -> Vec<
         Arc<
             dyn Middleware<
                 State = NostrConnectionState,
-                IncomingMessage = ClientMessage,
-                OutgoingMessage = RelayMessage,
+                IncomingMessage = ClientMessage<'static>,
+                OutgoingMessage = RelayMessage<'static>,
             >,
         >,
     > {
@@ -214,9 +272,14 @@ mod tests {
             .build_with_ctx(&Instant::now(), keys.public_key());
         let auth_event = keys.sign_event(auth_event).await.unwrap();
 
-        let mut ctx = InboundContext::new(
+        let mut ctx = InboundContext::<
+            '_,
+            NostrConnectionState,
+            ClientMessage<'static>,
+            RelayMessage<'static>,
+        >::new(
             "test_conn".to_string(),
-            Some(ClientMessage::Auth(Box::new(auth_event.clone()))),
+            Some(ClientMessage::Auth(Cow::Owned(auth_event.clone()))),
             None,
             &mut state,
             &[],
@@ -241,9 +304,14 @@ mod tests {
             .build_with_ctx(&Instant::now(), keys.public_key());
         let auth_event = keys.sign_event(auth_event).await.unwrap();
 
-        let mut ctx = InboundContext::new(
+        let mut ctx = InboundContext::<
+            '_,
+            NostrConnectionState,
+            ClientMessage<'static>,
+            RelayMessage<'static>,
+        >::new(
             "test_conn".to_string(),
-            Some(ClientMessage::Auth(Box::new(auth_event.clone()))),
+            Some(ClientMessage::Auth(Cow::Owned(auth_event.clone()))),
             None,
             &mut state,
             &[],
@@ -273,9 +341,14 @@ mod tests {
             .build_with_ctx(&Instant::now(), keys.public_key());
         let auth_event = keys.sign_event(auth_event).await.unwrap();
 
-        let mut ctx = InboundContext::new(
+        let mut ctx = InboundContext::<
+            '_,
+            NostrConnectionState,
+            ClientMessage<'static>,
+            RelayMessage<'static>,
+        >::new(
             "test_conn".to_string(),
-            Some(ClientMessage::Auth(Box::new(auth_event.clone()))),
+            Some(ClientMessage::Auth(Cow::Owned(auth_event.clone()))),
             None,
             &mut state,
             &[],
@@ -303,9 +376,14 @@ mod tests {
             .build_with_ctx(&Instant::now(), keys.public_key());
         let auth_event = keys.sign_event(auth_event).await.unwrap();
 
-        let mut ctx = InboundContext::new(
+        let mut ctx = InboundContext::<
+            '_,
+            NostrConnectionState,
+            ClientMessage<'static>,
+            RelayMessage<'static>,
+        >::new(
             "test_conn".to_string(),
-            Some(ClientMessage::Auth(Box::new(auth_event.clone()))),
+            Some(ClientMessage::Auth(Cow::Owned(auth_event.clone()))),
             None,
             &mut state,
             &[],
@@ -334,9 +412,14 @@ mod tests {
             .build_with_ctx(&Instant::now(), keys.public_key());
         let auth_event = wrong_keys.sign_event(auth_event).await.unwrap();
 
-        let mut ctx = InboundContext::new(
+        let mut ctx = InboundContext::<
+            '_,
+            NostrConnectionState,
+            ClientMessage<'static>,
+            RelayMessage<'static>,
+        >::new(
             "test_conn".to_string(),
-            Some(ClientMessage::Auth(Box::new(auth_event.clone()))),
+            Some(ClientMessage::Auth(Cow::Owned(auth_event.clone()))),
             None,
             &mut state,
             &[],
@@ -371,9 +454,14 @@ mod tests {
             .build(keys.public_key());
         let auth_event = keys.sign_event(auth_event).await.unwrap();
 
-        let mut ctx = InboundContext::new(
+        let mut ctx = InboundContext::<
+            '_,
+            NostrConnectionState,
+            ClientMessage<'static>,
+            RelayMessage<'static>,
+        >::new(
             "test_conn".to_string(),
-            Some(ClientMessage::Auth(Box::new(auth_event.clone()))),
+            Some(ClientMessage::Auth(Cow::Owned(auth_event.clone()))),
             None,
             &mut state,
             &[],
@@ -391,7 +479,13 @@ mod tests {
         let mut state = create_test_state(None);
         let chain = create_middleware_chain();
 
-        let mut ctx = ConnectionContext::new("test_conn".to_string(), None, &mut state, &chain, 0);
+        let mut ctx = ConnectionContext::new(
+            "test_conn".to_string(),
+            None,
+            &mut state,
+            chain.as_slice(),
+            0,
+        );
 
         assert!(middleware.on_connect(&mut ctx).await.is_ok());
         assert!(state.challenge.is_some());

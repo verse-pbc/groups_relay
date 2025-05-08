@@ -1,8 +1,10 @@
 use crate::error::Error;
+use crate::groups::Groups;
 use crate::nostr_database::RelayDatabase;
 use crate::{StoreCommand, SubscriptionManager};
+use anyhow::Result;
 use nostr_sdk::prelude::*;
-use std::backtrace::Backtrace;
+use snafu::Backtrace;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -58,18 +60,17 @@ impl NostrConnectionState {
         self.authed_pubkey.is_some()
     }
 
-    /// Sets up a new event store connection
     pub async fn setup_connection(
         &mut self,
         database: Arc<RelayDatabase>,
-        sender: MessageSender<RelayMessage>,
+        sender: MessageSender<RelayMessage<'static>>,
     ) -> Result<(), Error> {
         debug!("Setting up connection",);
 
         let connection = SubscriptionManager::new(database, sender)
             .await
             .map_err(|e| Error::Internal {
-                message: format!("Failed to create connection: {}", e),
+                message: format!("Failed to create subscription manager: {}", e),
                 backtrace: Backtrace::capture(),
             })?;
 
@@ -98,7 +99,7 @@ impl NostrConnectionState {
         Ok(())
     }
 
-    pub fn get_challenge_event(&mut self) -> RelayMessage {
+    pub fn get_challenge_event(&mut self) -> RelayMessage<'static> {
         let challenge = match self.challenge.as_ref() {
             Some(challenge) => challenge.clone(),
             None => {
@@ -109,20 +110,36 @@ impl NostrConnectionState {
         };
         RelayMessage::auth(challenge)
     }
+
+    pub fn cleanup(&self) {
+        // ... existing code ...
+    }
 }
 
 #[derive(Clone)]
 pub struct NostrConnectionFactory {
     relay_url: RelayUrl,
+    #[allow(dead_code)]
+    database: Arc<RelayDatabase>,
+    #[allow(dead_code)]
+    groups: Arc<Groups>,
 }
 
 impl NostrConnectionFactory {
-    pub fn new(relay_url: String) -> Result<Self, Error> {
+    pub fn new(
+        relay_url: String,
+        database: Arc<RelayDatabase>,
+        groups: Arc<Groups>,
+    ) -> Result<Self, Error> {
         let relay_url = RelayUrl::parse(&relay_url).map_err(|e| Error::Internal {
             message: format!("Invalid relay URL: {}", e),
             backtrace: Backtrace::capture(),
         })?;
-        Ok(Self { relay_url })
+        Ok(Self {
+            relay_url,
+            database,
+            groups,
+        })
     }
 }
 

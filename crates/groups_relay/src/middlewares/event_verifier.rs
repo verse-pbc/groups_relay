@@ -2,6 +2,7 @@ use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
+use std::borrow::Cow;
 use tokio::task::spawn_blocking;
 use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage};
 
@@ -23,29 +24,32 @@ impl Default for EventVerifierMiddleware {
 #[async_trait]
 impl Middleware for EventVerifierMiddleware {
     type State = NostrConnectionState;
-    type IncomingMessage = ClientMessage;
-    type OutgoingMessage = RelayMessage;
+    type IncomingMessage = ClientMessage<'static>;
+    type OutgoingMessage = RelayMessage<'static>;
 
     async fn process_inbound(
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<()> {
-        if let Some(ClientMessage::Event(event)) = &ctx.message {
-            let event_id = event.id;
-            let event_owned = event.clone(); // Clone to own the Box<Event>
+        if let Some(ClientMessage::Event(event_cow)) = &ctx.message {
+            let event_id = event_cow.id;
+            let event_to_verify: Event = event_cow.as_ref().clone();
 
-            // Verifying is CPU-intensive and blocks, so we offload it to a blocking thread.
-            // For synchronous operations like verify(), we don't need to use the shared runtime.
-            let verify_result = spawn_blocking(move || event_owned.verify()).await;
+            let verify_result = spawn_blocking(move || event_to_verify.verify()).await;
 
-            if let Err(_e) = verify_result {
+            let verification_failed = match verify_result {
+                Ok(Ok(())) => false,
+                Ok(Err(_)) => true,
+                Err(_) => true,
+            };
+
+            if verification_failed {
                 ctx.send_message(RelayMessage::ok(
                     event_id,
                     false,
-                    "invalid: event signature verification failed",
+                    Cow::Borrowed("invalid: event signature verification failed"),
                 ))
                 .await?;
-
                 return Ok(());
             }
         }
@@ -69,8 +73,8 @@ mod tests {
         Arc<
             dyn Middleware<
                 State = NostrConnectionState,
-                IncomingMessage = ClientMessage,
-                OutgoingMessage = RelayMessage,
+                IncomingMessage = ClientMessage<'static>,
+                OutgoingMessage = RelayMessage<'static>,
             >,
         >,
     > {
@@ -96,7 +100,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_connection".to_string(),
-            Some(ClientMessage::Event(Box::new(event))),
+            Some(ClientMessage::Event(Cow::Owned(event))),
             None,
             &mut state,
             &chain,
@@ -111,24 +115,18 @@ mod tests {
     async fn test_invalid_event_signature() {
         let chain = create_middleware_chain();
         let mut state = create_test_state();
-
-        // Create an event with one key
         let (_, mut event) = create_signed_event().await;
-
-        // Create another event with different keys
         let keys2 = Keys::generate();
         let event2 = EventBuilder::text_note("other message").build(keys2.public_key());
         let event2 = keys2
             .sign_event(event2)
             .await
             .expect("Failed to sign event");
-
-        // Use the signature from the second event with the first event
         event.sig = event2.sig;
 
         let mut ctx = InboundContext::new(
             "test_connection".to_string(),
-            Some(ClientMessage::Event(Box::new(event))),
+            Some(ClientMessage::Event(Cow::Owned(event))),
             None,
             &mut state,
             &chain,
@@ -136,7 +134,7 @@ mod tests {
         );
 
         let result = chain[0].process_inbound(&mut ctx).await;
-        assert!(result.is_ok()); // Should be ok because we send an error message instead of returning an error
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
@@ -146,7 +144,9 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_connection".to_string(),
-            Some(ClientMessage::Close(SubscriptionId::new("test_sub"))),
+            Some(ClientMessage::Close(Cow::Owned(SubscriptionId::new(
+                "test_sub",
+            )))),
             None,
             &mut state,
             &chain,
@@ -165,7 +165,7 @@ mod tests {
 
         let mut ctx = InboundContext::new(
             "test_connection".to_string(),
-            Some(ClientMessage::Auth(Box::new(auth_event))),
+            Some(ClientMessage::Auth(Cow::Owned(auth_event))),
             None,
             &mut state,
             &chain,
