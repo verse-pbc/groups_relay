@@ -1278,7 +1278,7 @@ impl Group {
 
     pub fn generate_put_user_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
         // println!("[generate_put_user_event] Starting");
-        
+
         // println!("[generate_put_user_event] Finished");
         UnsignedEvent::new(
             *pubkey,
@@ -1320,7 +1320,6 @@ impl Group {
         }
         // println!("[generate_admins_event] Finished creating tags");
 
-        
         // println!("[generate_admins_event] Finished");
         UnsignedEvent::new(
             *pubkey,
@@ -1347,7 +1346,6 @@ impl Group {
         }
         // println!("[generate_members_event] Finished creating tags");
 
-        
         // println!("[generate_members_event] Finished");
         UnsignedEvent::new(
             *pubkey,
@@ -1613,6 +1611,8 @@ impl Group {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(test)]
+    use crate::test_utils::TestGroupMetadata;
     use crate::test_utils::{
         add_member_to_group, create_test_delete_event, create_test_event, create_test_group,
         create_test_invite_event, create_test_keys, create_test_metadata_event,
@@ -1662,12 +1662,14 @@ mod tests {
         let event = create_test_metadata_event(
             &admin_keys,
             &group_id,
-            Some("test_name"),
-            Some("test_about"),
-            Some("test_picture"),
-            true,
-            true,
-            false, // is_broadcast
+            TestGroupMetadata {
+                name: Some("test_name"),
+                about: Some("test_about"),
+                picture: Some("test_picture"),
+                is_private: true,
+                is_closed: true,
+                is_broadcast: false,
+            },
         )
         .await;
 
@@ -1687,12 +1689,14 @@ mod tests {
         let metadata_event = create_test_metadata_event(
             &admin_keys,
             &group_id,
-            Some("New Group Name"),
-            None,
-            None,
-            true,
-            true,
-            false, // is_broadcast
+            TestGroupMetadata {
+                name: Some("New Group Name"),
+                about: None,
+                picture: None,
+                is_private: true,
+                is_closed: true,
+                is_broadcast: false,
+            },
         )
         .await;
 
@@ -1710,12 +1714,14 @@ mod tests {
         let metadata_event = create_test_metadata_event(
             &admin_keys,
             &group_id,
-            None,
-            Some("About text"),
-            None,
-            true,
-            true,
-            false, // is_broadcast
+            TestGroupMetadata {
+                name: None,
+                about: Some("About text"),
+                picture: None,
+                is_private: true,
+                is_closed: true,
+                is_broadcast: false,
+            },
         )
         .await;
 
@@ -1733,12 +1739,14 @@ mod tests {
         let metadata_event = create_test_metadata_event(
             &admin_keys,
             &group_id,
-            None,
-            None,
-            Some("picture_url"),
-            true,
-            true,
-            false, // is_broadcast
+            TestGroupMetadata {
+                name: None,
+                about: None,
+                picture: Some("picture_url"),
+                is_private: true,
+                is_closed: true,
+                is_broadcast: false,
+            },
         )
         .await;
 
@@ -1757,12 +1765,14 @@ mod tests {
         let public_event = create_test_metadata_event(
             &admin_keys,
             &group_id,
-            None,
-            None,
-            None,
-            false,
-            true,
-            false,
+            TestGroupMetadata {
+                name: None,
+                about: None,
+                picture: None,
+                is_private: false,
+                is_closed: true,
+                is_broadcast: false,
+            },
         )
         .await;
 
@@ -1772,9 +1782,19 @@ mod tests {
         assert!(!group.metadata.private);
 
         // Test setting back to private
-        let private_event =
-            create_test_metadata_event(&admin_keys, &group_id, None, None, None, true, true, false)
-                .await;
+        let private_event = create_test_metadata_event(
+            &admin_keys,
+            &group_id,
+            TestGroupMetadata {
+                name: None,
+                about: None,
+                picture: None,
+                is_private: true,
+                is_closed: true,
+                is_broadcast: false,
+            },
+        )
+        .await;
 
         assert!(group
             .set_metadata(&private_event, &admin_keys.public_key())
@@ -1790,12 +1810,14 @@ mod tests {
         let metadata_event = create_test_metadata_event(
             &admin_keys,
             &group_id,
-            Some("New Group Name"),
-            Some("About text"),
-            Some("picture_url"),
-            false,
-            true,
-            false, // is_broadcast
+            TestGroupMetadata {
+                name: Some("New Group Name"),
+                about: Some("About text"),
+                picture: Some("picture_url"),
+                is_private: false,
+                is_closed: true,
+                is_broadcast: false,
+            },
         )
         .await;
 
@@ -2582,12 +2604,14 @@ mod tests {
         let broadcast_metadata_event = create_test_metadata_event(
             &admin_keys,
             &group_id,
-            None, // name
-            None, // about
-            None, // picture
-            true, // is_private
-            true, // is_closed
-            true, // is_broadcast
+            TestGroupMetadata {
+                name: None,
+                about: None,
+                picture: None,
+                is_private: false,
+                is_closed: false,
+                is_broadcast: true,
+            },
         )
         .await;
         assert!(group
@@ -2691,12 +2715,14 @@ mod tests {
         let broadcast_metadata_event_3 = create_test_metadata_event(
             &admin_keys_3,
             &group_id_3,
-            None,
-            None,
-            None,
-            true,
-            true,
-            true,
+            TestGroupMetadata {
+                name: None,
+                about: None,
+                picture: None,
+                is_private: false,
+                is_closed: false,
+                is_broadcast: true,
+            },
         )
         .await;
         assert!(group_3
@@ -2708,12 +2734,14 @@ mod tests {
         let no_broadcast_metadata_event_3 = create_test_metadata_event(
             &admin_keys_3,
             &group_id_3,
-            None,  // name
-            None,  // about
-            None,  // picture
-            true,  // is_private
-            true,  // is_closed
-            false, // is_broadcast
+            TestGroupMetadata {
+                name: None,
+                about: None,
+                picture: None,
+                is_private: false,
+                is_closed: false,
+                is_broadcast: false,
+            },
         )
         .await;
         assert!(group_3

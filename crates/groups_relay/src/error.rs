@@ -238,9 +238,9 @@ impl Error {
         }
     }
 
-    pub async fn handle_inbound_error<'ctx_life, CM>(
+    pub async fn handle_inbound_error<CM>(
         &self,
-        ctx: &mut InboundContext<'ctx_life, NostrConnectionState, CM, RelayMessage<'static>>,
+        ctx: &mut InboundContext<'_, NostrConnectionState, CM, RelayMessage<'static>>,
         client_message_id: ClientMessageId,
     ) -> Result<()>
     where

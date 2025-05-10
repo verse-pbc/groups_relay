@@ -149,40 +149,43 @@ pub async fn remove_member_from_group(
     remove_event
 }
 
+#[derive(Default)]
+pub struct TestGroupMetadata<'a> {
+    pub name: Option<&'a str>,
+    pub about: Option<&'a str>,
+    pub picture: Option<&'a str>,
+    pub is_private: bool,
+    pub is_closed: bool,
+    pub is_broadcast: bool,
+}
+
 pub async fn create_test_metadata_event(
     admin_keys: &Keys,
     group_id: &str,
-    name: Option<&str>,
-    about: Option<&str>,
-    picture: Option<&str>,
-    is_private: bool,
-    is_closed: bool,
-    is_broadcast: bool,
+    metadata: TestGroupMetadata<'_>,
 ) -> Event {
     let mut tags = vec![Tag::custom(TagKind::h(), [group_id])];
 
-    if let Some(name) = name {
+    if let Some(name) = metadata.name {
         tags.push(Tag::custom(TagKind::Name, [name]));
     }
-    if let Some(about) = about {
+    if let Some(about) = metadata.about {
         tags.push(Tag::custom(TagKind::Custom("about".into()), [about]));
     }
-    if let Some(picture) = picture {
+    if let Some(picture) = metadata.picture {
         tags.push(Tag::custom(TagKind::Custom("picture".into()), [picture]));
     }
-    if is_private {
+    if metadata.is_private {
         tags.push(Tag::custom(TagKind::Custom("private".into()), [""]));
     } else {
         tags.push(Tag::custom(TagKind::Custom("public".into()), [""]));
     }
-    if is_closed {
+    if metadata.is_closed {
         tags.push(Tag::custom(TagKind::Custom("closed".into()), [""]));
     } else {
         tags.push(Tag::custom(TagKind::Custom("open".into()), [""]));
     }
-
-    // Add broadcast tag if true, otherwise nonbroadcast
-    if is_broadcast {
+    if metadata.is_broadcast {
         tags.push(Tag::custom(TagKind::Custom("broadcast".into()), [""]));
     } else {
         tags.push(Tag::custom(TagKind::Custom("nonbroadcast".into()), [""]));
