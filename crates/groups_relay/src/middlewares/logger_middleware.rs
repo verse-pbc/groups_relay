@@ -34,48 +34,50 @@ impl Middleware for LoggerMiddleware {
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        match &ctx.message {
+        match ctx.message.as_ref() {
             Some(ClientMessage::Event(event)) => {
+                let event_kind_u16 = event.as_ref().kind.as_u16();
+                let event_json = event.as_ref().as_json();
                 let start_time = Instant::now();
-                info!(
-                    "> EVENT kind {}: {}",
-                    event.as_ref().kind.as_u16(),
-                    event.as_ref().as_json()
-                );
 
-                // Store start time and kind in state for outbound processing
+                info!("> EVENT kind {}: {}", event_kind_u16, event_json);
+
                 ctx.state.event_start_time = Some(start_time);
-                ctx.state.event_kind = Some(event.as_ref().kind.as_u16());
+                ctx.state.event_kind = Some(event_kind_u16);
                 ctx.next().await
             }
             Some(ClientMessage::Req {
                 subscription_id,
                 filter,
             }) => {
-                info!("> REQ {}: {}", subscription_id.as_ref(), filter.as_json());
+                let sub_id_clone = subscription_id.clone();
+                let filter_json_clone = filter.as_json();
+                info!("> REQ {}: {}", sub_id_clone, filter_json_clone);
                 ctx.next().await
             }
             Some(ClientMessage::ReqMultiFilter {
                 subscription_id,
                 filters,
             }) => {
-                info!(
-                    "> REQ {}: {:?}",
-                    subscription_id.as_ref(),
-                    filters.iter().map(|f| f.as_json()).collect::<Vec<String>>()
-                );
+                let sub_id_clone = subscription_id.clone();
+                let filters_json_clone =
+                    filters.iter().map(|f| f.as_json()).collect::<Vec<String>>();
+                info!("> REQ {}: {:?}", sub_id_clone, filters_json_clone);
                 ctx.next().await
             }
             Some(ClientMessage::Close(subscription_id)) => {
-                info!("> CLOSE {}", subscription_id.as_ref());
+                let sub_id_clone = subscription_id.clone();
+                info!("> CLOSE {}", sub_id_clone);
                 ctx.next().await
             }
             Some(ClientMessage::Auth(event)) => {
-                info!("> AUTH {}", event.as_ref().as_json());
+                let event_json_clone = event.as_ref().as_json();
+                info!("> AUTH {}", event_json_clone);
                 ctx.next().await
             }
             _ => {
-                debug!("> {:?}", ctx.message);
+                let message_clone_for_debug = format!("{:?}", ctx.message);
+                debug!("> {}", message_clone_for_debug);
                 ctx.next().await
             }
         }
@@ -85,51 +87,53 @@ impl Middleware for LoggerMiddleware {
         &self,
         ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
-        if let Some(msg) = &ctx.message {
-            match msg {
+        if let Some(msg_ref) = ctx.message.as_ref() {
+            match msg_ref {
                 RelayMessage::Ok {
                     event_id,
                     status,
                     message,
                 } => {
-                    // Calculate latency if we have a start time
+                    let event_id_clone = event_id.clone();
+                    let status_clone = *status;
+                    let message_clone = message.clone();
+
                     if let Some(start_time) = ctx.state.event_start_time.take() {
                         let latency_ms = start_time.elapsed().as_secs_f64() * 1000.0;
-
-                        // Get the event kind from the state
                         if let Some(kind) = ctx.state.event_kind.take() {
                             metrics::event_latency(kind as u32).record(latency_ms);
                         }
-
                         info!(
                             "< OK {} {} {} took {:?}ms",
-                            event_id, status, message, latency_ms
+                            event_id_clone, status_clone, message_clone, latency_ms
                         );
                     } else {
-                        info!("< OK {} {} {}", event_id, status, message);
+                        info!("< OK {} {} {}", event_id_clone, status_clone, message_clone);
                     }
                 }
                 RelayMessage::Event {
                     subscription_id,
                     event,
                 } => {
-                    info!(
-                        "< EVENT {} {}",
-                        subscription_id.as_ref(),
-                        event.as_ref().as_json()
-                    );
+                    let sub_id_clone = subscription_id.clone();
+                    let event_json_clone = event.as_ref().as_json();
+                    info!("< EVENT {} {}", sub_id_clone, event_json_clone);
                 }
                 RelayMessage::Notice(message) => {
-                    info!("< NOTICE {}", message);
+                    let message_clone = message.clone();
+                    info!("< NOTICE {}", message_clone);
                 }
                 RelayMessage::EndOfStoredEvents(subscription_id) => {
-                    info!("< EOSE {}", subscription_id.as_ref());
+                    let sub_id_clone = subscription_id.clone();
+                    info!("< EOSE {}", sub_id_clone);
                 }
                 RelayMessage::Auth { challenge } => {
-                    info!("< AUTH {}", challenge);
+                    let challenge_clone = challenge.clone();
+                    info!("< AUTH {}", challenge_clone);
                 }
                 _ => {
-                    debug!("< {:?}", msg);
+                    let msg_clone_for_debug = format!("{:?}", ctx.message);
+                    debug!("< {}", msg_clone_for_debug);
                 }
             }
         }

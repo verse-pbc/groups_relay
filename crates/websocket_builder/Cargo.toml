@@ -10,7 +10,7 @@ name = "websocket_builder"
 [dependencies]
 anyhow = "1.0.89"
 async-trait = "0.1.82"
-axum = { version = "0.7.9", features = ["ws"] }
+axum = { version = "0.7.9", features = ["ws", "http1"] }
 futures-util = "0.3.31"
 hickory-resolver = { version = "0.24.1", features = ["tokio-runtime"] }
 thiserror = "1.0.63"

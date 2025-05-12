@@ -34,35 +34,42 @@ impl Middleware for Nip42Middleware {
         match ctx.message.as_ref() {
             Some(ClientMessage::Auth(auth_event_cow)) => {
                 let auth_event = auth_event_cow.as_ref();
+                let auth_event_id = auth_event.id;
+                let auth_event_pubkey = auth_event.pubkey;
+                let connection_id_clone = ctx.connection_id.clone();
+
                 debug!(
                     target: "auth",
                     "[{}] Processing AUTH message for event ID {}",
-                    ctx.connection_id, auth_event.id
+                    connection_id_clone, auth_event_id
                 );
 
                 let Some(expected_challenge) = ctx.state.challenge.as_ref() else {
+                    let conn_id_err = ctx.connection_id.clone();
                     error!(
                         target: "auth",
                         "[{}] No challenge found in state for AUTH message (event ID {}).",
-                        ctx.connection_id, auth_event.id
+                        conn_id_err, auth_event_id
                     );
                     ctx.send_message(RelayMessage::ok(
-                        auth_event.id,
+                        auth_event_id,
                         false,
                         "auth-required: no challenge pending",
                     ))
                     .await?;
                     return Err(Error::auth_required("No challenge found in state").into());
                 };
+                let expected_challenge_clone = expected_challenge.clone();
 
                 if auth_event.kind != Kind::Authentication {
+                    let conn_id_err = ctx.connection_id.clone();
                     error!(
                         target: "auth",
                         "[{}] Invalid event kind for AUTH message: {} (event ID {}).",
-                        ctx.connection_id, auth_event.kind, auth_event.id
+                        conn_id_err, auth_event.kind, auth_event_id
                     );
                     ctx.send_message(RelayMessage::ok(
-                        auth_event.id,
+                        auth_event_id,
                         false,
                         "auth-required: invalid event kind",
                     ))
@@ -71,13 +78,14 @@ impl Middleware for Nip42Middleware {
                 }
 
                 if auth_event.verify().is_err() {
+                    let conn_id_err = ctx.connection_id.clone();
                     error!(
                         target: "auth",
                         "[{}] Invalid signature for AUTH message (event ID {}).",
-                        ctx.connection_id, auth_event.id
+                        conn_id_err, auth_event_id
                     );
                     ctx.send_message(RelayMessage::ok(
-                        auth_event.id,
+                        auth_event_id,
                         false,
                         "auth-required: invalid signature",
                     ))
@@ -95,14 +103,15 @@ impl Middleware for Nip42Middleware {
 
                 match found_challenge_in_tag {
                     Some(tag_challenge_str) => {
-                        if tag_challenge_str != *expected_challenge {
+                        if tag_challenge_str != expected_challenge_clone {
+                            let conn_id_err = ctx.connection_id.clone();
                             error!(
                                 target: "auth",
                                 "[{}] Challenge mismatch for AUTH. Expected '{}', got '{}'. Event ID: {}.",
-                                ctx.connection_id, expected_challenge, tag_challenge_str, auth_event.id
+                                conn_id_err, expected_challenge_clone, tag_challenge_str, auth_event_id
                             );
                             ctx.send_message(RelayMessage::ok(
-                                auth_event.id,
+                                auth_event_id,
                                 false,
                                 "auth-required: challenge mismatch",
                             ))
@@ -111,13 +120,14 @@ impl Middleware for Nip42Middleware {
                         }
                     }
                     None => {
+                        let conn_id_err = ctx.connection_id.clone();
                         error!(
                             target: "auth",
                             "[{}] No challenge tag found in AUTH message. Event ID: {}.",
-                            ctx.connection_id, auth_event.id
+                            conn_id_err, auth_event_id
                         );
                         ctx.send_message(RelayMessage::ok(
-                            auth_event.id,
+                            auth_event_id,
                             false,
                             "auth-required: missing challenge tag",
                         ))
@@ -139,13 +149,14 @@ impl Middleware for Nip42Middleware {
                         if tag_relay_url.as_str_without_trailing_slash()
                             != self.auth_url.trim_end_matches('/')
                         {
+                            let conn_id_err = ctx.connection_id.clone();
                             error!(
                                 target: "auth",
                                 "[{}] Relay URL mismatch for AUTH. Expected '{}', got '{}'. Event ID: {}.",
-                                ctx.connection_id, self.auth_url, tag_relay_url.as_str_without_trailing_slash(), auth_event.id
+                                conn_id_err, self.auth_url, tag_relay_url.as_str_without_trailing_slash(), auth_event_id
                             );
                             ctx.send_message(RelayMessage::ok(
-                                auth_event.id,
+                                auth_event_id,
                                 false,
                                 "auth-required: relay mismatch",
                             ))
@@ -154,13 +165,14 @@ impl Middleware for Nip42Middleware {
                         }
                     }
                     None => {
+                        let conn_id_err = ctx.connection_id.clone();
                         error!(
                             target: "auth",
                             "[{}] No relay tag found in AUTH message. Event ID: {}.",
-                            ctx.connection_id, auth_event.id
+                            conn_id_err, auth_event_id
                         );
                         ctx.send_message(RelayMessage::ok(
-                            auth_event.id,
+                            auth_event_id,
                             false,
                             "auth-required: missing relay tag",
                         ))
@@ -174,13 +186,14 @@ impl Middleware for Nip42Middleware {
                     .unwrap_or_else(|_| Duration::from_secs(0))
                     .as_secs();
                 if auth_event.created_at.as_u64() < now.saturating_sub(600) {
+                    let conn_id_err = ctx.connection_id.clone();
                     error!(
                         target: "auth",
                         "[{}] Expired AUTH message (event ID {}). Created at: {}, Now: {}",
-                        ctx.connection_id, auth_event.id, auth_event.created_at.as_u64(), now
+                        conn_id_err, auth_event_id, auth_event.created_at.as_u64(), now
                     );
                     ctx.send_message(RelayMessage::ok(
-                        auth_event.id,
+                        auth_event_id,
                         false,
                         "auth-required: expired auth event",
                     ))
@@ -188,14 +201,19 @@ impl Middleware for Nip42Middleware {
                     return Err(Error::auth_required("Expired auth event").into());
                 }
 
-                ctx.state.authed_pubkey = Some(auth_event.pubkey);
+                // Explicitly mark borrows as unused before modifying state
+                let _ = auth_event;
+                let _ = expected_challenge;
+
+                // Now modify state - borrows should be clear
+                ctx.state.authed_pubkey = Some(auth_event_pubkey);
                 ctx.state.challenge = None;
                 debug!(
                     target: "auth",
                     "[{}] Successfully authenticated pubkey {} (event ID {}).",
-                    ctx.connection_id, auth_event.pubkey, auth_event.id
+                    connection_id_clone, auth_event_pubkey, auth_event_id
                 );
-                ctx.send_message(RelayMessage::ok(auth_event.id, true, "authenticated"))
+                ctx.send_message(RelayMessage::ok(auth_event_id, true, "authenticated"))
                     .await?;
                 Ok(())
             }

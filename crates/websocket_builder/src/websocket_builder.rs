@@ -10,6 +10,91 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
+/// Errors that can occur during WebSocket handling.
+///
+/// This enum represents all possible errors that can occur during the lifecycle
+/// of a WebSocket connection, including connection establishment, message processing,
+/// and connection termination.
+///
+/// Each variant includes the connection state at the time of the error, allowing
+/// for proper cleanup and error recovery.
+///
+/// # Type Parameters
+/// * `TapState` - The type of state maintained for each connection
+#[derive(Error, Debug)]
+pub enum WebsocketError<TapState: Send + Sync + 'static> {
+    #[error("IO error: {0}")]
+    IoError(std::io::Error, TapState),
+
+    #[error("Invalid target URL: missing host")]
+    InvalidTargetUrl(TapState),
+
+    #[error("DNS resolution failed: {0}")]
+    ResolveError(hickory_resolver::error::ResolveError, TapState),
+
+    #[error("No addresses found for host: {0}")]
+    NoAddressesFound(String, TapState),
+
+    #[error("Task join error: {0}")]
+    JoinError(tokio::task::JoinError, TapState),
+
+    #[error("WebSocket error: {0}")]
+    WebsocketError(AxumError, TapState),
+
+    #[error("No closing handshake")]
+    NoClosingHandshake(AxumError, TapState),
+
+    #[error("Handler error: {0}")]
+    HandlerError(Box<dyn std::error::Error + Send + Sync>, TapState),
+
+    #[error("Missing middleware")]
+    MissingMiddleware(TapState),
+
+    #[error("Inbound message conversion error: {0}")]
+    InboundMessageConversionError(String, TapState),
+
+    #[error("Outbound message conversion error: {0}")]
+    OutboundMessageConversionError(String, TapState),
+
+    #[error("Maximum concurrent connections limit reached")]
+    MaxConnectionsExceeded(TapState),
+
+    #[error("Binary messages are not supported by this server")]
+    UnsupportedBinaryMessage(TapState),
+}
+
+impl<TapState: Send + Sync + 'static> WebsocketError<TapState> {
+    pub fn get_state(self) -> TapState {
+        match self {
+            Self::HandlerError(_, state) => state,
+            Self::IoError(_, state) => state,
+            Self::ResolveError(_, state) => state,
+            Self::NoAddressesFound(_, state) => state,
+            Self::JoinError(_, state) => state,
+            Self::WebsocketError(_, state) => state,
+            Self::NoClosingHandshake(_, state) => state,
+            Self::MissingMiddleware(state) => state,
+            Self::InvalidTargetUrl(state) => state,
+            Self::MaxConnectionsExceeded(state) => state,
+            Self::UnsupportedBinaryMessage(state) => state,
+            Self::InboundMessageConversionError(_, state)
+            | Self::OutboundMessageConversionError(_, state) => state,
+        }
+    }
+}
+
+/// A type alias for a vector of middleware instances.
+///
+/// This type represents the chain of middleware that processes messages.
+/// Each middleware in the vector is wrapped in an Arc for thread-safe sharing.
+///
+/// # Type Parameters
+/// * `S` - The type of state maintained for each connection
+/// * `I` - The type of incoming messages
+/// * `O` - The type of outgoing messages
+pub type MiddlewareVec<S, I, O> =
+    Vec<Arc<dyn Middleware<State = S, IncomingMessage = I, OutgoingMessage = O>>>;
+
 /// A trait for creating per-connection state objects.
 ///
 /// This trait is used to create new state instances for each WebSocket connection.
@@ -239,48 +324,6 @@ where
     Converter: MessageConverter<I, O> + Send + Sync + Clone + 'static,
     Factory: StateFactory<TapState> + Send + Sync + Clone + 'static,
 {
-    /// Handles connection permit acquisition
-    async fn try_acquire_connection_permit(
-        &self,
-        state: TapState,
-    ) -> Result<(TapState, Option<OwnedSemaphorePermit>), WebsocketError<TapState>> {
-        if let Some(semaphore) = &self.connection_semaphore {
-            match semaphore.clone().try_acquire_owned() {
-                Ok(permit) => {
-                    debug!("Connection permit acquired (within connection limit)");
-                    Ok((state, Some(permit)))
-                }
-                Err(_) => {
-                    warn!("Maximum connections limit reached, rejecting connection");
-                    Err(WebsocketError::MaxConnectionsExceeded(state))
-                }
-            }
-        } else {
-            Ok((state, None))
-        }
-    }
-
-    /// Spawns timeout task if max_connection_time is configured
-    fn spawn_timeout_task(&self, connection_token: CancellationToken) {
-        if let Some(max_time) = self.max_connection_time {
-            let token = connection_token.clone();
-            tokio::spawn(async move {
-                tokio::select! {
-                    _ = tokio::time::sleep(max_time) => {
-                        if !token.is_cancelled() {
-                            warn!(
-                                "Max connection time ({:?}) exceeded, initiating graceful shutdown",
-                                max_time
-                            );
-                            token.cancel();
-                        }
-                    }
-                    _ = token.cancelled() => {} // Connection already cancelled.
-                }
-            });
-        }
-    }
-
     /// Starts handling a WebSocket connection.
     ///
     /// This method processes the lifecycle of a WebSocket connection, including:
@@ -350,6 +393,48 @@ where
         }
 
         Ok(())
+    }
+
+    /// Handles connection permit acquisition
+    async fn try_acquire_connection_permit(
+        &self,
+        state: TapState,
+    ) -> Result<(TapState, Option<OwnedSemaphorePermit>), WebsocketError<TapState>> {
+        if let Some(semaphore) = &self.connection_semaphore {
+            match semaphore.clone().try_acquire_owned() {
+                Ok(permit) => {
+                    debug!("Connection permit acquired (within connection limit)");
+                    Ok((state, Some(permit)))
+                }
+                Err(_) => {
+                    warn!("Maximum connections limit reached, rejecting connection");
+                    Err(WebsocketError::MaxConnectionsExceeded(state))
+                }
+            }
+        } else {
+            Ok((state, None))
+        }
+    }
+
+    /// Spawns timeout task if max_connection_time is configured
+    fn spawn_timeout_task(&self, connection_token: CancellationToken) {
+        if let Some(max_time) = self.max_connection_time {
+            let token = connection_token.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = tokio::time::sleep(max_time) => {
+                        if !token.is_cancelled() {
+                            warn!(
+                                "Max connection time ({:?}) exceeded, initiating graceful shutdown",
+                                max_time
+                            );
+                            token.cancel();
+                        }
+                    }
+                    _ = token.cancelled() => {} // Connection already cancelled.
+                }
+            });
+        }
     }
 }
 
@@ -471,85 +556,6 @@ async fn message_loop<
 ) -> Result<TapState, WebsocketError<TapState>> {
     debug!("Starting message loop");
 
-    /// Processes an outgoing message through the middleware chain.
-    ///
-    /// This function:
-    /// 1. Passes the message through the middleware chain
-    /// 2. Converts the processed message to wire format
-    /// 3. Sends the message over the WebSocket connection
-    ///
-    /// # Arguments
-    /// * `connection_id` - Identifier for logging and tracking
-    /// * `socket` - The WebSocket connection
-    /// * `message` - The message to send
-    /// * `middleware_index` - Index of the middleware that sent the message
-    /// * `handler` - Handler for processing messages
-    /// * `state` - Current connection state
-    /// * `is_flush` - Whether this is a flush operation during shutdown
-    ///
-    /// # Returns
-    /// * `Ok(TapState)` - The updated state after processing
-    /// * `Err(WebsocketError)` - If an error occurred during processing
-    async fn handle_outgoing_message<TapState, I, O, Converter>(
-        connection_id: &str,
-        socket: &mut WebSocket,
-        message: O,
-        middleware_index: usize,
-        handler: &mut MessageHandler<TapState, I, O, Converter>,
-        state: TapState,
-        is_flush: bool,
-    ) -> Result<TapState, WebsocketError<TapState>>
-    where
-        TapState: Send + Sync + 'static,
-        I: Send + Sync + 'static,
-        O: Send + Sync + 'static,
-        Converter: MessageConverter<I, O> + Send + Sync + 'static,
-    {
-        let log_prefix = if is_flush { "Flushing" } else { "Processing" };
-        debug!(
-            "{} outbound message from middleware {}",
-            log_prefix, middleware_index
-        );
-
-        let (new_state, message) = match handler
-            .handle_outbound_message(connection_id.to_string(), message, middleware_index, state)
-            .await
-        {
-            Ok((new_state, message)) => (new_state, message),
-            Err(e) => {
-                error!(
-                    "Error handling outbound message{}: {}",
-                    if is_flush { " during flush" } else { "" },
-                    e
-                );
-                return Err(e);
-            }
-        };
-
-        if let Some(message) = message {
-            debug!(
-                "Sending{} message to websocket",
-                if is_flush { " final" } else { "" }
-            );
-            if let Err(e) = socket.send(Message::Text(message)).await {
-                error!(
-                    "Failed to send{} message to websocket: {}",
-                    if is_flush { " final" } else { "" },
-                    e
-                );
-                return Err(WebsocketError::WebsocketError(e, new_state));
-            }
-            debug!(
-                "Successfully sent{} message to websocket",
-                if is_flush { " final" } else { "" }
-            );
-        } else {
-            debug!("No message to send");
-        }
-
-        Ok(new_state)
-    }
-
     loop {
         debug!("Message loop iteration starting");
         tokio::select! {
@@ -656,87 +662,66 @@ async fn message_loop<
     }
 }
 
-/// Errors that can occur during WebSocket handling.
+/// Processes an outgoing message through the middleware chain and sends it.
 ///
-/// This enum represents all possible errors that can occur during the lifecycle
-/// of a WebSocket connection, including connection establishment, message processing,
-/// and connection termination.
-///
-/// Each variant includes the connection state at the time of the error, allowing
-/// for proper cleanup and error recovery.
-///
-/// # Type Parameters
-/// * `TapState` - The type of state maintained for each connection
-#[derive(Error, Debug)]
-pub enum WebsocketError<TapState: Send + Sync + 'static> {
-    #[error("IO error: {0}")]
-    IoError(std::io::Error, TapState),
+/// This helper function consolidates the logic for handling outbound messages,
+/// including middleware processing, conversion, and sending over the socket.
+async fn handle_outgoing_message<TapState, I, O, Converter>(
+    connection_id: &str,
+    socket: &mut WebSocket,
+    message: O,
+    middleware_index: usize,
+    handler: &mut MessageHandler<TapState, I, O, Converter>,
+    state: TapState,
+    is_flush: bool,
+) -> Result<TapState, WebsocketError<TapState>>
+where
+    TapState: Send + Sync + 'static,
+    I: Send + Sync + 'static,
+    O: Send + Sync + 'static,
+    Converter: MessageConverter<I, O> + Send + Sync + 'static,
+{
+    let log_prefix = if is_flush { "Flushing" } else { "Processing" };
+    debug!(
+        "{} outbound message from middleware {}",
+        log_prefix, middleware_index
+    );
 
-    #[error("Invalid target URL: missing host")]
-    InvalidTargetUrl(TapState),
-
-    #[error("DNS resolution failed: {0}")]
-    ResolveError(hickory_resolver::error::ResolveError, TapState),
-
-    #[error("No addresses found for host: {0}")]
-    NoAddressesFound(String, TapState),
-
-    #[error("Task join error: {0}")]
-    JoinError(tokio::task::JoinError, TapState),
-
-    #[error("WebSocket error: {0}")]
-    WebsocketError(AxumError, TapState),
-
-    #[error("No closing handshake")]
-    NoClosingHandshake(AxumError, TapState),
-
-    #[error("Handler error: {0}")]
-    HandlerError(Box<dyn std::error::Error + Send + Sync>, TapState),
-
-    #[error("Missing middleware")]
-    MissingMiddleware(TapState),
-
-    #[error("Inbound message conversion error: {0}")]
-    InboundMessageConversionError(String, TapState),
-
-    #[error("Outbound message conversion error: {0}")]
-    OutboundMessageConversionError(String, TapState),
-
-    #[error("Maximum concurrent connections limit reached")]
-    MaxConnectionsExceeded(TapState),
-
-    #[error("Binary messages are not supported by this server")]
-    UnsupportedBinaryMessage(TapState),
-}
-
-impl<TapState: Send + Sync + 'static> WebsocketError<TapState> {
-    pub fn get_state(self) -> TapState {
-        match self {
-            Self::HandlerError(_, state) => state,
-            Self::IoError(_, state) => state,
-            Self::ResolveError(_, state) => state,
-            Self::NoAddressesFound(_, state) => state,
-            Self::JoinError(_, state) => state,
-            Self::WebsocketError(_, state) => state,
-            Self::NoClosingHandshake(_, state) => state,
-            Self::MissingMiddleware(state) => state,
-            Self::InvalidTargetUrl(state) => state,
-            Self::MaxConnectionsExceeded(state) => state,
-            Self::UnsupportedBinaryMessage(state) => state,
-            Self::InboundMessageConversionError(_, state)
-            | Self::OutboundMessageConversionError(_, state) => state,
+    let (new_state, message) = match handler
+        .handle_outbound_message(connection_id.to_string(), message, middleware_index, state)
+        .await
+    {
+        Ok((new_state, message)) => (new_state, message),
+        Err(e) => {
+            error!(
+                "Error handling outbound message{}: {}",
+                if is_flush { " during flush" } else { "" },
+                e
+            );
+            return Err(e);
         }
-    }
-}
+    };
 
-/// A type alias for a vector of middleware instances.
-///
-/// This type represents the chain of middleware that processes messages.
-/// Each middleware in the vector is wrapped in an Arc for thread-safe sharing.
-///
-/// # Type Parameters
-/// * `S` - The type of state maintained for each connection
-/// * `I` - The type of incoming messages
-/// * `O` - The type of outgoing messages
-pub type MiddlewareVec<S, I, O> =
-    Vec<Arc<dyn Middleware<State = S, IncomingMessage = I, OutgoingMessage = O>>>;
+    if let Some(message) = message {
+        debug!(
+            "Sending{} message to websocket",
+            if is_flush { " final" } else { "" }
+        );
+        if let Err(e) = socket.send(Message::Text(message)).await {
+            error!(
+                "Failed to send{} message to websocket: {}",
+                if is_flush { " final" } else { "" },
+                e
+            );
+            return Err(WebsocketError::WebsocketError(e, new_state));
+        }
+        debug!(
+            "Successfully sent{} message to websocket",
+            if is_flush { " final" } else { "" }
+        );
+    } else {
+        debug!("No message to send");
+    }
+
+    Ok(new_state)
+}
