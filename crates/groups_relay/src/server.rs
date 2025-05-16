@@ -34,6 +34,7 @@ pub struct ServerState {
     pub cancellation_token: CancellationToken,
     pub metrics_handle: metrics::PrometheusHandle,
     pub connection_counter: Arc<AtomicUsize>,
+    pub base_domain_parts: usize,
 }
 
 pub async fn run_server(
@@ -53,7 +54,8 @@ pub async fn run_server(
     );
     info!("Frontend URL: {}", settings.local_addr);
     info!("Relay URL: {}", settings.relay_url);
-    info!("Auth requests must match this URL: {}", settings.auth_url);
+    info!("Auth requests must match: {} (with matching subdomain if present)", settings.auth_url);
+    info!("Subdomain extraction: Using {} parts for base domain", settings.base_domain_parts);
 
     let relay_url_parsed = RelayUrl::parse(&settings.relay_url)?;
 
@@ -63,7 +65,7 @@ pub async fn run_server(
         groups.clone(),
         &relay_keys,
         database,
-        &settings.websocket,
+        &settings,
     )?);
 
     let cancellation_token = CancellationToken::new();
@@ -73,6 +75,7 @@ pub async fn run_server(
         cancellation_token: cancellation_token.clone(),
         metrics_handle: metrics_handle.clone(),
         connection_counter: Arc::new(AtomicUsize::new(0)),
+        base_domain_parts: settings.base_domain_parts,
     });
 
     let cors = CorsLayer::new()

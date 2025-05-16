@@ -41,8 +41,8 @@ impl Middleware for ErrorHandlingMiddleware {
             Ok(()) => Ok(()),
             Err(e) => {
                 // TODO: get rid of anyhow and downcast_ref here
-                if let Some(e) = e.downcast_ref::<Error>() {
-                    if let Err(err) = e.handle_inbound_error(ctx, client_message_id).await {
+                if let Some(err) = e.downcast_ref::<Error>() {
+                    if let Err(err) = err.handle_inbound_error(ctx, client_message_id).await {
                         error!("Failed to handle inbound error: {}", err);
                     }
                 } else {

@@ -47,7 +47,7 @@ impl Groups {
             ])
             .since(Timestamp::from(0))];
 
-        let Ok(metadata_events) = database.query(metadata_filter).await else {
+        let Ok(metadata_events) = database.query(metadata_filter, None).await else {
             return Err(Error::notice("Error querying metadata events"));
         };
         info!("Found {} metadata events", metadata_events.len());
@@ -98,7 +98,7 @@ impl Groups {
                 )
                 .since(Timestamp::from(0))];
 
-            let Ok(historical_events) = database.query(historical_filter).await else {
+            let Ok(historical_events) = database.query(historical_filter, None).await else {
                 return Err(Error::notice("Error querying historical events"));
             };
             info!(
@@ -191,12 +191,15 @@ impl Groups {
         // If a group with this id existed (kind 9008), we don't let it be created again
         let deleted_events = match self
             .db
-            .query(vec![Filter::new()
-                .kinds(vec![KIND_GROUP_DELETE_9008])
-                .custom_tag(
-                    SingleLetterTag::lowercase(Alphabet::H),
-                    group_id.to_string(),
-                )])
+            .query(
+                vec![Filter::new()
+                    .kinds(vec![KIND_GROUP_DELETE_9008])
+                    .custom_tag(
+                        SingleLetterTag::lowercase(Alphabet::H),
+                        group_id.to_string(),
+                    )],
+                None,
+            )
             .await
         {
             Ok(events) => events,
@@ -210,10 +213,13 @@ impl Groups {
         // Find all previous participants in unmanaged group
         let previous_events = match self
             .db
-            .query(vec![Filter::new().custom_tag(
-                SingleLetterTag::lowercase(Alphabet::H),
-                group_id.to_string(),
-            )])
+            .query(
+                vec![Filter::new().custom_tag(
+                    SingleLetterTag::lowercase(Alphabet::H),
+                    group_id.to_string(),
+                )],
+                None,
+            )
             .await
         {
             Ok(events) => events,
@@ -250,12 +256,12 @@ impl Groups {
 
         metrics::groups_created().increment(1);
 
-        let mut commands = vec![StoreCommand::SaveSignedEvent(event)];
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event, None)];
         commands.extend(
             group
                 .generate_all_state_events(&self.relay_pubkey)
                 .into_iter()
-                .map(StoreCommand::SaveUnsignedEvent),
+                .map(|e| StoreCommand::SaveUnsignedEvent(e, None)),
         );
 
         Ok(commands)
@@ -300,12 +306,12 @@ impl Groups {
 
         group.set_metadata(&event, &self.relay_pubkey)?;
 
-        let mut commands = vec![StoreCommand::SaveSignedEvent(event)];
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event, None)];
         commands.extend(
             group
                 .generate_metadata_events(&self.relay_pubkey)
                 .into_iter()
-                .map(StoreCommand::SaveUnsignedEvent),
+                .map(|e| StoreCommand::SaveUnsignedEvent(e, None)),
         );
 
         Ok(commands)
@@ -321,7 +327,7 @@ impl Groups {
 
         // Regardless of whether the invite was newly created or already existed (created=false),
         // we save the event that attempted the creation, as per NIP-29.
-        Ok(vec![StoreCommand::SaveSignedEvent(event)])
+        Ok(vec![StoreCommand::SaveSignedEvent(event, None)])
     }
 
     pub fn handle_join_request(&self, event: Box<Event>) -> Result<Vec<StoreCommand>, Error> {
@@ -418,12 +424,15 @@ impl Groups {
             // Then check for content events
             let events = match self
                 .db
-                .query(vec![Filter::new()
-                    .custom_tag(
-                        SingleLetterTag::lowercase(Alphabet::H),
-                        group.id.to_string(),
-                    )
-                    .limit(1)])
+                .query(
+                    vec![Filter::new()
+                        .custom_tag(
+                            SingleLetterTag::lowercase(Alphabet::H),
+                            group.id.to_string(),
+                        )
+                        .limit(1)],
+                    None,
+                )
                 .await
             {
                 Ok(events) => events,
@@ -1017,7 +1026,7 @@ mod tests {
         assert_eq!(result.len(), 1, "Join request should be saved");
 
         match &result[0] {
-            StoreCommand::SaveSignedEvent(event) => {
+            StoreCommand::SaveSignedEvent(event, _) => {
                 assert_eq!(event.kind, KIND_GROUP_USER_JOIN_REQUEST_9021);
             }
             _ => panic!("Expected SaveSignedEvent command"),
@@ -1041,7 +1050,7 @@ mod tests {
         assert_eq!(result.len(), 1, "Join request should be saved");
 
         match &result[0] {
-            StoreCommand::SaveSignedEvent(event) => {
+            StoreCommand::SaveSignedEvent(event, _) => {
                 assert_eq!(event.kind, KIND_GROUP_USER_JOIN_REQUEST_9021);
             }
             _ => panic!("Expected SaveSignedEvent command"),
@@ -1080,11 +1089,11 @@ mod tests {
             "Should have 2 commands: save leave event and update members"
         );
         match &commands[0] {
-            StoreCommand::SaveSignedEvent(event) => assert_eq!(event.id, leave_event_id),
+            StoreCommand::SaveSignedEvent(event, _) => assert_eq!(event.id, leave_event_id),
             _ => panic!("First command should be SaveSignedEvent"),
         }
         match &commands[1] {
-            StoreCommand::SaveUnsignedEvent(event) => {
+            StoreCommand::SaveUnsignedEvent(event, _) => {
                 assert_eq!(event.kind, KIND_GROUP_MEMBERS_39002);
                 // Verify the member is not in the members list
                 assert!(!event

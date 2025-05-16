@@ -8,7 +8,7 @@ use thiserror::Error;
 use tokio::sync::mpsc::Receiver as MpscReceiver;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, warn};
+use tracing::{error, warn};
 
 /// Errors that can occur during WebSocket handling.
 ///
@@ -402,10 +402,7 @@ where
     ) -> Result<(TapState, Option<OwnedSemaphorePermit>), WebsocketError<TapState>> {
         if let Some(semaphore) = &self.connection_semaphore {
             match semaphore.clone().try_acquire_owned() {
-                Ok(permit) => {
-                    debug!("Connection permit acquired (within connection limit)");
-                    Ok((state, Some(permit)))
-                }
+                Ok(permit) => Ok((state, Some(permit))),
                 Err(_) => {
                     warn!("Maximum connections limit reached, rejecting connection");
                     Err(WebsocketError::MaxConnectionsExceeded(state))
@@ -468,16 +465,11 @@ async fn handle_connection_lifecycle<
     cancellation_token: CancellationToken,
     state: TapState,
 ) -> Result<TapState, WebsocketError<TapState>> {
-    debug!("Starting WebSocket connection lifecycle");
-
     let (state, server_receiver) = match session_handler
         .on_connect(connection_id.clone(), state)
         .await
     {
-        Ok(result) => {
-            debug!("WebSocket connection setup successful");
-            result
-        }
+        Ok(result) => result,
         Err(e) => {
             error!("WebSocket connection setup failed: {}", e);
             return Err(e);
@@ -494,16 +486,9 @@ async fn handle_connection_lifecycle<
     )
     .await
     {
-        Ok(state) => {
-            debug!("WebSocket message loop completed normally");
-            state
-        }
+        Ok(state) => state,
         Err(e) => match e {
-            WebsocketError::NoClosingHandshake(e, state) => {
-                debug!(
-                    "Client closed WebSocket connection without handshake: {}",
-                    e
-                );
+            WebsocketError::NoClosingHandshake(_e, state) => {
                 return Ok(state);
             }
             _ => {
@@ -513,7 +498,6 @@ async fn handle_connection_lifecycle<
         },
     };
 
-    debug!("WebSocket connection lifecycle completed");
     Ok(state)
 }
 
@@ -554,20 +538,14 @@ async fn message_loop<
     cancellation_token: CancellationToken,
     mut state: TapState,
 ) -> Result<TapState, WebsocketError<TapState>> {
-    debug!("Starting message loop");
-
     loop {
-        debug!("Message loop iteration starting");
         tokio::select! {
             biased;
 
             _ = cancellation_token.cancelled() => {
-                debug!("Connection cancellation token triggered, starting graceful connection shutdown");
-
                 // Flush any pending messages in the channel
                 while let Ok(msg) = server_receiver.try_recv() {
                     let (message, middleware_index) = msg;
-                    debug!("Flushing pending message from middleware {} before connection close", middleware_index);
                     state = handle_outgoing_message(
                         connection_id,
                         &mut socket,
@@ -581,20 +559,16 @@ async fn message_loop<
                 }
 
                 // Send a close frame
-                debug!("Sending WebSocket close frame to client");
                 if let Err(e) = socket.send(Message::Close(None)).await {
                     warn!("Failed to send WebSocket close frame to client: {}", e);
                 }
 
-                debug!("Graceful connection shutdown completed");
                 return Ok(state);
             }
 
             server_message = server_receiver.recv() => {
-                debug!("Server receiver got message");
                 match server_message {
                     Some((message, middleware_index)) => {
-                        debug!("Processing outbound message from middleware {}", middleware_index);
                         state = handle_outgoing_message(
                             connection_id,
                             &mut socket,
@@ -605,10 +579,8 @@ async fn message_loop<
                             false,
                         )
                         .await?;
-                        debug!("Finished processing outbound message");
                     }
                     None => {
-                        debug!("Server receiver closed");
                         return Ok(state);
                     }
                 }
@@ -617,43 +589,35 @@ async fn message_loop<
             message = socket.next() => {
                 match message {
                     Some(Ok(Message::Text(text))) => {
-                        debug!("Received text message: {}", text);
                         state = handler
                             .handle_incoming_message(connection_id.to_string(), text, state)
                             .await?;
-                        debug!("Finished processing text message");
                     }
                     Some(Ok(Message::Binary(_))) => {
                         error!("Protocol violation: received binary message - terminating connection as binary messages are not supported");
                         return Err(WebsocketError::UnsupportedBinaryMessage(state));
                     }
                     Some(Ok(Message::Ping(payload))) => {
-                        debug!("Received ping, sending pong");
                         if let Err(e) = socket.send(Message::Pong(payload)).await {
                             warn!("Failed to send pong: {}", e);
                         }
                     }
                     Some(Ok(Message::Pong(_))) => {
-                        debug!("Received pong");
                     }
                     Some(Ok(Message::Close(_))) => {
-                        debug!("Received close frame from client");
                         // Send close frame in response if we haven't already
-                        if let Err(e) = socket.send(Message::Close(None)).await {
-                            debug!("Failed to send close frame response: {}", e);
+                        if let Err(_e) = socket.send(Message::Close(None)).await {
                         }
                         return Ok(state);
                     }
                     Some(Err(e)) => {
                         if e.to_string().contains("without closing handshake") {
-                            debug!("Client disconnected without closing handshake");
                             return Err(WebsocketError::NoClosingHandshake(e, state));
                         }
                         error!("WebSocket error: {}", e);
                         return Err(WebsocketError::WebsocketError(e, state));
                     }
                     None => {
-                        debug!("Client stream ended");
                         return Ok(state);
                     }
                 }
@@ -681,12 +645,7 @@ where
     O: Send + Sync + 'static,
     Converter: MessageConverter<I, O> + Send + Sync + 'static,
 {
-    let log_prefix = if is_flush { "Flushing" } else { "Processing" };
-    debug!(
-        "{} outbound message from middleware {}",
-        log_prefix, middleware_index
-    );
-
+    let _log_prefix = if is_flush { "Flushing" } else { "Processing" };
     let (new_state, message) = match handler
         .handle_outbound_message(connection_id.to_string(), message, middleware_index, state)
         .await
@@ -703,10 +662,6 @@ where
     };
 
     if let Some(message) = message {
-        debug!(
-            "Sending{} message to websocket",
-            if is_flush { " final" } else { "" }
-        );
         if let Err(e) = socket.send(Message::Text(message)).await {
             error!(
                 "Failed to send{} message to websocket: {}",
@@ -715,12 +670,6 @@ where
             );
             return Err(WebsocketError::WebsocketError(e, new_state));
         }
-        debug!(
-            "Successfully sent{} message to websocket",
-            if is_flush { " final" } else { "" }
-        );
-    } else {
-        debug!("No message to send");
     }
 
     Ok(new_state)

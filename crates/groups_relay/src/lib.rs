@@ -9,6 +9,7 @@ pub mod middlewares;
 pub mod nostr_database;
 pub mod nostr_session_state;
 pub mod server;
+pub mod subdomain;
 pub mod subscription_manager;
 pub mod utils;
 pub mod websocket_server;

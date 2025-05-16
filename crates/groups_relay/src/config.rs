@@ -18,6 +18,8 @@ pub struct RelaySettings {
     pub db_path: String,
     #[serde(default)]
     pub websocket: WebSocketSettings,
+    #[serde(default = "default_base_domain_parts")]
+    pub base_domain_parts: usize,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -40,6 +42,10 @@ fn default_max_connection_time() -> Option<Duration> {
 
 fn default_max_connections() -> Option<usize> {
     Some(1000) // Default max connections
+}
+
+fn default_base_domain_parts() -> usize {
+    2 // Default base domain parts (e.g., example.com -> 2 parts)
 }
 
 impl RelaySettings {
@@ -126,6 +132,7 @@ pub struct Settings {
     pub admin_keys: Vec<String>,
     pub websocket: WebSocketSettings,
     pub db_path: String,
+    pub base_domain_parts: usize,
 }
 
 pub use nostr_sdk::Keys;

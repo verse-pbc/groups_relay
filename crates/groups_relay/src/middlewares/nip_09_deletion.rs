@@ -19,7 +19,11 @@ impl Nip09Middleware {
         Self { database }
     }
 
-    async fn handle_deletion_request(&self, event: &Event) -> Result<(), Error> {
+    async fn handle_deletion_request(
+        &self,
+        event: &Event,
+        state: &NostrConnectionState,
+    ) -> Result<(), Error> {
         // Only process kind 5 (deletion request) events
         if event.kind != Kind::EventDeletion {
             return Ok(());
@@ -34,18 +38,17 @@ impl Nip09Middleware {
 
         // First save the deletion request event itself
         self.database
-            .save_signed_event(event.clone())
-            .await
-            .map_err(|e| Error::notice(format!("Failed to save deletion request: {}", e)))?;
+            .save_signed_event(event.clone(), state.subdomain().map(|s| s.to_string()))
+            .await?;
 
         // Process 'e' tags (direct event references) and 'a' tags (addresses)
         for tag in event.tags.iter() {
             match tag.kind() {
                 k if k == TagKind::e() => {
-                    self.handle_event_deletion(event, tag).await?;
+                    self.handle_event_deletion(event, tag, state).await?;
                 }
                 k if k == TagKind::a() => {
-                    self.handle_address_deletion(event, tag).await?;
+                    self.handle_address_deletion(event, tag, state).await?;
                 }
                 _ => {}
             }
@@ -54,7 +57,12 @@ impl Nip09Middleware {
         Ok(())
     }
 
-    async fn handle_event_deletion(&self, event: &Event, tag: &Tag) -> Result<(), Error> {
+    async fn handle_event_deletion(
+        &self,
+        event: &Event,
+        tag: &Tag,
+        state: &NostrConnectionState,
+    ) -> Result<(), Error> {
         if let [_, event_id, ..] = tag.as_slice() {
             if let Ok(event_id) = EventId::parse(event_id) {
                 debug!(
@@ -66,28 +74,26 @@ impl Nip09Middleware {
 
                 // First query the event to check ownership
                 let filter = Filter::new().id(event_id);
-                let events = self
+                let target_events = self
                     .database
-                    .query(vec![filter.clone()])
-                    .await
-                    .map_err(|e| Error::notice(format!("Failed to query event: {}", e)))?;
+                    .query(vec![filter.clone()], state.subdomain())
+                    .await?;
 
-                if let Some(target_event) = events.first() {
+                if let Some(target_event) = target_events.first() {
                     // Only allow deletion if the event was created by the same pubkey
                     if target_event.pubkey == event.pubkey {
                         debug!(
                             target: "nip09",
-                            "Deleting event {} referenced by deletion request {}",
-                            event_id,
-                            event.id
+                            "User {} is authorized to delete event {}",
+                            event.pubkey,
+                            event_id
                         );
 
-                        let delete_command = StoreCommand::DeleteEvents(filter);
-
-                        self.database
-                            .save_store_command(delete_command)
-                            .await
-                            .map_err(|e| Error::notice(format!("Failed to delete event: {}", e)))?;
+                        let delete_command = StoreCommand::DeleteEvents(
+                            filter,
+                            state.subdomain().map(|s| s.to_string()),
+                        );
+                        self.database.save_store_command(delete_command).await?;
                     } else {
                         debug!(
                             target: "nip09",
@@ -101,7 +107,12 @@ impl Nip09Middleware {
         Ok(())
     }
 
-    async fn handle_address_deletion(&self, event: &Event, tag: &Tag) -> Result<(), Error> {
+    async fn handle_address_deletion(
+        &self,
+        event: &Event,
+        tag: &Tag,
+        state: &NostrConnectionState,
+    ) -> Result<(), Error> {
         if let [_, addr, ..] = tag.as_slice() {
             debug!(
                 target: "nip09",
@@ -125,14 +136,11 @@ impl Nip09Middleware {
                             .author(pubkey)
                             .custom_tag(SingleLetterTag::lowercase(Alphabet::D), d_tag);
 
-                        let delete_command = StoreCommand::DeleteEvents(filter);
-
-                        self.database
-                            .save_store_command(delete_command)
-                            .await
-                            .map_err(|e| {
-                                Error::notice(format!("Failed to delete events by address: {}", e))
-                            })?;
+                        let delete_command = StoreCommand::DeleteEvents(
+                            filter,
+                            state.subdomain().map(|s| s.to_string()),
+                        );
+                        self.database.save_store_command(delete_command).await?;
                     } else {
                         debug!(
                             target: "nip09",
@@ -162,7 +170,10 @@ impl Middleware for Nip09Middleware {
         };
 
         if event_cow.kind == Kind::EventDeletion {
-            if let Err(e) = self.handle_deletion_request(event_cow.as_ref()).await {
+            if let Err(e) = self
+                .handle_deletion_request(event_cow.as_ref(), ctx.state)
+                .await
+            {
                 error!(
                     target: "nip09",
                     "Failed to process deletion request {}: {}",
@@ -207,7 +218,7 @@ mod tests {
         // Create and save an event
         let event_to_delete = create_test_event(&keys, 1, vec![]).await;
         database
-            .save_signed_event(event_to_delete.clone())
+            .save_signed_event(event_to_delete.clone(), None)
             .await
             .unwrap();
 
@@ -233,12 +244,12 @@ mod tests {
         // Verify event is deleted
         sleep(Duration::from_millis(30)).await; // Give time for async deletion
         let filter = Filter::new().id(event_to_delete.id);
-        let events = database.query(vec![filter]).await.unwrap();
+        let events = database.query(vec![filter], None).await.unwrap();
         assert!(events.is_empty(), "Event should have been deleted");
 
         // Verify deletion request is saved
         let filter = Filter::new().id(deletion_request.id);
-        let events = database.query(vec![filter]).await.unwrap();
+        let events = database.query(vec![filter], None).await.unwrap();
         assert_eq!(events.len(), 1, "Deletion request should be saved");
     }
 
@@ -251,7 +262,7 @@ mod tests {
         // Create and save an event from keys2
         let event_to_delete = create_test_event(&keys2, 1, vec![]).await;
         database
-            .save_signed_event(event_to_delete.clone())
+            .save_signed_event(event_to_delete.clone(), None)
             .await
             .unwrap();
 
@@ -275,7 +286,7 @@ mod tests {
         // Verify event is not deleted
         sleep(Duration::from_millis(30)).await;
         let filter = Filter::new().id(event_to_delete.id);
-        let events = database.query(vec![filter]).await.unwrap();
+        let events = database.query(vec![filter], None).await.unwrap();
         assert_eq!(events.len(), 1, "Event should not have been deleted");
     }
 
@@ -292,7 +303,7 @@ mod tests {
         )
         .await;
         database
-            .save_signed_event(replaceable_event.clone())
+            .save_signed_event(replaceable_event.clone(), None)
             .await
             .unwrap();
 
@@ -317,7 +328,7 @@ mod tests {
         // Verify replaceable event is deleted
         sleep(Duration::from_millis(30)).await;
         let filter = Filter::new().id(replaceable_event.id);
-        let events = database.query(vec![filter]).await.unwrap();
+        let events = database.query(vec![filter], None).await.unwrap();
         assert!(
             events.is_empty(),
             "Replaceable event should have been deleted"
@@ -331,7 +342,10 @@ mod tests {
 
         // Create and save an event with a 'd' tag
         let event = create_test_event(&keys, 5, vec![Tag::parse(vec!["d", "test"]).unwrap()]).await;
-        database.save_signed_event(event.clone()).await.unwrap();
+        database
+            .save_signed_event(event.clone(), None)
+            .await
+            .unwrap();
 
         sleep(Duration::from_millis(30)).await;
 
@@ -350,7 +364,7 @@ mod tests {
 
         // Verify event is saved
         let filter = Filter::new().id(event.id);
-        let events = database.query(vec![filter]).await.unwrap();
+        let events = database.query(vec![filter], None).await.unwrap();
         assert_eq!(events.len(), 1, "Event should have been saved");
     }
 
@@ -363,7 +377,7 @@ mod tests {
         let replaceable_event =
             create_test_event(&keys, 10002, vec![Tag::parse(vec!["d", "test"]).unwrap()]).await;
         database
-            .save_signed_event(replaceable_event.clone())
+            .save_signed_event(replaceable_event.clone(), None)
             .await
             .unwrap();
 
@@ -390,13 +404,13 @@ mod tests {
 
         // Verify deletion event is saved
         let filter = Filter::new().id(deletion_event.id);
-        let events = database.query(vec![filter]).await.unwrap();
+        let events = database.query(vec![filter], None).await.unwrap();
         assert_eq!(events.len(), 1, "Deletion event should have been saved");
 
         // Verify replaceable event is deleted
         sleep(Duration::from_millis(30)).await;
         let filter = Filter::new().id(replaceable_event.id);
-        let events = database.query(vec![filter]).await.unwrap();
+        let events = database.query(vec![filter], None).await.unwrap();
         assert!(
             events.is_empty(),
             "Replaceable event should have been deleted"

@@ -77,6 +77,7 @@ async fn main() -> Result<()> {
         admin_keys: vec![],
         websocket: relay_settings.websocket.clone(),
         db_path: relay_settings.db_path.clone(),
+        base_domain_parts: relay_settings.base_domain_parts,
     };
 
     if let Some(target_url) = args.relay_url {

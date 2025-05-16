@@ -62,8 +62,8 @@ impl SubscriptionManager {
     ) -> Result<mpsc::UnboundedSender<SubscriptionMessage>, Error> {
         let (subscription_sender, mut subscription_receiver) = mpsc::unbounded_channel();
 
-        // Capture the current span to propagate context to the spawned task
-        let span = tracing::Span::current();
+        // Create isolated span for subscription task
+        let task_span = tracing::info_span!(parent: None, "subscription_task");
 
         tokio::spawn(
             async move {
@@ -120,7 +120,7 @@ impl SubscriptionManager {
                 }
                 info!("Subscription manager stopped");
             }
-            .instrument(span),
+            .instrument(task_span),
         );
 
         Ok(subscription_sender)
@@ -131,8 +131,8 @@ impl SubscriptionManager {
         let subscription_sender = self.subscription_sender.clone();
         let task_token = self.task_token.clone();
 
-        // Capture the current span to propagate context to the spawned task
-        let span = tracing::Span::current();
+        // Create isolated span for database subscription task
+        let db_task_span = tracing::info_span!(parent: None, "database_subscription_task");
 
         tokio::spawn(
             async move {
@@ -160,7 +160,7 @@ impl SubscriptionManager {
                 }
                 debug!("Database subscription task stopped");
             }
-            .instrument(span),
+            .instrument(db_task_span),
         );
 
         Ok(())
@@ -205,12 +205,22 @@ impl SubscriptionManager {
     }
 
     pub async fn save_and_broadcast(&self, store_command: StoreCommand) -> Result<(), Error> {
-        self.database.save_store_command(store_command).await
+        self.database
+            .save_store_command(store_command)
+            .await
+            .map_err(|e| {
+                error!("Failed to save store command: {}", e);
+                e
+            })
     }
 
-    pub async fn fetch_events(&self, filters: Vec<Filter>) -> Result<Events, Error> {
+    pub async fn fetch_events(
+        &self,
+        filters: Vec<Filter>,
+        subdomain: Option<&str>,
+    ) -> Result<Events, Error> {
         self.database
-            .query(filters)
+            .query(filters, subdomain)
             .await
             .map_err(|e| Error::notice(format!("Failed to fetch events: {:?}", e)))
     }
@@ -225,8 +235,9 @@ impl SubscriptionManager {
         subscription_id: &SubscriptionId,
         filters: &[Filter],
         mut sender: MessageSender<RelayMessage<'static>>,
+        subdomain: Option<&str>,
     ) -> Result<usize, Error> {
-        let events = self.fetch_events(filters.to_vec()).await?;
+        let events = self.fetch_events(filters.to_vec(), subdomain).await?;
         let capacity = sender.capacity() / 2;
         let events_len = events.len();
 
@@ -264,6 +275,7 @@ impl SubscriptionManager {
         &self,
         subscription_id: SubscriptionId,
         filters: Vec<Filter>,
+        subdomain: Option<&str>,
     ) -> Result<(), Error> {
         let sender = self
             .outgoing_sender
@@ -275,7 +287,7 @@ impl SubscriptionManager {
 
         self.add_subscription(subscription_id.clone(), filters.clone())?;
         if let Err(fetch_err) = self
-            .fetch_historical_events(&subscription_id, &filters, sender)
+            .fetch_historical_events(&subscription_id, &filters, sender, subdomain)
             .await
         {
             if let Err(remove_err) = self.remove_subscription(subscription_id.clone()) {
@@ -340,17 +352,25 @@ impl Drop for SubscriptionManager {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum StoreCommand {
-    SaveUnsignedEvent(UnsignedEvent),
-    SaveSignedEvent(Box<Event>),
-    DeleteEvents(Filter),
+    SaveUnsignedEvent(UnsignedEvent, Option<String>),
+    SaveSignedEvent(Box<Event>, Option<String>),
+    DeleteEvents(Filter, Option<String>),
 }
 
 impl StoreCommand {
     pub fn is_replaceable(&self) -> bool {
         match self {
-            StoreCommand::SaveUnsignedEvent(event) => event.kind.is_replaceable(),
-            StoreCommand::SaveSignedEvent(event) => event.kind.is_replaceable(),
-            StoreCommand::DeleteEvents(_) => false,
+            StoreCommand::SaveUnsignedEvent(event, _) => event.kind.is_replaceable(),
+            StoreCommand::SaveSignedEvent(event, _) => event.kind.is_replaceable(),
+            StoreCommand::DeleteEvents(_, _) => false,
+        }
+    }
+
+    pub fn subdomain(&self) -> Option<&str> {
+        match self {
+            StoreCommand::SaveUnsignedEvent(_, subdomain) => subdomain.as_deref(),
+            StoreCommand::SaveSignedEvent(_, subdomain) => subdomain.as_deref(),
+            StoreCommand::DeleteEvents(_, subdomain) => subdomain.as_deref(),
         }
     }
 }
@@ -374,7 +394,7 @@ mod tests {
             .build_with_ctx(&Instant::now(), keys.public_key());
         let historical_event = keys.sign_event(historical_event).await.unwrap();
         database
-            .save_signed_event(historical_event.clone())
+            .save_signed_event(historical_event.clone(), None)
             .await
             .unwrap();
 
@@ -392,7 +412,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
             .await
             .unwrap();
 
@@ -446,7 +466,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
             .await
             .unwrap();
 
@@ -467,7 +487,7 @@ mod tests {
 
         // Save and broadcast the event
         connection
-            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event))
+            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event, None))
             .await
             .unwrap();
 
@@ -507,7 +527,7 @@ mod tests {
             .build_with_ctx(&Instant::now(), keys.public_key());
         let historical_event = keys.sign_event(historical_event).await.unwrap();
         database
-            .save_signed_event(historical_event.clone())
+            .save_signed_event(historical_event.clone(), None)
             .await
             .unwrap();
 
@@ -525,7 +545,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
             .await
             .unwrap();
 
@@ -564,7 +584,7 @@ mod tests {
 
         // Save and broadcast the event
         connection
-            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event))
+            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event, None))
             .await
             .unwrap();
 
@@ -609,12 +629,15 @@ mod tests {
                 .custom_created_at(base_time + i as u64) // Each event 1 second apart
                 .build(keys.public_key());
             let event = keys.sign_event(event).await.unwrap();
-            database.save_signed_event(event.clone()).await.unwrap();
+            database
+                .save_signed_event(event.clone(), None)
+                .await
+                .unwrap();
             events.push(event);
         }
 
-        // Wait for events to be saved
-        sleep(std::time::Duration::from_millis(30)).await;
+        // Wait for events to be saved - increase wait time
+        sleep(std::time::Duration::from_millis(100)).await;
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
@@ -628,35 +651,39 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
             .await
             .unwrap();
 
-        // Collect received events
+        // Collect all received messages and sort them later
+        let mut received_messages = vec![];
+        for _ in 0..4 { // Receive all 4 expected messages (3 events + 1 EOSE)
+            if let Some(message) = rx.recv().await {
+                received_messages.push(message);
+            }
+        }
+        
+        // Sort and separate messages
         let mut received_events = vec![];
-        for _ in 0..3 {
-            match rx.recv().await {
-                Some((
-                    RelayMessage::Event {
-                        event,
-                        subscription_id: sub_id,
-                    },
-                    _idx,
-                )) => {
+        let mut received_eose = None;
+        
+        for message in received_messages {
+            match message {
+                (RelayMessage::Event { event, subscription_id: sub_id }, _idx) => {
                     assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
                     received_events.push(event.clone());
-                }
-                other => panic!("Expected Event message, got: {:?}", other),
+                },
+                (RelayMessage::EndOfStoredEvents(sub_id), _idx) => {
+                    assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
+                    received_eose = Some(sub_id);
+                },
+                other => panic!("Unexpected message: {:?}", other),
             }
         }
-
-        // Verify we receive EOSE
-        match rx.recv().await {
-            Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
-                assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
-            }
-            other => panic!("Expected EOSE message, got: {:?}", other),
-        }
+        
+        // Verify we received both events and EOSE
+        assert_eq!(received_events.len(), 3, "Should receive exactly 3 events");
+        assert!(received_eose.is_some(), "Should receive EOSE message");
 
         // Verify events are in reverse chronological order and have different timestamps
         for i in 0..received_events.len() - 1 {
@@ -700,7 +727,10 @@ mod tests {
         let text_note = EventBuilder::text_note("Text note event")
             .build_with_ctx(&Instant::now(), keys.public_key());
         let text_note = keys.sign_event(text_note).await.unwrap();
-        database.save_signed_event(text_note.clone()).await.unwrap();
+        database
+            .save_signed_event(text_note.clone(), None)
+            .await
+            .unwrap();
 
         sleep(std::time::Duration::from_millis(30)).await;
 
@@ -716,7 +746,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
             .await
             .unwrap();
 
@@ -766,7 +796,7 @@ mod tests {
             EventBuilder::metadata(&metadata).build_with_ctx(&Instant::now(), keys.public_key());
         let metadata_event = keys.sign_event(metadata_event).await.unwrap();
         database
-            .save_signed_event(metadata_event.clone())
+            .save_signed_event(metadata_event.clone(), None)
             .await
             .unwrap();
 
@@ -784,7 +814,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
             .await
             .unwrap();
 
@@ -832,7 +862,7 @@ mod tests {
             .build_with_ctx(&Instant::now(), keys.public_key());
         let contacts_event = keys.sign_event(contacts_event).await.unwrap();
         database
-            .save_signed_event(contacts_event.clone())
+            .save_signed_event(contacts_event.clone(), None)
             .await
             .unwrap();
 
@@ -850,7 +880,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
             .await
             .unwrap();
 
@@ -909,8 +939,14 @@ mod tests {
         let event2 = keys2.sign_event(event2).await.unwrap();
 
         // Save events
-        database.save_signed_event(event1.clone()).await.unwrap();
-        database.save_signed_event(event2.clone()).await.unwrap();
+        database
+            .save_signed_event(event1.clone(), None)
+            .await
+            .unwrap();
+        database
+            .save_signed_event(event2.clone(), None)
+            .await
+            .unwrap();
 
         sleep(std::time::Duration::from_millis(30)).await;
 
@@ -926,7 +962,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
             .await
             .unwrap();
 
@@ -1004,17 +1040,21 @@ mod tests {
         let recommend_relay = keys.sign_event(recommend_relay).await.unwrap();
 
         // Save all events
-        database.save_signed_event(text_note.clone()).await.unwrap();
         database
-            .save_signed_event(metadata_event.clone())
+            .save_signed_event(text_note.clone(), None)
             .await
             .unwrap();
         database
-            .save_signed_event(recommend_relay.clone())
+            .save_signed_event(metadata_event.clone(), None)
+            .await
+            .unwrap();
+        database
+            .save_signed_event(recommend_relay.clone(), None)
             .await
             .unwrap();
 
-        sleep(std::time::Duration::from_millis(30)).await;
+        // Wait longer for events to be saved
+        sleep(std::time::Duration::from_millis(100)).await;
 
         // Create a connection with a channel to receive messages
         let (tx, mut rx) = mpsc::channel::<(RelayMessage, usize)>(10);
@@ -1028,33 +1068,39 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter])
+            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
             .await
             .unwrap();
 
+        // Collect all received messages
+        let mut received_messages = vec![];
+        for _ in 0..4 { // Receive all 4 expected messages (3 events + 1 EOSE)
+            if let Some(message) = rx.recv().await {
+                received_messages.push(message);
+            }
+        }
+        
+        // Sort and process messages
         let mut received_kinds = vec![];
-        for _ in 0..3 {
-            match rx.recv().await {
-                Some((
-                    RelayMessage::Event {
-                        event,
-                        subscription_id: sub_id,
-                    },
-                    _idx,
-                )) => {
+        let mut received_eose = false;
+        
+        for message in received_messages {
+            match message {
+                (RelayMessage::Event { event, subscription_id: sub_id }, _idx) => {
                     assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
                     received_kinds.push(event.kind);
-                }
-                other => panic!("Expected Event message, got: {:?}", other),
+                },
+                (RelayMessage::EndOfStoredEvents(sub_id), _idx) => {
+                    assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
+                    received_eose = true;
+                },
+                other => panic!("Unexpected message: {:?}", other),
             }
         }
-
-        match rx.recv().await {
-            Some((RelayMessage::EndOfStoredEvents(sub_id), _idx)) => {
-                assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
-            }
-            other => panic!("Expected EOSE message, got: {:?}", other),
-        }
+        
+        // Verify we received both events and EOSE
+        assert_eq!(received_kinds.len(), 3, "Should receive exactly 3 events");
+        assert!(received_eose, "Should receive EOSE message");
 
         assert!(received_kinds.contains(&Kind::TextNote));
         assert!(received_kinds.contains(&Kind::Metadata));

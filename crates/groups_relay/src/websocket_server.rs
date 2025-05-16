@@ -1,9 +1,10 @@
 use crate::{
-    config::{self, WebSocketSettings},
+    config,
     groups::Groups,
     middlewares::{
         ErrorHandlingMiddleware, EventVerifierMiddleware, LoggerMiddleware, Nip09Middleware,
-        Nip29Middleware, Nip40Middleware, Nip42Middleware, Nip70Middleware, ValidationMiddleware,
+        Nip29Middleware, Nip40ExpirationMiddleware, Nip42Middleware, Nip70Middleware,
+        ValidationMiddleware,
     },
     nostr_database::RelayDatabase,
     nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
@@ -49,7 +50,7 @@ pub fn build_websocket_handler(
     groups: Arc<Groups>,
     relay_keys: &config::Keys,
     database: Arc<RelayDatabase>,
-    ws_settings: &WebSocketSettings,
+    settings: &config::Settings,
 ) -> Result<
     WebSocketHandler<
         NostrConnectionState,
@@ -63,17 +64,18 @@ pub fn build_websocket_handler(
         default_relay_url.to_string(),
         database.clone(),
         groups.clone(),
+        settings.base_domain_parts,
     )?;
     let converter = NostrMessageConverter;
 
     let mut builder = WebSocketBuilder::new(factory, converter)
         .with_middleware(LoggerMiddleware::new())
         .with_middleware(ErrorHandlingMiddleware {})
-        .with_middleware(Nip42Middleware::new(auth_url))
+        .with_middleware(Nip42Middleware::new(auth_url, settings.base_domain_parts))
         .with_middleware(EventVerifierMiddleware::new())
         .with_middleware(ValidationMiddleware::new(relay_keys.public_key))
         .with_middleware(Nip09Middleware::new(database.clone()))
-        .with_middleware(Nip40Middleware::new(database.clone()))
+        .with_middleware(Nip40ExpirationMiddleware::new(database.clone()))
         .with_middleware(Nip70Middleware {})
         .with_middleware(Nip29Middleware::new(
             groups,
@@ -81,13 +83,13 @@ pub fn build_websocket_handler(
             database,
         ));
 
-    if let Some(max_conn_time) = ws_settings.max_connection_time {
+    if let Some(max_conn_time) = settings.websocket.max_connection_time {
         builder = builder.with_max_connection_time(max_conn_time);
     }
-    if let Some(max_conns) = ws_settings.max_connections {
+    if let Some(max_conns) = settings.websocket.max_connections {
         builder = builder.with_max_connections(max_conns);
     }
-    builder = builder.with_channel_size(ws_settings.channel_size);
+    builder = builder.with_channel_size(settings.websocket.channel_size);
 
     Ok(builder.build())
 }

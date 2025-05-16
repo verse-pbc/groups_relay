@@ -1,0 +1,329 @@
+# PRD: Scoped Database Access for NostrLMDB
+
+## 1. Introduction
+
+This document outlines the requirements for adding scoped database access to the `NostrLMDB` crate. The primary goal is to enable multi-tenant data isolation within a single LMDB database file by using key prefixing, allowing different "scopes" (e.g., subdomains) to store and retrieve data without interfering with each other.
+
+## 2. Goals
+
+- Implement true data isolation for different scopes within a single `NostrLMDB` instance.
+- Maintain backward compatibility with the existing `NostrLMDB` API by introducing new, explicitly scoped methods.
+- Ensure that operations within one scope do not affect data in another scope or the global (unscoped) space.
+
+## 3. Proposed Solution: New Scoped API Methods
+
+To maintain backward compatibility, new methods will be introduced alongside existing ones. These new methods will accept an additional `scope: &str` parameter (or `Option<&str>`).
+
+### 3.1. Key Prefixing Mechanism
+
+All database keys (for events, indices, etc.) generated or queried by the new scoped methods will be prefixed with the provided `scope` string. For example, an event ID `event123` in scope `tenantA` might be stored internally using a key like `tenantA:event123`.
+
+The prefixing strategy must be applied consistently across all relevant data and index structures:
+- Event storage (primary key by event ID).
+- All secondary indices (e.g., by author, kind, tags, created_at).
+
+### 3.2. New Scoped Methods
+
+The following new methods (and potentially others for full coverage) should be added to the `NostrEventsDatabase` trait and implemented by `NostrLMDB`:
+
+#### 3.2.1. `async fn scoped_save_event(&self, event: &Event, scope: &str) -> Result<()>`
+- Accepts an event and a non-empty scope string. The `scope` string will be converted to its byte representation (e.g., UTF-8) for prefixing.
+- When saving the event and its associated index entries, all keys written to the LMDB for this event will be prefixed with the byte representation of the `scope`.
+- An error should be returned if the scope string is empty or contains characters unsuitable for key prefixing (or if its byte representation is problematic for the chosen prefixing strategy).
+
+#### 3.2.2. `async fn scoped_query(&self, filter: Filter, scope: &str) -> Result<Events>`
+- Accepts a filter and a non-empty scope string. The `scope` string will be converted to its byte representation.
+- Modifies all filter criteria (e.g., event IDs, author pubkeys, tag values) to target only keys prefixed with the byte representation of the given `scope`.
+- Returns only events that match the filter *within the specified scope*.
+
+#### 3.2.3. `async fn scoped_delete(&self, filter: Filter, scope: &str) -> Result<()>`
+- Accepts a filter and a non-empty scope string. The `scope` string will be converted to its byte representation.
+- Similar to `scoped_query`, translates filter criteria to target only keys prefixed with the byte representation of the `scope`.
+- Deletes only events and their associated index entries that match the filter *within the specified scope*.
+
+### 3.3. Handling of `Option<String>` or `Option<&str>` for Scope in `RelayDatabase`
+When `RelayDatabase` (or similar higher-level constructs) calls these new `NostrLMDB` methods, it will need to decide how to map its `subdomain: Option<String>` to the `scope: &str` parameter:
+- `Some(subdomain_name)`: Use `subdomain_name` as the scope.
+- `None` (for root/global operations): The existing non-scoped `NostrLMDB` methods (`save_event`, `query`, `delete`) should be used. This maintains a clear separation between scoped and unscoped data at the `NostrLMDB` API level.
+
+## 4. Impact on Existing API
+
+- The existing non-scoped methods (`save_event`, `query`, `delete`) in `NostrLMDB` will remain unchanged.
+- They will continue to operate on the "global" or unprefixed keyspace within the LMDB file.
+- Data saved via `save_event` (unscoped) will not be visible to `scoped_query("some_scope", ...)` and vice-versa.
+
+## 5. Detailed Implementation Considerations for `NostrLMDB`
+
+### 5.1. Key Formatting and Separator
+
+The key prefixing mechanism will involve prepending a byte representation of the `scope` to the existing structured byte keys used by `nostr-lmdb`. The existing keys are not simple strings but carefully constructed byte sequences designed for efficient sorting and range scans in LMDB.
+
+**Scope-to-Bytes Conversion and Length:**
+- The `scope: &str` parameter will be converted to its byte representation (e.g., using UTF-8).
+- A decision needs to be made regarding the handling of the scope's byte length:
+    - **Fixed-length scope prefix:** The scope bytes could be padded to a fixed length. This simplifies key parsing but might waste space if scopes are short or limit maximum scope length.
+    - **Variable-length scope prefix:** The scope bytes could be prefixed with their own length (e.g., a `u8` or `u16` indicating the number of scope bytes that follow). This is more space-efficient for variable scope lengths.
+- For the examples below, we'll assume `scope_bytes` represents the direct byte conversion of the scope string. The chosen strategy (fixed or variable length) must be applied consistently. Using a variable-length scope prefix (e.g., `length_of_scope_bytes (1 or 2 bytes) | scope_bytes`) is generally more flexible.
+
+**Separator:**
+- A literal separator character (like `:`) within the byte key is less critical than ensuring the `scope_bytes` are unambiguously prepended. If using variable-length scope prefixes, the length prefix itself acts as a separator. If scopes can contain arbitrary bytes, a separator character could lead to ambiguity unless the scope's content is restricted or escaped.
+
+**Example Prefixed Keys (Conceptual - `scope_bytes` prepended to existing structures):**
+
+The existing `nostr-lmdb` uses several types of indexes, each with a specific key structure. The `scope_bytes` would be prepended to each of these. The original key structures (as found in `nostr-lmdb/src/store/lmdb/index.rs`) are:
+
+-   **Primary Event Storage (`events` database):**
+    -   Original Key: `event_id_bytes (32)`
+    -   Scoped Key: `scope_bytes | event_id_bytes (32)`
+
+-   **CreatedAt + ID Index (`ci_index`):**
+    -   Original Key: `reverse_created_at_bytes (8) | event_id_bytes (32)`
+    -   Scoped Key: `scope_bytes | reverse_created_at_bytes (8) | event_id_bytes (32)`
+
+-   **Author + CreatedAt + ID Index (`ac_index`):**
+    -   Original Key: `author_bytes (32) | reverse_created_at_bytes (8) | event_id_bytes (32)`
+    -   Scoped Key: `scope_bytes | author_bytes (32) | reverse_created_at_bytes (8) | event_id_bytes (32)`
+
+-   **Author + Kind + CreatedAt + ID Index (`akc_index`):**
+    -   Original Key: `author_bytes (32) | kind_bytes (2) | reverse_created_at_bytes (8) | event_id_bytes (32)`
+    -   Scoped Key: `scope_bytes | author_bytes (32) | kind_bytes (2) | reverse_created_at_bytes (8) | event_id_bytes (32)`
+
+-   **Tag + CreatedAt + ID Index (`tc_index`):**
+    -   Original Key: `tag_name_byte (1) | tag_value_bytes (padded/truncated to 182) | reverse_created_at_bytes (8) | event_id_bytes (32)`
+    -   Scoped Key: `scope_bytes | tag_name_byte (1) | tag_value_bytes (182) | reverse_created_at_bytes (8) | event_id_bytes (32)`
+
+-   **Author + Tag + CreatedAt + ID Index (`atc_index`):**
+    -   Original Key: `author_bytes (32) | tag_name_byte (1) | tag_value_bytes (182) | reverse_created_at_bytes (8) | event_id_bytes (32)`
+    -   Scoped Key: `scope_bytes | author_bytes (32) | tag_name_byte (1) | tag_value_bytes (182) | reverse_created_at_bytes (8) | event_id_bytes (32)`
+
+-   **Kind + Tag + CreatedAt + ID Index (`ktc_index`):**
+    -   Original Key: `kind_bytes (2) | tag_name_byte (1) | tag_value_bytes (182) | reverse_created_at_bytes (8) | event_id_bytes (32)`
+    -   Scoped Key: `scope_bytes | kind_bytes (2) | tag_name_byte (1) | tag_value_bytes (182) | reverse_created_at_bytes (8) | event_id_bytes (32)`
+
+-   **Deleted Event IDs (`deleted_ids` database):**
+    -   Original Key: `event_id_bytes (32)`
+    -   Scoped Key: `scope_bytes | event_id_bytes (32)`
+
+-   **Deleted Coordinates (`deleted_coordinates` database):**
+    -   Original Key: `kind_bytes (2) | author_bytes (32) | d_identifier_len_byte (1) | d_identifier_bytes (padded/truncated to 182)`
+    -   Scoped Key: `scope_bytes | kind_bytes (2) | author_bytes (32) | d_identifier_len_byte (1) | d_identifier_bytes (182)`
+
+### 5.2. Indexing Logic
+- All internal functions in `NostrLMDB` (specifically within its `Lmdb` and `index` modules) responsible for generating keys for events and indices must be adapted.
+- New internal helpers or modifications to existing ones (e.g., `make_ci_index_key`, `make_akc_index_key`, etc.) will be needed to take a `scope_bytes` argument and prepend it to the start of the constructed byte key *before* any other components.
+- Range scans for queries (e.g., by timestamp, kind) must be adjusted to scan within the prefixed range (e.g., from `scope_bytes | original_start_key_bytes` to `scope_bytes | original_end_key_bytes`).
+
+### 5.3. Filter Transformation
+- The `scoped_query` and `scoped_delete` methods will need to transform the input `Filter`'s criteria by prepending the `scope_bytes` to the relevant parts of the keys used for lookups or range scans. For example:
+    - `Filter::id(event_id)` becomes a lookup for the key `scope_bytes | event_id_bytes`.
+    - `Filter::author(pubkey)` means searching appropriate indexes (like `ac_index`, `akc_index`) for keys starting with `scope_bytes | pubkey_bytes ...`.
+    - `Filter::custom_tag(...)` needs to adapt the tag value lookup to use keys starting with `scope_bytes | tag_name_byte | tag_value_bytes ...` in the `tc_index` (or `ktc_index`, `atc_index` if other fields are present).
+This requires careful modification of the query logic to correctly construct these scoped byte prefixes for database operations.
+
+### 5.4. Performance
+- Key prefixing will slightly increase key sizes. The impact on performance is expected to be minimal but should be considered.
+- Efficient use of LMDB's sorted key lookups and range scans must be maintained with prefixed keys.
+
+## 6. Testing Requirements for `NostrLMDB`
+- **Isolation:** Rigorously test that `scoped_save_event`, `scoped_query`, and `scoped_delete` correctly isolate data between different scopes.
+- **Scoped vs. Unscoped Interaction:** Confirm that operations in one scope do not affect the unscoped (global) data, and vice-versa.
+- **Filter Accuracy:** Test all `Filter` conditions (IDs, kinds, authors, tags, since, until, limit) with `scoped_query` and `scoped_delete` to ensure correct behavior within a scope.
+- **Concurrency:** Test concurrent operations across different scopes and also mixed with unscoped operations.
+- **Edge Cases:** Consider empty scope strings (should be an error for scoped methods), scopes with potentially problematic characters, and very long scope names.
+
+These testing requirements will be addressed during the development of the scoped API within the `nostr-lmdb` crate (expected to be handled in its dedicated development branch/fork).
+
+## 7. Future Considerations
+- A migration path for existing `NostrLMDB` databases is not strictly necessary if new methods are additive, as existing data remains in the global/unscoped space.
+- Consumer projects, such as `groups_relay`, will be able to fully implement features like admin CLI commands for scoped data, comprehensive end-to-end tests verifying data isolation across different scopes, and detailed documentation for scoped operations *after* this scoped API in `nostr-lmdb` is completed and integrated. The `groups_relay` project has tasks (e.g., for Admin CLI, E2E tests, documentation) that are pending this `nostr-lmdb` update.
+
+## 8. Specific Implementation Details
+
+Based on analysis of the codebase, the following files and structures will require modifications:
+
+### 8.1. Files Requiring Changes in `nostr-database`
+
+1. **`nostr-database/src/events/mod.rs`**
+   - Define a new `NostrScopedEventsDatabase` trait alongside the existing `NostrEventsDatabase` trait
+   - This trait will mirror `NostrEventsDatabase` but with an added `scope: &str` parameter for methods like:
+     - `scoped_save_event()`
+     - `scoped_query()`
+     - `scoped_delete()`
+     - `scoped_event_by_id()`
+     - `scoped_count()`
+
+2. **`nostr-database/src/lib.rs`**
+   - Export the new trait so it's available to consumers
+   - No changes to `NostrDatabase` trait are necessary (scoped functionality is optional)
+
+### 8.2. Files Requiring Changes in `nostr-lmdb`
+
+1. **`nostr-lmdb/src/store/lmdb/index.rs`**
+   - **Critical file**: Contains all key generation functions that must be modified
+   - Modify all `make_*_index_key` functions to accept `scope_bytes: Option<&[u8]>`:
+     - `make_ci_index_key()` - CreatedAt + ID index
+     - `make_tc_index_key()` - Tag + CreatedAt + ID index
+     - `make_ac_index_key()` - Author + CreatedAt + ID index
+     - `make_akc_index_key()` - Author + Kind + CreatedAt + ID index
+     - `make_atc_index_key()` - Author + Tag + CreatedAt + ID index
+     - `make_ktc_index_key()` - Kind + Tag + CreatedAt + ID index
+     - `make_coordinate_index_key()` - Coordinate index for replaceable events
+   - When `scope_bytes` is `Some`, prepend it to the generated key
+
+2. **`nostr-lmdb/src/store/lmdb/mod.rs`**
+   - **Core implementation file** for the `Lmdb` struct
+   - Add new scoped methods:
+     - `scoped_store()` - calls index functions with `Some(scope_bytes)`
+     - `scoped_remove()` - calls index functions with `Some(scope_bytes)`
+     - `scoped_query()` - most complex, requires modifying all iterator methods
+   - Modify iterator methods to accept `scope_bytes: Option<&[u8]>`:
+     - `ci_iter()` - use scoped keys for range bounds
+     - `tc_iter()` - use scoped keys for range bounds
+     - `ac_iter()` - use scoped keys for range bounds
+     - `akc_iter()` - use scoped keys for range bounds
+     - `atc_iter()` - use scoped keys for range bounds
+     - `ktc_iter()` - use scoped keys for range bounds
+   - Add lookup methods for scoped events:
+     - `scoped_get_event_by_id()`
+     - `scoped_has_event()`
+     - `scoped_is_deleted()`
+
+3. **`nostr-lmdb/src/store/mod.rs`**
+   - Implements the `Store` struct that coordinates with the ingester
+   - Add new public methods:
+     - `scoped_save_event()` - sends events to ingester with scope information
+     - `scoped_query()` - calls `Lmdb::scoped_query()`
+     - `scoped_delete()` - calls `Lmdb::scoped_delete()`
+     - `scoped_event_by_id()` - calls `Lmdb::scoped_get_event_by_id()`
+     - `scoped_count()` - calls `Lmdb::scoped_query()` and counts results
+
+4. **`nostr-lmdb/src/lib.rs`**
+   - Implements `NostrEventsDatabase` for `NostrLMDB`
+   - Add implementation of the new `NostrScopedEventsDatabase` trait
+   - Delegate all scoped methods to `self.db` (the `Store` instance)
+
+5. **`nostr-lmdb/src/store/ingester.rs`**
+   - May need modification to handle scoped events in the ingester queue
+   - Add scope information to `IngesterItem` if necessary
+
+### 8.3. New Trait Definition
+
+The new `NostrScopedEventsDatabase` trait in `nostr-database/src/events/mod.rs`:
+
+```rust
+/// Nostr Scoped Events Database
+///
+/// Store for nostr events, with operations confined to a specific scope.
+pub trait NostrScopedEventsDatabase: fmt::Debug + Send + Sync {
+    /// Save [`Event`] into a specific scope in the store
+    ///
+    /// **This method assumes that [`Event`] was already verified**
+    fn scoped_save_event<'a>(
+        &'a self,
+        event: &'a Event,
+        scope: &'a str,
+    ) -> BoxedFuture<'a, Result<SaveEventStatus, DatabaseError>>;
+
+    /// Get [`Event`] by [`EventId`] from a specific scope
+    fn scoped_event_by_id<'a>(
+        &'a self,
+        event_id: &'a EventId,
+        scope: &'a str,
+    ) -> BoxedFuture<'a, Result<Option<Event>, DatabaseError>>;
+
+    /// Count events within a specific scope
+    fn scoped_count<'a>(
+        &'a self,
+        filter: Filter,
+        scope: &'a str,
+    ) -> BoxedFuture<'a, Result<usize, DatabaseError>>;
+
+    /// Query stored events within a specific scope
+    fn scoped_query<'a>(
+        &'a self,
+        filter: Filter,
+        scope: &'a str,
+    ) -> BoxedFuture<'a, Result<Events, DatabaseError>>;
+
+    /// Delete all events that match the Filter within a specific scope
+    fn scoped_delete<'a>(
+        &'a self,
+        filter: Filter,
+        scope: &'a str,
+    ) -> BoxedFuture<'a, Result<(), DatabaseError>>;
+}
+```
+
+### 8.4. Key Implementation Patterns
+
+1. **Scope Bytes Conversion**:
+   ```rust
+   let scope_bytes: &[u8] = scope.as_bytes();
+   ```
+
+2. **Key Prefixing Pattern**:
+   ```rust
+   pub fn make_ci_index_key(
+       created_at: &Timestamp,
+       event_id: &[u8; EventId::LEN],
+       scope_bytes: Option<&[u8]>
+   ) -> Vec<u8> {
+       let base_size = CREATED_AT_BE + EventId::LEN;
+       let mut key: Vec<u8> = match scope_bytes {
+           Some(scope) => {
+               let mut k = Vec::with_capacity(scope.len() + base_size);
+               k.extend(scope);
+               k
+           }
+           None => Vec::with_capacity(base_size),
+       };
+       key.extend(reverse_and_conv_to_be64(created_at));
+       key.extend(event_id);
+       key
+   }
+   ```
+
+3. **Iterator Range Construction**:
+   ```rust
+   pub(crate) fn ci_iter<'a>(
+       &'a self,
+       txn: &'a RoTxn,
+       since: &Timestamp,
+       until: &Timestamp,
+       scope_bytes: Option<&[u8]>
+   ) -> Result<RoRange<'a, Bytes, Bytes>, Error> {
+       let start_prefix = index::make_ci_index_key(until, &EVENT_ID_ALL_ZEROS, scope_bytes);
+       let end_prefix = index::make_ci_index_key(since, &EVENT_ID_ALL_255, scope_bytes);
+       let range = (
+           Bound::Included(start_prefix.as_slice()),
+           Bound::Excluded(end_prefix.as_slice()),
+       );
+       Ok(self.ci_index.range(txn, &range)?)
+   }
+   ```
+
+4. **Implementation in NostrLMDB**:
+   ```rust
+   impl NostrScopedEventsDatabase for NostrLMDB {
+       fn scoped_save_event<'a>(
+           &'a self,
+           event: &'a Event,
+           scope: &'a str,
+       ) -> BoxedFuture<'a, Result<SaveEventStatus, DatabaseError>> {
+           Box::pin(async move {
+               self.db
+                   .scoped_save_event(event, scope)
+                   .await
+                   .map_err(DatabaseError::backend)
+           })
+       }
+       // ... other methods follow similar pattern
+   }
+   ```
+
+## 9. Development Context
+
+The `nostr-lmdb` and `nostr-database` crates, which are the target for these changes, are part of the `rust-nostr` workspace located within the current project.
+- Local path to the `rust-nostr` workspace: `/Users/daniel/code/nos/groups/clean_slate/groups_relay/nostr`
+- Path to the `nostr-database` crate: `/Users/daniel/code/nos/groups/clean_slate/groups_relay/nostr/crates/nostr-database`
+- Path to the `nostr-lmdb` crate: `/Users/daniel/code/nos/groups/clean_slate/groups_relay/nostr/crates/nostr-lmdb`

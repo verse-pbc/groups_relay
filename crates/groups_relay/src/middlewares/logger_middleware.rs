@@ -4,7 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use std::time::Instant;
-use tracing::{debug, info};
+use tracing::{debug, info, info_span};
 use websocket_builder::{
     ConnectionContext, DisconnectContext, InboundContext, Middleware, OutboundContext,
 };
@@ -34,6 +34,18 @@ impl Middleware for LoggerMiddleware {
         &self,
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
+        // Extract subdomain from connection state
+        let subdomain = ctx.state.subdomain.as_deref();
+
+        // Create a span with connection ID and subdomain to ensure logs always have context
+        let connection_span = info_span!(
+            parent: None,
+            "websocket_connection",
+            ip = %ctx.connection_id,
+            subdomain = ?subdomain
+        );
+        let _guard = connection_span.enter();
+
         match ctx.message.as_ref() {
             Some(ClientMessage::Event(event)) => {
                 let event_kind_u16 = event.as_ref().kind.as_u16();
@@ -44,7 +56,6 @@ impl Middleware for LoggerMiddleware {
 
                 ctx.state.event_start_time = Some(start_time);
                 ctx.state.event_kind = Some(event_kind_u16);
-                ctx.next().await
             }
             Some(ClientMessage::Req {
                 subscription_id,
@@ -53,7 +64,6 @@ impl Middleware for LoggerMiddleware {
                 let sub_id_clone = subscription_id.clone();
                 let filter_json_clone = filter.as_json();
                 info!("> REQ {}: {}", sub_id_clone, filter_json_clone);
-                ctx.next().await
             }
             Some(ClientMessage::ReqMultiFilter {
                 subscription_id,
@@ -63,30 +73,41 @@ impl Middleware for LoggerMiddleware {
                 let filters_json_clone =
                     filters.iter().map(|f| f.as_json()).collect::<Vec<String>>();
                 info!("> REQ {}: {:?}", sub_id_clone, filters_json_clone);
-                ctx.next().await
             }
             Some(ClientMessage::Close(subscription_id)) => {
                 let sub_id_clone = subscription_id.clone();
                 info!("> CLOSE {}", sub_id_clone);
-                ctx.next().await
             }
             Some(ClientMessage::Auth(event)) => {
                 let event_json_clone = event.as_ref().as_json();
                 info!("> AUTH {}", event_json_clone);
-                ctx.next().await
             }
             _ => {
                 let message_clone_for_debug = format!("{:?}", ctx.message);
                 debug!("> {}", message_clone_for_debug);
-                ctx.next().await
             }
         }
+
+        // Continue with the middleware chain
+        ctx.next().await
     }
 
     async fn process_outbound(
         &self,
         ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
+        // Extract subdomain from connection state
+        let subdomain = ctx.state.subdomain.as_deref();
+
+        // Create a span with connection ID and subdomain to ensure logs always have context
+        let connection_span = info_span!(
+            parent: None,
+            "websocket_connection",
+            ip = %ctx.connection_id,
+            subdomain = ?subdomain
+        );
+        let _guard = connection_span.enter();
+
         if let Some(msg_ref) = ctx.message.as_ref() {
             match msg_ref {
                 RelayMessage::Ok {
@@ -94,7 +115,7 @@ impl Middleware for LoggerMiddleware {
                     status,
                     message,
                 } => {
-                    let event_id_clone = event_id.clone();
+                    let event_id_clone = *event_id;
                     let status_clone = *status;
                     let message_clone = message.clone();
 
@@ -137,6 +158,8 @@ impl Middleware for LoggerMiddleware {
                 }
             }
         }
+
+        // Continue with the middleware chain
         ctx.next().await
     }
 
@@ -144,8 +167,22 @@ impl Middleware for LoggerMiddleware {
         &'a self,
         ctx: &mut DisconnectContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
+        // Extract subdomain from connection state
+        let subdomain = ctx.state.subdomain.as_deref();
+
+        // Create a span with connection ID and subdomain to ensure logs always have context
+        let connection_span = info_span!(
+            parent: None,
+            "websocket_connection",
+            ip = %ctx.connection_id,
+            subdomain = ?subdomain
+        );
+        let _guard = connection_span.enter();
+
         info!("Disconnected from relay");
         metrics::active_connections().decrement(1.0);
+
+        // Continue with the middleware chain
         ctx.next().await
     }
 
@@ -153,8 +190,22 @@ impl Middleware for LoggerMiddleware {
         &self,
         ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
+        // Extract subdomain from connection state
+        let subdomain = ctx.state.subdomain.as_deref();
+
+        // Create a span with connection ID and subdomain to ensure logs always have context
+        let connection_span = info_span!(
+            parent: None,
+            "websocket_connection",
+            ip = %ctx.connection_id,
+            subdomain = ?subdomain
+        );
+        let _guard = connection_span.enter();
+
         info!("Connected to relay");
         metrics::active_connections().increment(1.0);
+
+        // Continue with the middleware chain
         ctx.next().await
     }
 }

@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo test)",
+      "WebFetchTool(domain:github.com)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(cargo test:*)",
+      "Bash(ls:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(cargo:*)",
+      "WebFetch(domain:crates.io)",
+      "Bash(rm:*)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(RUST_BACKTRACE=1 cargo test -p groups_relay --lib middlewares::nip_42_auth::tests::test_subdomain_auth_matching_subdomain)",
+      "Bash(RUST_LOG=groups_relay::middlewares::nip_42_auth=debug cargo test -p groups_relay --lib middlewares::nip_42_auth::tests::test_subdomain_auth_matching_subdomain)",
+      "Bash(RUST_LOG=groups_relay::middlewares::nip_42_auth=debug cargo test -p groups_relay --lib middlewares::nip_42_auth::tests::test_subdomain_auth_matching_subdomain -- --nocapture)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git reset:*)",
+      "Bash(sed:*)",
+      "Bash(__NEW_LINE__ grep -A 5 \"downcast_ref\" \"/Users/daniel/code/nos/groups/clean_slate/groups_relay/crates/groups_relay/src/middlewares/error_handling_middleware.rs\")"
+    ],
+    "deny": []
+  }
+}

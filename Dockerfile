@@ -1,4 +1,4 @@
-ARG RUST_VERSION=1.84.0
+ARG RUST_VERSION=1.86.0
 
 FROM rust:${RUST_VERSION}-slim-bookworm AS rust-builder
 

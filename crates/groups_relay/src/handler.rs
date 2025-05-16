@@ -1,5 +1,6 @@
 use crate::groups::Invite;
 use crate::server::ServerState;
+use crate::subdomain::extract_subdomain;
 use axum::{
     body::Body,
     extract::{ConnectInfo, State, WebSocketUpgrade},
@@ -15,6 +16,10 @@ use std::sync::Arc;
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
 use tracing::{debug, error, info};
+
+tokio::task_local! {
+    pub static CURRENT_REQUEST_HOST: Option<String>;
+}
 
 #[derive(Serialize)]
 pub struct GroupResponse {
@@ -79,23 +84,48 @@ fn get_real_ip(headers: &axum::http::HeaderMap, socket_addr: SocketAddr) -> Stri
     format!("{}:{}", ip, socket_addr.port())
 }
 
-#[tracing::instrument(name = "", fields(ip = %real_ip), skip_all)]
 async fn handle_websocket_connection(
     socket: axum::extract::ws::WebSocket,
     state: Arc<ServerState>,
     real_ip: String,
+    host_string: Option<String>,
 ) {
+    // Use a separate function for connection handling with isolated span context
+    run_websocket_connection(socket, state, real_ip, host_string).await;
+}
+
+async fn run_websocket_connection(
+    socket: axum::extract::ws::WebSocket,
+    state: Arc<ServerState>,
+    real_ip: String,
+    host_string: Option<String>,
+) {
+    // Extract subdomain from host string to use in logs
+    let subdomain = host_string
+        .as_ref()
+        .and_then(|host| extract_subdomain(host, state.base_domain_parts));
+        
+    // Create isolated span for this connection
+    let span = tracing::info_span!(parent: None, "websocket_connection", ip = %real_ip, subdomain = ?subdomain);
+    let _guard = span.enter();
+    
     // Create the connection counter guard - it will be automatically dropped when the connection ends
     let _counter = ConnectionCounter::new(state.connection_counter.clone());
 
-    let result = state
-        .ws_handler
-        .start(socket, real_ip.clone(), state.cancellation_token.clone())
+    // Process the connection within the span's lifetime
+    CURRENT_REQUEST_HOST
+        .scope(host_string, async {
+            let result = state
+                .ws_handler
+                .start(socket, real_ip.clone(), state.cancellation_token.clone())
+                .await;
+            // Log connection status
+            match result {
+                Ok(_) => debug!("WebSocket connection closed"),
+                Err(e) => error!("WebSocket error: {:?}", e),
+            }
+        })
         .await;
-    match result {
-        Ok(_) => debug!("WebSocket connection closed for {}", real_ip),
-        Err(e) => error!("WebSocket error for {}: {:?}", real_ip, e),
-    }
 }
 
 pub async fn handle_root(
@@ -108,10 +138,41 @@ pub async fn handle_root(
     // 1. WebSocket upgrade: if the upgrade header is present, upgrade the connection.
     if let Some(ws) = ws {
         let real_ip = get_real_ip(&headers, addr);
-        info!("WebSocket upgrade requested from {} at root path", real_ip);
+        let host_string = headers
+            .get(axum::http::header::HOST)
+            .and_then(|hv| hv.to_str().ok().map(String::from));
+            
+        // Extract subdomain for logging
+        let subdomain = host_string
+            .as_ref()
+            .and_then(|host| extract_subdomain(host, state.base_domain_parts));
+            
+        // Create a display string with subdomain information
+        let display_info = if let Some(sub) = &subdomain {
+            if !sub.is_empty() {
+                format!(" @{}", sub)
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+        
+        // Log upgrade request in isolated span
+        let upgrade_span = tracing::info_span!(parent: None, "http_upgrade");
+        let _guard = upgrade_span.enter();
+        info!(
+            "WebSocket upgrade requested from {}{} at root path",
+            real_ip, display_info
+        );
+        drop(_guard);
 
-        return ws
-            .on_upgrade(move |socket| handle_websocket_connection(socket, state.clone(), real_ip));
+        // Use detached task for connection handling to prevent span inheritance
+        return ws.on_upgrade(move |socket| async move {
+            tokio::task::spawn(async move {
+                handle_websocket_connection(socket, state, real_ip, host_string).await;
+            });
+        });
     }
 
     // 2. Nostr JSON: if the Accept header is "application/nostr+json", serve Nostr JSON.

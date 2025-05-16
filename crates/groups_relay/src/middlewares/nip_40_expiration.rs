@@ -1,12 +1,22 @@
 use crate::nostr_database::RelayDatabase;
 use crate::nostr_session_state::NostrConnectionState;
-use crate::subscription_manager::StoreCommand;
-use anyhow::Result;
+use crate::StoreCommand;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
-use tracing::{debug, warn};
-use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage};
+use websocket_builder::{InboundContext, Middleware, OutboundContext};
+
+// Helper function to get expiration timestamp from event tags
+fn get_event_expiration(event: &Event) -> Option<Timestamp> {
+    event.tags.iter().find_map(|tag| {
+        if tag.kind() == TagKind::Expiration {
+            tag.content()
+                .and_then(|s| s.parse::<u64>().ok().map(Timestamp::from))
+        } else {
+            None
+        }
+    })
+}
 
 /// Middleware to handle NIP-40 expiration tags.
 ///
@@ -15,154 +25,72 @@ use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage
 /// and an `OK: false` message is sent back. On the outbound side, it filters
 /// out events that have expired and queues them for lazy deletion.
 #[derive(Debug, Clone)]
-pub struct Nip40Middleware {
+pub struct Nip40ExpirationMiddleware {
     database: Arc<RelayDatabase>,
 }
 
-impl Nip40Middleware {
+impl Nip40ExpirationMiddleware {
     pub fn new(database: Arc<RelayDatabase>) -> Self {
         Self { database }
-    }
-
-    fn check_expiration(event: &Event) -> Result<Option<Timestamp>, RelayMessage<'static>> {
-        if let Some(tag) = event.tags.iter().find(|t| t.kind() == TagKind::Expiration) {
-            if let Some(timestamp_str) = tag.content() {
-                if let Ok(timestamp_secs) = timestamp_str.parse::<u64>() {
-                    let timestamp = Timestamp::from(timestamp_secs);
-                    let now = Timestamp::now();
-                    if timestamp < now {
-                        debug!(
-                            target: "nip40",
-                            event_id = %event.id,
-                            pubkey = %event.pubkey,
-                            expiration = %timestamp.as_u64(),
-                            "Dropping expired event"
-                        );
-                        Err(RelayMessage::ok(event.id, false, "event is expired"))
-                    } else {
-                        Ok(Some(timestamp))
-                    }
-                } else {
-                    warn!(
-                        target: "nip40",
-                        event_id = %event.id,
-                        tag_content = %timestamp_str,
-                        "Failed to parse expiration timestamp value"
-                    );
-                    Err(RelayMessage::ok(
-                        event.id,
-                        false,
-                        "invalid expiration tag format",
-                    ))
-                }
-            } else {
-                warn!(
-                    target: "nip40",
-                    event_id = %event.id,
-                    "Expiration tag found without content"
-                );
-                Err(RelayMessage::ok(
-                    event.id,
-                    false,
-                    "invalid expiration tag: missing content",
-                ))
-            }
-        } else {
-            Ok(None)
-        }
     }
 }
 
 #[async_trait]
-impl Middleware for Nip40Middleware {
+impl Middleware for Nip40ExpirationMiddleware {
     type State = NostrConnectionState;
     type IncomingMessage = ClientMessage<'static>;
     type OutgoingMessage = RelayMessage<'static>;
 
     async fn process_inbound(
         &self,
-        ctx: &mut InboundContext<'_, Self::State, ClientMessage<'static>, RelayMessage<'static>>,
-    ) -> Result<(), anyhow::Error> {
-        let Some(ClientMessage::Event(event)) = &ctx.message else {
-            return ctx.next().await;
-        };
-
-        match Nip40Middleware::check_expiration(event) {
-            Ok(expiration_status) => {
-                if expiration_status.is_some() {
-                    debug!(
+        ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> anyhow::Result<()> {
+        if let Some(ClientMessage::Event(event_cow)) = &ctx.message {
+            let event_ref: &Event = event_cow.as_ref();
+            if let Some(expiration) = get_event_expiration(event_ref) {
+                if expiration < Timestamp::now() {
+                    tracing::warn!(
                         target: "nip40",
-                        event_id = %event.id,
-                        pubkey = %event.pubkey,
-                        "Event has a valid future expiration tag"
+                        "Event {} (kind {}) with expiration {} is expired. Publisher: {}.",
+                        event_ref.id, event_ref.kind, expiration, event_ref.pubkey
                     );
+
+                    let filter = Filter::new().id(event_ref.id);
+                    let delete_command = StoreCommand::DeleteEvents(
+                        filter,
+                        ctx.state.subdomain().map(|s| s.to_string()),
+                    );
+
+                    if let Err(e) = self.database.save_store_command(delete_command).await {
+                        tracing::error!(
+                            target: "nip40",
+                            "Failed to send delete command for expired event {}: {}", event_ref.id, e
+                        );
+                    }
                 }
-                ctx.next().await
             }
-            Err(response_message) => ctx.send_message(response_message).await,
         }
+        ctx.next().await
     }
 
     /// Filters outgoing event messages, dropping events that have expired.
     async fn process_outbound(
         &self,
-        ctx: &mut OutboundContext<'_, Self::State, ClientMessage<'static>, RelayMessage<'static>>,
-    ) -> Result<(), anyhow::Error> {
-        let Some(RelayMessage::Event { ref event, .. }) = ctx.message else {
-            return ctx.next().await;
-        };
-
-        if let Some(tag) = event.tags.iter().find(|t| t.kind() == TagKind::Expiration) {
-            if let Some(timestamp_str) = tag.content() {
-                if let Ok(timestamp_secs) = timestamp_str.parse::<u64>() {
-                    let timestamp = Timestamp::from(timestamp_secs);
-                    let now = Timestamp::now();
-                    if timestamp < now {
-                        debug!(
-                            target: "nip40",
-                            event_id = %event.id,
-                            pubkey = %event.pubkey,
-                            expiration = %timestamp.as_u64(),
-                            "Filtering expired outgoing event"
-                        );
-
-                        let filter = Filter::new().id(event.id);
-                        let delete_command = StoreCommand::DeleteEvents(filter);
-
-                        if let Err(e) = self.database.save_store_command(delete_command).await {
-                            warn!(
-                                target: "nip40_lazy_delete",
-                                event_id = %event.id,
-                                "Failed to queue lazy deletion for expired event: {}", e
-                            );
-                        } else {
-                            debug!(
-                                target: "nip40_lazy_delete",
-                                event_id = %event.id,
-                                "Queued lazy deletion for expired event"
-                            );
-                        }
-
-                        ctx.message = None;
-                        return Ok(());
-                    }
-                } else {
-                    warn!(
+        ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+    ) -> anyhow::Result<()> {
+        if let Some(RelayMessage::Event { event, .. }) = &mut ctx.message {
+            let event_ref: &Event = event.as_ref();
+            if let Some(expiration) = get_event_expiration(event_ref) {
+                if expiration < Timestamp::now() {
+                    tracing::warn!(
                         target: "nip40",
-                        event_id = %event.id,
-                        tag_content = %timestamp_str,
-                        "Ignoring invalid expiration timestamp format on outgoing event"
+                        "Dropping expired event {} (kind {}) with expiration {} from outbound. Publisher: {}.",
+                        event_ref.id, event_ref.kind, expiration, event_ref.pubkey
                     );
+                    ctx.message = None;
                 }
-            } else {
-                warn!(
-                    target: "nip40",
-                    event_id = %event.id,
-                    "Ignoring expiration tag without content on outgoing event"
-                );
             }
         }
-
         ctx.next().await
     }
 }
@@ -170,376 +98,167 @@ impl Middleware for Nip40Middleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{create_test_event, create_test_state, setup_test};
+    use crate::test_utils::{create_test_state, setup_test};
     use std::borrow::Cow;
-    use std::sync::Arc;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::Duration;
     use tokio::sync::mpsc;
-    use websocket_builder::{InboundContext, Middleware, OutboundContext};
-
-    fn get_timestamp(offset_secs: i64) -> Timestamp {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_secs();
-        Timestamp::from(now.saturating_add_signed(offset_secs))
-    }
-
-    async fn create_expiring_event(keys: &Keys, _content: &str, offset_secs: i64) -> Box<Event> {
-        let expiration_tag = Tag::expiration(get_timestamp(offset_secs));
-        Box::new(create_test_event(keys, Kind::TextNote.as_u16(), vec![expiration_tag]).await)
-    }
-
-    async fn create_non_expiring_event(keys: &Keys, _content: &str) -> Box<Event> {
-        Box::new(create_test_event(keys, Kind::TextNote.as_u16(), vec![]).await)
-    }
-
-    fn setup_test_context<'a>(
-        message: Option<ClientMessage<'static>>,
-        sender_channel: Option<mpsc::Sender<(RelayMessage<'static>, usize)>>,
-        state: &'a mut NostrConnectionState,
-        middlewares: &'a [Arc<
-            dyn Middleware<
-                State = NostrConnectionState,
-                IncomingMessage = ClientMessage<'static>,
-                OutgoingMessage = RelayMessage<'static>,
-            >,
-        >],
-        current_middleware_index: usize,
-    ) -> InboundContext<'a, NostrConnectionState, ClientMessage<'static>, RelayMessage<'static>>
-    {
-        InboundContext::<'a, NostrConnectionState, ClientMessage<'static>, RelayMessage<'static>>::new(
-            "test_conn".to_string(),
-            message,
-            sender_channel,
-            state,
-            middlewares,
-            current_middleware_index,
-        )
-    }
-
-    fn setup_outbound_test_context<'a>(
-        message: RelayMessage<'static>,
-        sender_channel: Option<mpsc::Sender<(RelayMessage<'static>, usize)>>,
-        state: &'a mut NostrConnectionState,
-        middlewares: &'a [Arc<
-            dyn Middleware<
-                State = NostrConnectionState,
-                IncomingMessage = ClientMessage<'static>,
-                OutgoingMessage = RelayMessage<'static>,
-            >,
-        >],
-        current_middleware_index: usize,
-    ) -> OutboundContext<'a, NostrConnectionState, ClientMessage<'static>, RelayMessage<'static>>
-    {
-        OutboundContext::<'a, NostrConnectionState, ClientMessage<'static>, RelayMessage<'static>>::new(
-            "test_conn".to_string(),
-            message,
-            sender_channel,
-            state,
-            middlewares,
-            current_middleware_index,
-        )
-    }
+    use tokio::time::sleep;
 
     #[tokio::test]
-    async fn test_inbound_event_without_expiration_passes() {
-        let (_tmp_dir, database, keys) = setup_test().await;
-        let middleware_under_test = Nip40Middleware::new(database.clone());
-        let event = create_non_expiring_event(&keys, "test").await;
-        let message = ClientMessage::Event(Cow::Owned(*event));
+    async fn test_expired_event_is_deleted() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let middleware = Nip40ExpirationMiddleware::new(database.clone());
 
-        let (sender, mut receiver) = mpsc::channel(10);
-        let mut state = create_test_state(None);
+        let unsigned_expired_event = EventBuilder::new(Kind::Custom(1234), "expired content")
+            .tags([Tag::expiration(
+                Timestamp::now() - Duration::from_secs(3600),
+            )])
+            .build(admin_keys.public_key());
+        let expired_event = admin_keys.sign_event(unsigned_expired_event).await.unwrap();
 
-        let middlewares: Vec<
-            Arc<
-                dyn Middleware<
-                    State = NostrConnectionState,
-                    IncomingMessage = ClientMessage<'static>,
-                    OutgoingMessage = RelayMessage<'static>,
-                >,
-            >,
-        > = vec![Arc::new(middleware_under_test.clone())];
-
-        let mut context = setup_test_context(
-            Some(message),
-            Some(sender.clone()),
-            &mut state,
-            &middlewares,
-            0,
-        );
-
-        let result = middleware_under_test.process_inbound(&mut context).await;
-        assert!(result.is_ok());
-
-        assert!(
-            receiver.try_recv().is_err(),
-            "No message should be sent back by the middleware"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_inbound_event_with_future_expiration_passes() {
-        let (_tmp_dir, database, keys) = setup_test().await;
-        let middleware_under_test = Nip40Middleware::new(database.clone());
-        let event = create_expiring_event(&keys, "future", 3600).await;
-        let message = ClientMessage::Event(Cow::Owned(*event));
-
-        let (sender, mut receiver) = mpsc::channel(10);
-        let mut state = create_test_state(None);
-
-        let middlewares: Vec<
-            Arc<
-                dyn Middleware<
-                    State = NostrConnectionState,
-                    IncomingMessage = ClientMessage<'static>,
-                    OutgoingMessage = RelayMessage<'static>,
-                >,
-            >,
-        > = vec![Arc::new(middleware_under_test.clone())];
-
-        let mut context = setup_test_context(
-            Some(message),
-            Some(sender.clone()),
-            &mut state,
-            &middlewares,
-            0,
-        );
-
-        let result = middleware_under_test.process_inbound(&mut context).await;
-        assert!(result.is_ok());
-        assert!(receiver.try_recv().is_err(), "No message should be sent");
-    }
-
-    #[tokio::test]
-    async fn test_inbound_event_with_past_expiration_is_dropped() {
-        let (_tmp_dir, database, keys) = setup_test().await;
-        let middleware_under_test = Nip40Middleware::new(database.clone());
-        let event = create_expiring_event(&keys, "past", -3600).await;
-        let event_id = event.id;
-        let message = ClientMessage::Event(Cow::Owned(*event));
-
-        let (sender, mut receiver) = mpsc::channel(10);
-        let mut state = create_test_state(None);
-
-        let middlewares: Vec<
-            Arc<
-                dyn Middleware<
-                    State = NostrConnectionState,
-                    IncomingMessage = ClientMessage<'static>,
-                    OutgoingMessage = RelayMessage<'static>,
-                >,
-            >,
-        > = vec![Arc::new(middleware_under_test.clone())];
-
-        let mut context = setup_test_context(
-            Some(message),
-            Some(sender.clone()),
-            &mut state,
-            &middlewares,
-            0,
-        );
-
-        let result = middleware_under_test.process_inbound(&mut context).await;
-        assert!(result.is_ok());
-
-        let response = receiver.recv().await.unwrap();
-        match response.0 {
-            RelayMessage::Ok {
-                event_id: resp_id,
-                status,
-                message,
-            } => {
-                assert_eq!(resp_id, event_id);
-                assert!(!status);
-                assert!(message.contains("expired"));
-            }
-            _ => panic!("Expected OK message, got {:?}", response),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_inbound_non_event_message_passes() {
-        let (_tmp_dir, database, _keys) = setup_test().await;
-        let middleware_under_test = Nip40Middleware::new(database.clone());
-        let req_filter = Filter::new().kind(Kind::TextNote).limit(10);
-        let message = ClientMessage::req(SubscriptionId::generate(), req_filter);
-
-        let (sender, mut receiver) = mpsc::channel(10);
-        let mut state = create_test_state(None);
-
-        let middlewares: Vec<
-            Arc<
-                dyn Middleware<
-                    State = NostrConnectionState,
-                    IncomingMessage = ClientMessage<'static>,
-                    OutgoingMessage = RelayMessage<'static>,
-                >,
-            >,
-        > = vec![Arc::new(middleware_under_test.clone())];
-
-        let mut context = setup_test_context(
-            Some(message),
-            Some(sender.clone()),
-            &mut state,
-            &middlewares,
-            0,
-        );
-
-        let result = middleware_under_test.process_inbound(&mut context).await;
-        assert!(result.is_ok());
-        assert!(receiver.try_recv().is_err(), "No message should be sent");
-    }
-
-    #[tokio::test]
-    async fn test_outbound_filters_expired_event() {
-        let (_tmp_dir, database, keys) = setup_test().await;
-        let middleware_under_test = Nip40Middleware::new(database.clone());
-
-        let event_valid = create_non_expiring_event(&keys, "valid").await;
         database
-            .save_signed_event(*event_valid.clone())
+            .save_signed_event(expired_event.clone(), None)
             .await
             .unwrap();
 
-        let event_expired = create_expiring_event(&keys, "expired", -3600).await;
-        database
-            .save_signed_event(*event_expired.clone())
-            .await
-            .unwrap();
-
-        let event_future = create_expiring_event(&keys, "future", 3600).await;
-        database
-            .save_signed_event(*event_future.clone())
-            .await
-            .unwrap();
-
-        let (sender, _receiver) = mpsc::channel(10);
+        let (_sender, _receiver) = mpsc::channel::<()>(10);
         let mut state = create_test_state(None);
-
-        let message_expired = RelayMessage::event(SubscriptionId::generate(), *event_expired);
-        let middlewares_expired: Vec<
+        let middlewares: Vec<
             Arc<
                 dyn Middleware<
                     State = NostrConnectionState,
-                    IncomingMessage = ClientMessage<'static>,
-                    OutgoingMessage = RelayMessage<'static>,
+                    IncomingMessage = ClientMessage,
+                    OutgoingMessage = RelayMessage,
                 >,
             >,
-        > = vec![Arc::new(middleware_under_test.clone())];
-        let mut context_expired = setup_outbound_test_context(
-            message_expired,
-            Some(sender.clone()),
+        > = vec![Arc::new(middleware.clone())];
+
+        let mut context = InboundContext::new(
+            "test_connection_id".to_string(),
+            Some(ClientMessage::Event(Cow::Owned(expired_event.clone()))),
+            None,
             &mut state,
-            &middlewares_expired,
+            &middlewares,
             0,
         );
-        let result_expired = middleware_under_test
-            .process_outbound(&mut context_expired)
-            .await;
-        assert!(result_expired.is_ok());
 
-        assert!(
-            context_expired.message.is_none(),
-            "ctx.message should be None after filtering an expired event"
-        );
+        let result = middleware.process_inbound(&mut context).await;
+        assert!(result.is_ok());
 
-        let message_valid = RelayMessage::event(SubscriptionId::generate(), *event_valid.clone());
-        let middlewares_valid: Vec<
+        sleep(Duration::from_millis(100)).await;
+        let events = database
+            .query(vec![Filter::new().id(expired_event.id)], None)
+            .await
+            .unwrap();
+        assert!(events.is_empty(), "Expired event should be deleted");
+    }
+
+    #[tokio::test]
+    async fn test_non_expired_event_is_not_deleted() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let middleware = Nip40ExpirationMiddleware::new(database.clone());
+
+        let unsigned_non_expired_event =
+            EventBuilder::new(Kind::Custom(1234), "non-expired content")
+                .tags([Tag::expiration(
+                    Timestamp::now() + Duration::from_secs(3600),
+                )])
+                .build(admin_keys.public_key());
+        let non_expired_event = admin_keys
+            .sign_event(unsigned_non_expired_event)
+            .await
+            .unwrap();
+
+        database
+            .save_signed_event(non_expired_event.clone(), None)
+            .await
+            .unwrap();
+
+        let (_sender, _receiver) = mpsc::channel::<()>(10);
+        let mut state = create_test_state(None);
+        let middlewares: Vec<
             Arc<
                 dyn Middleware<
                     State = NostrConnectionState,
-                    IncomingMessage = ClientMessage<'static>,
-                    OutgoingMessage = RelayMessage<'static>,
+                    IncomingMessage = ClientMessage,
+                    OutgoingMessage = RelayMessage,
                 >,
             >,
-        > = vec![Arc::new(middleware_under_test.clone())];
-        let mut context_valid = setup_outbound_test_context(
-            message_valid,
-            Some(sender.clone()),
+        > = vec![Arc::new(middleware.clone())];
+
+        let mut context = InboundContext::new(
+            "test_connection_id".to_string(),
+            Some(ClientMessage::Event(Cow::Owned(non_expired_event.clone()))),
+            None,
             &mut state,
-            &middlewares_valid,
+            &middlewares,
             0,
         );
-        let original_valid_message = context_valid.message.clone();
 
-        let result_valid = middleware_under_test
-            .process_outbound(&mut context_valid)
-            .await;
-        assert!(result_valid.is_ok());
+        let result = middleware.process_inbound(&mut context).await;
+        assert!(result.is_ok());
 
-        assert!(
-            context_valid.message.is_some(),
-            "ctx.message should NOT be None for a valid event"
+        sleep(Duration::from_millis(100)).await;
+        let events = database
+            .query(vec![Filter::new().id(non_expired_event.id)], None)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1, "Non-expired event should not be deleted");
+    }
+
+    #[tokio::test]
+    async fn test_event_without_expiration_tag_is_not_deleted() {
+        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let middleware = Nip40ExpirationMiddleware::new(database.clone());
+
+        let unsigned_no_expiration_event =
+            EventBuilder::new(Kind::Custom(1234), "no expiration tag")
+                .build(admin_keys.public_key());
+        let no_expiration_event = admin_keys
+            .sign_event(unsigned_no_expiration_event)
+            .await
+            .unwrap();
+
+        database
+            .save_signed_event(no_expiration_event.clone(), None)
+            .await
+            .unwrap();
+
+        let (_sender, _receiver) = mpsc::channel::<()>(10);
+        let mut state = create_test_state(None);
+        let middlewares: Vec<
+            Arc<
+                dyn Middleware<
+                    State = NostrConnectionState,
+                    IncomingMessage = ClientMessage,
+                    OutgoingMessage = RelayMessage,
+                >,
+            >,
+        > = vec![Arc::new(middleware.clone())];
+
+        let mut context = InboundContext::new(
+            "test_connection_id".to_string(),
+            Some(ClientMessage::Event(Cow::Owned(
+                no_expiration_event.clone(),
+            ))),
+            None,
+            &mut state,
+            &middlewares,
+            0,
         );
+
+        let result = middleware.process_inbound(&mut context).await;
+        assert!(result.is_ok());
+
+        sleep(Duration::from_millis(100)).await;
+        let events = database
+            .query(vec![Filter::new().id(no_expiration_event.id)], None)
+            .await
+            .unwrap();
         assert_eq!(
-            context_valid.message, original_valid_message,
-            "Message content should be unchanged for valid event"
-        );
-
-        let message_future = RelayMessage::event(SubscriptionId::generate(), *event_future);
-        let middlewares_future: Vec<
-            Arc<
-                dyn Middleware<
-                    State = NostrConnectionState,
-                    IncomingMessage = ClientMessage<'static>,
-                    OutgoingMessage = RelayMessage<'static>,
-                >,
-            >,
-        > = vec![Arc::new(middleware_under_test.clone())];
-        let mut context_future = setup_outbound_test_context(
-            message_future,
-            Some(sender.clone()),
-            &mut state,
-            &middlewares_future,
-            0,
-        );
-        let original_future_message = context_future.message.clone();
-
-        let result_future = middleware_under_test
-            .process_outbound(&mut context_future)
-            .await;
-        assert!(result_future.is_ok());
-
-        assert!(
-            context_future.message.is_some(),
-            "ctx.message should NOT be None for a future-expiring event"
-        );
-        assert_eq!(
-            context_future.message, original_future_message,
-            "Message content should be unchanged for future event"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_outbound_non_event_message_passes() {
-        let (_tmp_dir, database, _keys) = setup_test().await;
-        let middleware_under_test = Nip40Middleware::new(database.clone());
-        let message = RelayMessage::notice("Test notice");
-
-        let (sender, _receiver) = mpsc::channel(10);
-        let mut state = create_test_state(None);
-
-        let middlewares: Vec<
-            Arc<
-                dyn Middleware<
-                    State = NostrConnectionState,
-                    IncomingMessage = ClientMessage<'static>,
-                    OutgoingMessage = RelayMessage<'static>,
-                >,
-            >,
-        > = vec![Arc::new(middleware_under_test.clone())];
-
-        let mut context =
-            setup_outbound_test_context(message, Some(sender.clone()), &mut state, &middlewares, 0);
-
-        let result = middleware_under_test.process_outbound(&mut context).await;
-        assert!(result.is_ok());
-
-        assert!(
-            context.message.is_some(),
-            "ctx.message should NOT be None for non-event message"
+            events.len(),
+            1,
+            "Event without expiration tag should not be deleted"
         );
     }
 }

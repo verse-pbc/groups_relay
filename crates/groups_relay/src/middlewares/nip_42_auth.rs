@@ -1,11 +1,13 @@
 use crate::error::Error;
 use crate::nostr_session_state::NostrConnectionState;
+use crate::subdomain::extract_subdomain;
 use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::Duration;
 use tracing::{debug, error};
+use url::Url;
 use websocket_builder::{
     ConnectionContext, InboundContext, Middleware, OutboundContext, SendMessage,
 };
@@ -13,11 +15,109 @@ use websocket_builder::{
 #[derive(Debug, Clone)]
 pub struct Nip42Middleware {
     auth_url: String,
+    base_domain_parts: usize,
 }
 
 impl Nip42Middleware {
-    pub fn new(auth_url: String) -> Self {
-        Self { auth_url }
+    pub fn new(auth_url: String, base_domain_parts: usize) -> Self {
+        Self { auth_url, base_domain_parts }
+    }
+    
+    // Extract the host from a URL
+    fn extract_host_from_url(&self, url_str: &str) -> Option<String> {
+        match Url::parse(url_str) {
+            Ok(url) => url.host_str().map(|s| s.to_string()),
+            Err(_) => None,
+        }
+    }
+    
+    // Check if the auth event's relay URL is valid for the current connection
+    fn validate_relay_url(&self, client_relay_url: &str, connection_subdomain: Option<&str>) -> bool {
+        debug!(target: "auth", "Validating relay URL - client: {}, auth: {}, connection_subdomain: {:?}", 
+              client_relay_url, self.auth_url, connection_subdomain);
+        
+        // For localhost or IP addresses, require exact match
+        if client_relay_url.contains("localhost") || 
+           client_relay_url.contains("127.0.0.1") || 
+           self.auth_url.contains("localhost") || 
+           self.auth_url.contains("127.0.0.1") {
+            let exact_match = client_relay_url.trim_end_matches('/') == self.auth_url.trim_end_matches('/');
+            debug!(target: "auth", "Localhost/IP match result: {}", exact_match);
+            return exact_match;
+        }
+        
+        // Extract hosts from URLs
+        let client_host = match self.extract_host_from_url(client_relay_url) {
+            Some(host) => host,
+            None => {
+                debug!(target: "auth", "Failed to extract host from client URL: {}", client_relay_url);
+                return false;
+            },
+        };
+        
+        let auth_host = match self.extract_host_from_url(&self.auth_url) {
+            Some(host) => host,
+            None => {
+                debug!(target: "auth", "Failed to extract host from auth URL: {}", self.auth_url);
+                return false;
+            },
+        };
+        
+        debug!(target: "auth", "Extracted hosts - client: {}, auth: {}", client_host, auth_host);
+        
+        // Extract parts from hosts
+        let client_parts: Vec<&str> = client_host.split('.').collect();
+        let auth_parts: Vec<&str> = auth_host.split('.').collect();
+        
+        // Extract base domains based on the number of parts configured for base_domain_parts
+        // If there aren't enough parts, use the whole host
+        let client_base_start = if client_parts.len() > self.base_domain_parts {
+            client_parts.len() - self.base_domain_parts
+        } else {
+            0
+        };
+        
+        let auth_base_start = if auth_parts.len() > self.base_domain_parts {
+            auth_parts.len() - self.base_domain_parts
+        } else {
+            0
+        };
+        
+        let client_base = client_parts[client_base_start..].join(".");
+        let auth_base = auth_parts[auth_base_start..].join(".");
+        
+        debug!(target: "auth", "Base domains - client: {}, auth: {}", client_base, auth_base);
+        
+        // Base domains must match
+        if client_base != auth_base {
+            debug!(target: "auth", "Base domain mismatch");
+            return false;
+        }
+        
+        // If we have a specific subdomain from the connection, ensure it matches
+        if let Some(conn_subdomain) = connection_subdomain {
+            // Extract subdomain from client's relay URL using the same extraction logic used elsewhere
+            let client_subdomain = extract_subdomain(&client_host, self.base_domain_parts);
+            
+            debug!(target: "auth", "Comparing subdomains - connection: {}, client: {:?}", 
+                   conn_subdomain, client_subdomain);
+            
+            // Check subdomain match
+            let matches = match client_subdomain {
+                // If client URL has a subdomain, it must match the connection subdomain
+                Some(client_sub) => client_sub == conn_subdomain,
+                // If client URL has no subdomain, connection should also have no subdomain
+                None => conn_subdomain.is_empty(),
+            };
+            
+            debug!(target: "auth", "Subdomain match result: {}", matches);
+            
+            matches
+        } else {
+            // If no specific subdomain in connection, just verify base domain match
+            debug!(target: "auth", "No connection subdomain specified, base domain match is sufficient");
+            true
+        }
     }
 }
 
@@ -146,15 +246,24 @@ impl Middleware for Nip42Middleware {
 
                 match found_relay_in_tag {
                     Some(tag_relay_url) => {
-                        if tag_relay_url.as_str_without_trailing_slash()
-                            != self.auth_url.trim_end_matches('/')
-                        {
+                        let client_relay_url = tag_relay_url.as_str_without_trailing_slash();
+                        
+                        // Get the connection's subdomain for validation
+                        let connection_subdomain = ctx.state.subdomain();
+                        
+                        // Validate the relay URL against the current connection
+                        if !self.validate_relay_url(client_relay_url, connection_subdomain) {
                             let conn_id_err = ctx.connection_id.clone();
+                            let subdomain_msg = connection_subdomain
+                                .map(|s| format!(" with subdomain '{}'", s))
+                                .unwrap_or_default();
+                                
                             error!(
                                 target: "auth",
-                                "[{}] Relay URL mismatch for AUTH. Expected '{}', got '{}'. Event ID: {}.",
-                                conn_id_err, self.auth_url, tag_relay_url.as_str_without_trailing_slash(), auth_event_id
+                                "[{}] Relay URL mismatch for AUTH. Expected domain matching '{}'{}. Got '{}'. Event ID: {}.",
+                                conn_id_err, self.auth_url, subdomain_msg, client_relay_url, auth_event_id
                             );
+                            
                             ctx.send_message(RelayMessage::ok(
                                 auth_event_id,
                                 false,
@@ -270,6 +379,7 @@ mod tests {
     > {
         vec![Arc::new(Nip42Middleware::new(
             "wss://test.relay".to_string(),
+            2, // default base_domain_parts
         ))]
     }
 
@@ -277,7 +387,7 @@ mod tests {
     async fn test_authed_pubkey_valid_auth() {
         let keys = Keys::generate();
         let auth_url = "wss://test.relay".to_string();
-        let middleware = Nip42Middleware::new(auth_url.clone());
+        let middleware = Nip42Middleware::new(auth_url.clone(), 2);
         let mut state = create_test_state(None);
         let challenge = "test_challenge".to_string();
         state.challenge = Some(challenge.clone());
@@ -312,7 +422,7 @@ mod tests {
     async fn test_authed_pubkey_missing_challenge() {
         let keys = Keys::generate();
         let auth_url = "wss://test.relay".to_string();
-        let middleware = Nip42Middleware::new(auth_url.clone());
+        let middleware = Nip42Middleware::new(auth_url.clone(), 2);
         let mut state = create_test_state(None);
 
         let auth_event = EventBuilder::new(Kind::Authentication, "")
@@ -344,7 +454,7 @@ mod tests {
     async fn test_authed_pubkey_wrong_challenge() {
         let keys = Keys::generate();
         let auth_url = "wss://test.relay".to_string();
-        let middleware = Nip42Middleware::new(auth_url.clone());
+        let middleware = Nip42Middleware::new(auth_url.clone(), 2);
         let mut state = create_test_state(None);
         let challenge = "test_challenge".to_string();
         state.challenge = Some(challenge);
@@ -381,7 +491,7 @@ mod tests {
     async fn test_wrong_relay() {
         let keys = Keys::generate();
         let auth_url = "wss://test.relay".to_string();
-        let middleware = Nip42Middleware::new(auth_url);
+        let middleware = Nip42Middleware::new(auth_url, 2);
         let mut state = create_test_state(None);
         let challenge = "test_challenge".to_string();
         state.challenge = Some(challenge.clone());
@@ -417,7 +527,7 @@ mod tests {
         let keys = Keys::generate();
         let wrong_keys = Keys::generate();
         let auth_url = "wss://test.relay".to_string();
-        let middleware = Nip42Middleware::new(auth_url.clone());
+        let middleware = Nip42Middleware::new(auth_url.clone(), 2);
         let mut state = create_test_state(None);
         let challenge = "test_challenge".to_string();
         state.challenge = Some(challenge.clone());
@@ -452,7 +562,7 @@ mod tests {
     async fn test_expired_auth() {
         let keys = Keys::generate();
         let auth_url = "wss://test.relay".to_string();
-        let middleware = Nip42Middleware::new(auth_url.clone());
+        let middleware = Nip42Middleware::new(auth_url.clone(), 2);
         let mut state = create_test_state(None);
         let challenge = "test_challenge".to_string();
         state.challenge = Some(challenge.clone());
@@ -493,7 +603,7 @@ mod tests {
     #[tokio::test]
     async fn test_on_connect_sends_challenge() {
         let auth_url = "wss://test.relay".to_string();
-        let middleware = Nip42Middleware::new(auth_url.clone());
+        let middleware = Nip42Middleware::new(auth_url.clone(), 2);
         let mut state = create_test_state(None);
         let chain = create_middleware_chain();
 
@@ -507,5 +617,142 @@ mod tests {
 
         assert!(middleware.on_connect(&mut ctx).await.is_ok());
         assert!(state.challenge.is_some());
+    }
+    
+    #[tokio::test]
+    async fn test_subdomain_auth_matching_subdomain() {
+        let keys = Keys::generate();
+        // Use WebSocket URL format as required by RelayUrl
+        let auth_url = "wss://example.com".to_string();
+        let middleware = Nip42Middleware::new(auth_url.clone(), 2);
+        
+        let mut state = create_test_state(None);
+        let challenge = "test_challenge".to_string();
+        state.challenge = Some(challenge.clone());
+        state.subdomain = Some("test".to_string()); // Connection is for test.example.com
+        
+        // Debug connection state before creating context
+        let subdomain_str = state.subdomain.as_ref().unwrap_or(&"None".to_string()).clone();
+        println!("Test setup - subdomain: {}, auth_url: {}", subdomain_str, auth_url);
+
+        // Auth event with correct subdomain (test.example.com)
+        let auth_event = EventBuilder::new(Kind::Authentication, "")
+            .tag(Tag::from_standardized(TagStandard::Challenge(challenge)))
+            .tag(Tag::from_standardized(TagStandard::Relay(
+                RelayUrl::parse("wss://test.example.com").unwrap(),
+            )))
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let auth_event = keys.sign_event(auth_event).await.unwrap();
+
+        // Debug auth event
+        let client_url = auth_event.tags.iter().find_map(|tag| {
+            match tag.as_standardized() {
+                Some(TagStandard::Relay(r)) => Some(r.as_str_without_trailing_slash()),
+                _ => None,
+            }
+        }).unwrap_or("No relay URL found");
+        println!("Auth event relay URL: {}", client_url);
+
+        let mut ctx = InboundContext::<
+            '_,
+            NostrConnectionState,
+            ClientMessage<'static>,
+            RelayMessage<'static>,
+        >::new(
+            "test_conn".to_string(),
+            Some(ClientMessage::Auth(Cow::Owned(auth_event.clone()))),
+            None,
+            &mut state,
+            &[],
+            0,
+        );
+
+        let result = middleware.process_inbound(&mut ctx).await;
+        if let Err(e) = &result {
+            println!("Auth failed with error: {}", e);
+        } else {
+            println!("Auth succeeded!");
+        }
+
+        assert!(result.is_ok());
+        assert_eq!(state.authed_pubkey, Some(keys.public_key()));
+    }
+    
+    #[tokio::test]
+    async fn test_subdomain_auth_wrong_subdomain() {
+        let keys = Keys::generate();
+        let auth_url = "wss://example.com".to_string();
+        let middleware = Nip42Middleware::new(auth_url.clone(), 2);
+        let mut state = create_test_state(None);
+        let challenge = "test_challenge".to_string();
+        state.challenge = Some(challenge.clone());
+        state.subdomain = Some("test".to_string()); // Connection is for test.example.com
+
+        println!("Wrong subdomain test - connection subdomain: test, auth_url: {}", auth_url);
+
+        // Auth event with WRONG subdomain (wrong.example.com)
+        let auth_event = EventBuilder::new(Kind::Authentication, "")
+            .tag(Tag::from_standardized(TagStandard::Challenge(challenge)))
+            .tag(Tag::from_standardized(TagStandard::Relay(
+                RelayUrl::parse("wss://wrong.example.com").unwrap(),
+            )))
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let auth_event = keys.sign_event(auth_event).await.unwrap();
+
+        let mut ctx = InboundContext::<
+            '_,
+            NostrConnectionState,
+            ClientMessage<'static>,
+            RelayMessage<'static>,
+        >::new(
+            "test_conn".to_string(),
+            Some(ClientMessage::Auth(Cow::Owned(auth_event.clone()))),
+            None,
+            &mut state,
+            &[],
+            0,
+        );
+
+        assert!(middleware.process_inbound(&mut ctx).await.is_err());
+        assert_eq!(state.authed_pubkey, None);
+    }
+    
+    #[tokio::test]
+    async fn test_subdomain_auth_different_base_domain() {
+        let keys = Keys::generate();
+        let auth_url = "wss://example.com".to_string();
+        let middleware = Nip42Middleware::new(auth_url.clone(), 2);
+        let mut state = create_test_state(None);
+        let challenge = "test_challenge".to_string();
+        state.challenge = Some(challenge.clone());
+        state.subdomain = Some("test".to_string()); // Connection is for test.example.com
+
+        println!("Different base domain test - connection subdomain: test, auth_url: {}", auth_url);
+
+        // Auth event with wrong base domain (test.different.com)
+        let auth_event = EventBuilder::new(Kind::Authentication, "")
+            .tag(Tag::from_standardized(TagStandard::Challenge(challenge)))
+            .tag(Tag::from_standardized(TagStandard::Relay(
+                RelayUrl::parse("wss://test.different.com").unwrap(),
+            )))
+            .build_with_ctx(&Instant::now(), keys.public_key());
+        let auth_event = keys.sign_event(auth_event).await.unwrap();
+
+        let mut ctx = InboundContext::<
+            '_,
+            NostrConnectionState,
+            ClientMessage<'static>,
+            RelayMessage<'static>,
+        >::new(
+            "test_conn".to_string(),
+            Some(ClientMessage::Auth(Cow::Owned(auth_event.clone()))),
+            None,
+            &mut state,
+            &[],
+            0,
+        );
+
+        assert!(middleware.process_inbound(&mut ctx).await.is_err());
+        assert_eq!(state.authed_pubkey, None);
     }
 }

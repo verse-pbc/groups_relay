@@ -13,7 +13,7 @@ pub use event_verifier::EventVerifierMiddleware;
 pub use logger_middleware::LoggerMiddleware;
 pub use nip_09_deletion::Nip09Middleware;
 pub use nip_29_middleware::Nip29Middleware;
-pub use nip_40_expiration::Nip40Middleware;
+pub use nip_40_expiration::Nip40ExpirationMiddleware;
 pub use nip_42_auth::Nip42Middleware;
 pub use nip_70_protected_events::Nip70Middleware;
 pub use validation_middleware::ValidationMiddleware;

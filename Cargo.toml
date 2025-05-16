@@ -5,7 +5,7 @@
 members = [
     "crates/groups_relay",
     "crates/websocket_builder",
-    "crates/load_tester"
+    "crates/load_tester",
 ]
 resolver = "2"
 
@@ -24,10 +24,11 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 futures = "0.3.31"
 clap = { version = "4.5.17", features = ["derive"] }
-nostr-sdk = { version = "0.41.0", features = ["all-nips"] }
-nostr = { version = "0.41.0", features = ["std"] }
+nostr-sdk = { git = "https://github.com/verse-pbc/nostr", branch = "master", features = ["all-nips"] }
+nostr = { git = "https://github.com/verse-pbc/nostr", branch = "master", features = ["std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 metrics = "0.24.1"
 metrics-exporter-prometheus = "0.16.2"
 rand = "0.8.5"
 tokio-tungstenite = "0.26.1"
+heed = "=0.20.5"

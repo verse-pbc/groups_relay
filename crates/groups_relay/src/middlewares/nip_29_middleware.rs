@@ -90,6 +90,7 @@ impl Nip29Middleware {
         &self,
         event: Box<Event>,
         authed_pubkey: &Option<PublicKey>,
+        subdomain: Option<String>,
     ) -> Result<Vec<StoreCommand>, Error> {
         // Allow events through for unmanaged groups (groups not in relay state)
         // Per NIP-29: In unmanaged groups, everyone is considered a member
@@ -99,7 +100,7 @@ impl Nip29Middleware {
             && self.groups.find_group_from_event(&event).is_none()
         {
             debug!(target: "nip29", "Processing unmanaged group event: kind={}, id={}", event.kind, event.id);
-            return Ok(vec![StoreCommand::SaveSignedEvent(event)]);
+            return Ok(vec![StoreCommand::SaveSignedEvent(event, subdomain)]);
         }
 
         let events_to_save = match event.kind {
@@ -160,7 +161,7 @@ impl Nip29Middleware {
 
             _ => {
                 debug!(target: "nip29", "Processing non-group event: kind={}, id={}", event.kind, event.id);
-                vec![StoreCommand::SaveSignedEvent(event)]
+                vec![StoreCommand::SaveSignedEvent(event, subdomain)]
             }
         };
 
@@ -206,15 +207,15 @@ impl Nip29Middleware {
         subscription_id: SubscriptionId,
         filters: Vec<Filter>,
         authed_pubkey: Option<PublicKey>,
-        connection: Option<&NostrConnectionState>,
+        connection_state: Option<&NostrConnectionState>,
     ) -> Result<(), Error> {
         for filter in &filters {
             self.verify_filter(authed_pubkey, filter)?;
         }
 
-        let Some(conn) = connection else {
+        let Some(conn) = connection_state else {
             error!(
-                "No connection available for subscription {}",
+                "No connection_state available for subscription {}",
                 subscription_id
             );
             return Ok(());
@@ -228,8 +229,10 @@ impl Nip29Middleware {
             return Ok(());
         };
 
+        let subdomain = conn.subdomain.as_deref();
+
         relay_conn
-            .handle_subscription_request(subscription_id.clone(), filters)
+            .handle_subscription_request(subscription_id.clone(), filters, subdomain)
             .await?;
 
         Ok(())
@@ -255,8 +258,13 @@ impl Middleware for Nip29Middleware {
             ClientMessage::Event(event_cow) => {
                 metrics::inbound_events_processed().increment(1);
                 let original_event_id = event_cow.as_ref().id; // Get ID before moving
+                let subdomain = ctx.state.subdomain().map(|s| s.to_string());
                 match self
-                    .handle_event(Box::new(event_cow.into_owned()), &ctx.state.authed_pubkey)
+                    .handle_event(
+                        Box::new(event_cow.into_owned()),
+                        &ctx.state.authed_pubkey,
+                        subdomain,
+                    )
                     .await
                 {
                     Ok(commands) => {
@@ -535,6 +543,7 @@ mod tests {
                 connection_token: token.clone(),
                 event_start_time: None,
                 event_kind: None,
+                subdomain: None,
             }
         }
     }
@@ -743,12 +752,14 @@ mod tests {
 
         // Should allow the event through since it's an unmanaged group
         let event_id = event.id;
-        let result = middleware.handle_event(Box::new(event), &None).await;
+        let result = middleware.handle_event(Box::new(event), &None, None).await;
         assert!(result.is_ok());
         if let Ok(commands) = result {
             assert_eq!(commands.len(), 1);
             match &commands[0] {
-                StoreCommand::SaveSignedEvent(saved_event) => assert_eq!(saved_event.id, event_id),
+                StoreCommand::SaveSignedEvent(saved_event, _) => {
+                    assert_eq!(saved_event.id, event_id)
+                }
                 _ => panic!("Expected SaveSignedEvent command"),
             }
         }
@@ -774,7 +785,7 @@ mod tests {
         .await;
 
         // Should not return an error because group is not needed here
-        let result = middleware.handle_event(Box::new(event), &None).await;
+        let result = middleware.handle_event(Box::new(event), &None, None).await;
         assert!(result.is_ok());
     }
 
@@ -1099,7 +1110,7 @@ mod tests {
 
         // Save the unmanaged event
         database
-            .save_signed_event(unmanaged_event.clone())
+            .save_signed_event(unmanaged_event.clone(), None)
             .await
             .unwrap();
 
@@ -1114,7 +1125,7 @@ mod tests {
         .await;
 
         let result = middleware
-            .handle_event(Box::new(create_event_non_admin), &None)
+            .handle_event(Box::new(create_event_non_admin), &None, None)
             .await;
         assert!(result.is_err());
         assert_eq!(
@@ -1132,14 +1143,14 @@ mod tests {
 
         let event_id = create_event_admin.id;
         let result = middleware
-            .handle_event(Box::new(create_event_admin), &None)
+            .handle_event(Box::new(create_event_admin), &None, None)
             .await;
         assert!(result.is_ok());
         if let Ok(commands) = result {
             // Should have 6 commands: save create event + 5 metadata events
             assert_eq!(commands.len(), 6);
             match &commands[0] {
-                StoreCommand::SaveSignedEvent(saved_event) => {
+                StoreCommand::SaveSignedEvent(saved_event, _) => {
                     assert_eq!(saved_event.id, event_id)
                 }
                 _ => panic!("Expected SaveSignedEvent command"),

@@ -13,7 +13,7 @@ pub async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let db_path = tmp_dir.path().join("test.db");
     let keys = Keys::generate();
     let database =
-        Arc::new(RelayDatabase::new(db_path.to_str().unwrap().to_string(), keys.clone()).unwrap());
+        Arc::new(RelayDatabase::new(db_path.to_str().unwrap(), keys.clone()).unwrap());
     (tmp_dir, database, keys)
 }
 
@@ -47,6 +47,7 @@ pub fn create_test_state(pubkey: Option<nostr_sdk::PublicKey>) -> NostrConnectio
         connection_token: token.clone(),
         event_start_time: None,
         event_kind: None,
+        subdomain: None,
     }
 }
 
