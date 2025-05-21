@@ -18,17 +18,21 @@ pub use group::{
     KIND_GROUP_USER_LEAVE_REQUEST_9022, KIND_SIMPLE_LIST_10009, NON_GROUP_ALLOWED_KINDS,
 };
 use nostr_lmdb::Scope;
-use std::hash::{Hash, Hasher};
 use nostr_sdk::prelude::*;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
+// Type aliases to make complex types more manageable
+type ScopedGroupKey = (Scope, String);
+type ScopedGroupRef<'a> = Ref<'a, ScopedGroupKey, Group>;
+type ScopedGroupRefMut<'a> = RefMut<'a, ScopedGroupKey, Group>;
+
 #[derive(Debug)]
 pub struct Groups {
     db: Arc<RelayDatabase>,
-    groups: DashMap<(Scope, String), Group>, // (scope, group_id) -> Group
+    groups: DashMap<ScopedGroupKey, Group>, // (scope, group_id) -> Group
     pub relay_pubkey: PublicKey,
 }
 
@@ -79,7 +83,7 @@ impl Groups {
     async fn load_groups_for_scope(
         database: Arc<RelayDatabase>, 
         scope: &Scope,
-        relay_pubkey: PublicKey
+        _relay_pubkey: PublicKey
     ) -> Result<HashMap<String, Group>, Error> {
         info!("Loading groups from scope: {:?}", scope);
         let mut groups = HashMap::new();
@@ -197,7 +201,7 @@ impl Groups {
     }
 
     // Basic accessor methods
-    pub fn get_group(&self, scope: &Scope, group_id: &str) -> Option<Ref<(Scope, String), Group>> {
+    pub fn get_group(&self, scope: &Scope, group_id: &str) -> Option<ScopedGroupRef<'_>> {
         // Create the key with minimal cloning
         let key = (scope.clone(), group_id.to_string());
         self.groups.get(&key)
@@ -205,7 +209,7 @@ impl Groups {
 
     // Nothing - removing backward compatibility method
 
-    pub fn get_group_mut(&self, scope: &Scope, group_id: &str) -> Option<RefMut<(Scope, String), Group>> {
+    pub fn get_group_mut(&self, scope: &Scope, group_id: &str) -> Option<ScopedGroupRefMut<'_>> {
         let key = (scope.clone(), group_id.to_string());
         self.groups.get_mut(&key)
     }
@@ -247,7 +251,7 @@ impl Groups {
     }
     
     // More efficient implementation of find_group_in_any_scope
-    pub fn find_group_in_any_scope(&self, group_id: &str) -> Option<(Scope, Ref<(Scope, String), Group>)> {
+    pub fn find_group_in_any_scope(&self, group_id: &str) -> Option<(Scope, ScopedGroupRef<'_>)> {
         // First find the matching scope (holding minimal locks)
         let mut found_scope = None;
         
@@ -281,7 +285,7 @@ impl Groups {
         &'a self, 
         event: &Event, 
         scope: &Scope
-    ) -> Result<Option<RefMut<'a, (Scope, String), Group>>, Error> {
+    ) -> Result<Option<ScopedGroupRefMut<'a>>, Error> {
         let Some(group_id) = Group::extract_group_id(event) else {
             return Ok(None);
         };

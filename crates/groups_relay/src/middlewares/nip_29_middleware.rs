@@ -432,7 +432,7 @@ impl Middleware for Nip29Middleware {
             return ctx.next().await;
         };
 
-        let Some(group) = self.groups.find_group_from_event(event, &ctx.state.subdomain()) else {
+        let Some(group) = self.groups.find_group_from_event(event, ctx.state.subdomain()) else {
             return ctx.next().await;
         };
 
