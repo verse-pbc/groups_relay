@@ -1,3 +1,4 @@
+use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
@@ -47,7 +48,7 @@ pub fn create_test_state(pubkey: Option<nostr_sdk::PublicKey>) -> NostrConnectio
         connection_token: token.clone(),
         event_start_time: None,
         event_kind: None,
-        subdomain: None,
+        subdomain: Scope::Default,
     }
 }
 

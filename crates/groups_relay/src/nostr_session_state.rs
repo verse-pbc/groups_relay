@@ -5,6 +5,7 @@ use crate::nostr_database::RelayDatabase;
 use crate::subdomain::extract_subdomain;
 use crate::{StoreCommand, SubscriptionManager};
 use anyhow::Result;
+use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
 use snafu::Backtrace;
 use std::sync::Arc;
@@ -24,7 +25,7 @@ pub struct NostrConnectionState {
     pub connection_token: CancellationToken,
     pub event_start_time: Option<Instant>,
     pub event_kind: Option<u16>,
-    pub subdomain: Option<String>,
+    pub subdomain: Scope,
 }
 
 impl Default for NostrConnectionState {
@@ -37,7 +38,7 @@ impl Default for NostrConnectionState {
             connection_token: CancellationToken::new(),
             event_start_time: None,
             event_kind: None,
-            subdomain: None,
+            subdomain: Scope::Default,
         }
     }
 }
@@ -57,7 +58,7 @@ impl NostrConnectionState {
             connection_token: CancellationToken::new(),
             event_start_time: None,
             event_kind: None,
-            subdomain: None,
+            subdomain: Scope::Default,
         })
     }
 
@@ -120,8 +121,18 @@ impl NostrConnectionState {
         // ... existing code ...
     }
 
-    pub fn subdomain(&self) -> Option<&str> {
-        self.subdomain.as_deref()
+    /// Convert the Scope to an Option<&str> for backward compatibility with code that 
+    /// expects Option<&str> representing a subdomain.
+    /// This is NOT used for database operations, only for logging and compatibility.
+    pub fn subdomain_str(&self) -> Option<&str> {
+        match &self.subdomain {
+            Scope::Named { name, .. } => Some(name),
+            Scope::Default => None
+        }
+    }
+    
+    pub fn subdomain(&self) -> &Scope {
+        &self.subdomain
     }
 }
 
@@ -166,8 +177,25 @@ impl StateFactory<NostrConnectionState> for NostrConnectionFactory {
                 None
             });
 
-        let subdomain =
+        let subdomain_str =
             host_opt.and_then(|host_str| extract_subdomain(&host_str, self.base_domain_parts));
+            
+        // Convert subdomain string to scope
+        let subdomain_scope = subdomain_str
+            .and_then(|s| {
+                if !s.is_empty() {
+                    match Scope::named(s.as_str()) {
+                        Ok(scope) => Some(scope),
+                        Err(e) => {
+                            tracing::warn!("Failed to create named scope: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(Scope::Default);
 
         NostrConnectionState {
             relay_url: self.relay_url.clone(),
@@ -175,9 +203,9 @@ impl StateFactory<NostrConnectionState> for NostrConnectionFactory {
             authed_pubkey: None,
             subscription_manager: None,
             connection_token: token,
-            subdomain,
             event_start_time: None,
             event_kind: None,
+            subdomain: subdomain_scope,
         }
     }
 }
@@ -234,8 +262,11 @@ mod tests {
             })
             .await;
 
-        assert_eq!(connection_state.subdomain.as_deref(), Some("test"));
-        assert_eq!(connection_state.subdomain(), Some("test"));
+        assert_eq!(connection_state.subdomain_str(), Some("test"));
+        match connection_state.subdomain {
+            Scope::Named { name, .. } => assert_eq!(name, "test"),
+            _ => panic!("Expected a named scope")
+        }
     }
 
     #[tokio::test]
@@ -249,7 +280,12 @@ mod tests {
                 factory.create_state(cancellation_token.clone())
             })
             .await;
-        assert_eq!(connection_state.subdomain, None);
+        
+        assert_eq!(connection_state.subdomain_str(), None);
+        match connection_state.subdomain {
+            Scope::Default => {} // This is expected
+            _ => panic!("Expected the Default scope")
+        }
     }
 
     #[tokio::test]
@@ -259,7 +295,11 @@ mod tests {
 
         let connection_state = factory.create_state(cancellation_token);
 
-        assert_eq!(connection_state.subdomain, None);
+        assert_eq!(connection_state.subdomain_str(), None);
+        match connection_state.subdomain {
+            Scope::Default => {} // This is expected
+            _ => panic!("Expected the Default scope")
+        }
     }
 
     #[tokio::test]
@@ -273,6 +313,11 @@ mod tests {
                 factory.create_state(cancellation_token)
             })
             .await;
-        assert_eq!(connection_state.subdomain.as_deref(), Some("sub.test"));
+            
+        assert_eq!(connection_state.subdomain_str(), Some("sub.test"));
+        match connection_state.subdomain {
+            Scope::Named { name, .. } => assert_eq!(name, "sub.test"),
+            _ => panic!("Expected a named scope")
+        }
     }
 }

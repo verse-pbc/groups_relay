@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::StoreCommand;
+use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -524,9 +525,9 @@ impl Group {
             Filter::new().custom_tag(SingleLetterTag::lowercase(Alphabet::D), self.id.to_string());
 
         Ok(vec![
-            StoreCommand::DeleteEvents(non_addressable_filter, None),
-            StoreCommand::DeleteEvents(addressable_filter, None),
-            StoreCommand::SaveSignedEvent(delete_group_request_event, None),
+            StoreCommand::DeleteEvents(non_addressable_filter, Scope::Default),
+            StoreCommand::DeleteEvents(addressable_filter, Scope::Default),
+            StoreCommand::SaveSignedEvent(delete_group_request_event, Scope::Default),
         ])
     }
 
@@ -568,8 +569,8 @@ impl Group {
         let filter = Filter::new().ids(event_ids);
 
         Ok(vec![
-            StoreCommand::DeleteEvents(filter, None),
-            StoreCommand::SaveSignedEvent(delete_request_event, None),
+            StoreCommand::DeleteEvents(filter, Scope::Default),
+            StoreCommand::SaveSignedEvent(delete_request_event, Scope::Default),
         ])
     }
 
@@ -601,11 +602,11 @@ impl Group {
 
         self.add_members(group_members)?;
 
-        let mut events = vec![StoreCommand::SaveSignedEvent(members_event, None)];
+        let mut events = vec![StoreCommand::SaveSignedEvent(members_event, Scope::Default)];
         let admins_event = self.generate_admins_event(relay_pubkey);
-        events.push(StoreCommand::SaveUnsignedEvent(admins_event, None));
+        events.push(StoreCommand::SaveUnsignedEvent(admins_event, Scope::Default));
         let members_event = self.generate_members_event(relay_pubkey);
-        events.push(StoreCommand::SaveUnsignedEvent(members_event, None));
+        events.push(StoreCommand::SaveUnsignedEvent(members_event, Scope::Default));
 
         Ok(events)
     }
@@ -697,13 +698,13 @@ impl Group {
         self.update_roles();
         self.update_state();
 
-        let mut events = vec![StoreCommand::SaveSignedEvent(members_event, None)];
+        let mut events = vec![StoreCommand::SaveSignedEvent(members_event, Scope::Default)];
         if removed_admins {
             let admins_event = self.generate_admins_event(relay_pubkey);
-            events.push(StoreCommand::SaveUnsignedEvent(admins_event, None));
+            events.push(StoreCommand::SaveUnsignedEvent(admins_event, Scope::Default));
         }
         let members_event = self.generate_members_event(relay_pubkey);
-        events.push(StoreCommand::SaveUnsignedEvent(members_event, None));
+        events.push(StoreCommand::SaveUnsignedEvent(members_event, Scope::Default));
 
         Ok(events)
     }
@@ -777,9 +778,9 @@ impl Group {
         let members_event = self.generate_members_event(relay_pubkey);
 
         Ok(vec![
-            StoreCommand::SaveSignedEvent(event, None),
-            StoreCommand::SaveUnsignedEvent(roles_event, None),
-            StoreCommand::SaveUnsignedEvent(members_event, None),
+            StoreCommand::SaveSignedEvent(event, Scope::Default),
+            StoreCommand::SaveUnsignedEvent(roles_event, Scope::Default),
+            StoreCommand::SaveUnsignedEvent(members_event, Scope::Default),
         ])
     }
 
@@ -966,7 +967,7 @@ impl Group {
             return Err(Error::restricted("Only admins can post in broadcast mode"));
         }
 
-        let mut commands = vec![StoreCommand::SaveSignedEvent(event, None)];
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event, Scope::Default)];
 
         // For private and closed groups, only members can post
         if self.metadata.private && self.metadata.closed && !is_member {
@@ -979,7 +980,7 @@ impl Group {
             commands.extend(
                 self.generate_membership_events(relay_pubkey)
                     .into_iter()
-                    .map(|e| StoreCommand::SaveUnsignedEvent(e, None)),
+                    .map(|e| StoreCommand::SaveUnsignedEvent(e, Scope::Default)),
             );
         } else if !is_member {
             // For closed groups, non-members can't post
@@ -1010,7 +1011,7 @@ impl Group {
             )));
         }
 
-        let mut commands = vec![StoreCommand::SaveSignedEvent(event, None)];
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event, Scope::Default)];
         // println!("[create_join_request_commands] Added SaveSignedEvent to commands");
 
         if auto_joined {
@@ -1026,7 +1027,7 @@ impl Group {
             commands.extend(
                 membership_events
                     .into_iter()
-                    .map(|e| StoreCommand::SaveUnsignedEvent(e, None)),
+                    .map(|e| StoreCommand::SaveUnsignedEvent(e, Scope::Default)),
             );
             // println!(
             //     "[create_join_request_commands] Extended commands, now have {} total",
@@ -1107,17 +1108,17 @@ impl Group {
         self.update_state();
 
         if removed {
-            let mut commands = vec![StoreCommand::SaveSignedEvent(event, None)];
+            let mut commands = vec![StoreCommand::SaveSignedEvent(event, Scope::Default)];
 
             // If the user was an admin, also generate an updated admins event
             if is_admin {
                 let admins_event = self.generate_admins_event(relay_pubkey);
-                commands.push(StoreCommand::SaveUnsignedEvent(admins_event, None));
+                commands.push(StoreCommand::SaveUnsignedEvent(admins_event, Scope::Default));
             }
 
             // Always generate a members event
             let members_event = self.generate_members_event(relay_pubkey);
-            commands.push(StoreCommand::SaveUnsignedEvent(members_event, None));
+            commands.push(StoreCommand::SaveUnsignedEvent(members_event, Scope::Default));
 
             Ok(commands)
         } else {

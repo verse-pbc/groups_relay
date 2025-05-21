@@ -2088,7 +2088,7 @@ dependencies = [
 [[package]]
 name = "nostr"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?branch=master#72788193c4eb5a8208c501af5194aaf43b7b4ea5"
+source = "git+https://github.com/verse-pbc/nostr#c55ca4ff17d6a92ba30b32458eeb3513784da975"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -2117,7 +2117,7 @@ dependencies = [
 [[package]]
 name = "nostr-database"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?branch=master#72788193c4eb5a8208c501af5194aaf43b7b4ea5"
+source = "git+https://github.com/verse-pbc/nostr#c55ca4ff17d6a92ba30b32458eeb3513784da975"
 dependencies = [
  "flatbuffers",
  "lru",
@@ -2128,7 +2128,7 @@ dependencies = [
 [[package]]
 name = "nostr-lmdb"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?branch=master#72788193c4eb5a8208c501af5194aaf43b7b4ea5"
+source = "git+https://github.com/verse-pbc/nostr#c55ca4ff17d6a92ba30b32458eeb3513784da975"
 dependencies = [
  "async-utility",
  "flatbuffers",
@@ -2143,7 +2143,7 @@ dependencies = [
 [[package]]
 name = "nostr-relay-pool"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?branch=master#72788193c4eb5a8208c501af5194aaf43b7b4ea5"
+source = "git+https://github.com/verse-pbc/nostr#c55ca4ff17d6a92ba30b32458eeb3513784da975"
 dependencies = [
  "async-utility",
  "async-wsocket",
@@ -2160,7 +2160,7 @@ dependencies = [
 [[package]]
 name = "nostr-sdk"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?branch=master#72788193c4eb5a8208c501af5194aaf43b7b4ea5"
+source = "git+https://github.com/verse-pbc/nostr#c55ca4ff17d6a92ba30b32458eeb3513784da975"
 dependencies = [
  "async-utility",
  "nostr",
@@ -3047,13 +3047,14 @@ dependencies = [
 
 [[package]]
 name = "scoped-heed"
-version = "0.1.1"
+version = "0.2.0-alpha.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1baea88e882473dbdfbbfb8b9f7acd7e4eccbdae7a1c2c203ddd0687b69ddfb4"
+checksum = "4f3bfb91b5679beb6e680c1db1bf0e1e36908ecb558973ca287b767b4d534cb6"
 dependencies = [
  "bincode",
  "heed",
  "serde",
+ "twox-hash",
 ]
 
 [[package]]
@@ -3287,6 +3288,12 @@ name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
+
+[[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "strsim"
@@ -3825,6 +3832,17 @@ dependencies = [
  "sha1",
  "thiserror 2.0.12",
  "utf-8",
+]
+
+[[package]]
+name = "twox-hash"
+version = "1.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
+dependencies = [
+ "cfg-if",
+ "rand 0.8.5",
+ "static_assertions",
 ]
 
 [[package]]

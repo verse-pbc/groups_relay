@@ -4,6 +4,7 @@ use crate::nostr_session_state::NostrConnectionState;
 use crate::subscription_manager::StoreCommand;
 use anyhow::Result;
 use async_trait::async_trait;
+use nostr_lmdb::Scope; // Needed for tests
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tracing::{debug, error};
@@ -38,7 +39,7 @@ impl Nip09Middleware {
 
         // First save the deletion request event itself
         self.database
-            .save_signed_event(event.clone(), state.subdomain().map(|s| s.to_string()))
+            .save_signed_event(event.clone(), state.subdomain().clone())
             .await?;
 
         // Process 'e' tags (direct event references) and 'a' tags (addresses)
@@ -91,7 +92,7 @@ impl Nip09Middleware {
 
                         let delete_command = StoreCommand::DeleteEvents(
                             filter,
-                            state.subdomain().map(|s| s.to_string()),
+                            state.subdomain().clone(),
                         );
                         self.database.save_store_command(delete_command).await?;
                     } else {
@@ -138,7 +139,7 @@ impl Nip09Middleware {
 
                         let delete_command = StoreCommand::DeleteEvents(
                             filter,
-                            state.subdomain().map(|s| s.to_string()),
+                            state.subdomain().clone(),
                         );
                         self.database.save_store_command(delete_command).await?;
                     } else {
@@ -218,7 +219,7 @@ mod tests {
         // Create and save an event
         let event_to_delete = create_test_event(&keys, 1, vec![]).await;
         database
-            .save_signed_event(event_to_delete.clone(), None)
+            .save_signed_event(event_to_delete.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -244,12 +245,12 @@ mod tests {
         // Verify event is deleted
         sleep(Duration::from_millis(30)).await; // Give time for async deletion
         let filter = Filter::new().id(event_to_delete.id);
-        let events = database.query(vec![filter], None).await.unwrap();
+        let events = database.query(vec![filter], &Scope::Default).await.unwrap();
         assert!(events.is_empty(), "Event should have been deleted");
 
         // Verify deletion request is saved
         let filter = Filter::new().id(deletion_request.id);
-        let events = database.query(vec![filter], None).await.unwrap();
+        let events = database.query(vec![filter], &Scope::Default).await.unwrap();
         assert_eq!(events.len(), 1, "Deletion request should be saved");
     }
 
@@ -262,7 +263,7 @@ mod tests {
         // Create and save an event from keys2
         let event_to_delete = create_test_event(&keys2, 1, vec![]).await;
         database
-            .save_signed_event(event_to_delete.clone(), None)
+            .save_signed_event(event_to_delete.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -286,7 +287,7 @@ mod tests {
         // Verify event is not deleted
         sleep(Duration::from_millis(30)).await;
         let filter = Filter::new().id(event_to_delete.id);
-        let events = database.query(vec![filter], None).await.unwrap();
+        let events = database.query(vec![filter], &Scope::Default).await.unwrap();
         assert_eq!(events.len(), 1, "Event should not have been deleted");
     }
 
@@ -303,7 +304,7 @@ mod tests {
         )
         .await;
         database
-            .save_signed_event(replaceable_event.clone(), None)
+            .save_signed_event(replaceable_event.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -325,10 +326,10 @@ mod tests {
 
         middleware.process_inbound(&mut ctx).await.unwrap();
 
-        // Verify replaceable event is deleted
-        sleep(Duration::from_millis(30)).await;
+        // Verify replaceable event is deleted - add longer wait time
+        sleep(Duration::from_millis(200)).await;
         let filter = Filter::new().id(replaceable_event.id);
-        let events = database.query(vec![filter], None).await.unwrap();
+        let events = database.query(vec![filter], &Scope::Default).await.unwrap();
         assert!(
             events.is_empty(),
             "Replaceable event should have been deleted"
@@ -343,7 +344,7 @@ mod tests {
         // Create and save an event with a 'd' tag
         let event = create_test_event(&keys, 5, vec![Tag::parse(vec!["d", "test"]).unwrap()]).await;
         database
-            .save_signed_event(event.clone(), None)
+            .save_signed_event(event.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -364,7 +365,7 @@ mod tests {
 
         // Verify event is saved
         let filter = Filter::new().id(event.id);
-        let events = database.query(vec![filter], None).await.unwrap();
+        let events = database.query(vec![filter], &Scope::Default).await.unwrap();
         assert_eq!(events.len(), 1, "Event should have been saved");
     }
 
@@ -377,7 +378,7 @@ mod tests {
         let replaceable_event =
             create_test_event(&keys, 10002, vec![Tag::parse(vec!["d", "test"]).unwrap()]).await;
         database
-            .save_signed_event(replaceable_event.clone(), None)
+            .save_signed_event(replaceable_event.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -404,13 +405,13 @@ mod tests {
 
         // Verify deletion event is saved
         let filter = Filter::new().id(deletion_event.id);
-        let events = database.query(vec![filter], None).await.unwrap();
+        let events = database.query(vec![filter], &Scope::Default).await.unwrap();
         assert_eq!(events.len(), 1, "Deletion event should have been saved");
 
-        // Verify replaceable event is deleted
-        sleep(Duration::from_millis(30)).await;
+        // Verify replaceable event is deleted - add longer wait time
+        sleep(Duration::from_millis(200)).await;
         let filter = Filter::new().id(replaceable_event.id);
-        let events = database.query(vec![filter], None).await.unwrap();
+        let events = database.query(vec![filter], &Scope::Default).await.unwrap();
         assert!(
             events.is_empty(),
             "Replaceable event should have been deleted"

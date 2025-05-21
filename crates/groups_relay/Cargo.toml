@@ -31,8 +31,8 @@ console-subscriber = { version = "0.4.1", optional = true }
 tower-http = { version = "0.6.2", features = ["cors", "fs"] }
 tower = "0.5.2"
 nostr = { workspace = true, features = ["std"] }
-nostr-database = { git = "https://github.com/verse-pbc/nostr", branch = "master" }
-nostr-lmdb = { git = "https://github.com/verse-pbc/nostr", branch = "master" }
+nostr-database = { git = "https://github.com/verse-pbc/nostr" }
+nostr-lmdb = { workspace = true }
 time = { version = "0.3.37", features = ["local-offset", "macros"] }
 humantime-serde = "1.1.1"
 tracing-futures = "0.2.5"

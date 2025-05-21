@@ -40,8 +40,7 @@ impl Middleware for ErrorHandlingMiddleware {
         match ctx.next().await {
             Ok(()) => Ok(()),
             Err(e) => {
-                // TODO: get rid of anyhow and downcast_ref here
-                if let Some(err) = e.downcast_ref::<Error>() {
+                if let Some(err) = e.downcast_ref::<e>() {
                     if let Err(err) = err.handle_inbound_error(ctx, client_message_id).await {
                         error!("Failed to handle inbound error: {}", err);
                     }

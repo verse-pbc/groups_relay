@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::nostr_database::RelayDatabase;
+use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
 use snafu::Backtrace;
 use std::borrow::Cow;
@@ -217,7 +218,7 @@ impl SubscriptionManager {
     pub async fn fetch_events(
         &self,
         filters: Vec<Filter>,
-        subdomain: Option<&str>,
+        subdomain: &Scope,
     ) -> Result<Events, Error> {
         self.database
             .query(filters, subdomain)
@@ -235,7 +236,7 @@ impl SubscriptionManager {
         subscription_id: &SubscriptionId,
         filters: &[Filter],
         mut sender: MessageSender<RelayMessage<'static>>,
-        subdomain: Option<&str>,
+        subdomain: &Scope,
     ) -> Result<usize, Error> {
         let events = self.fetch_events(filters.to_vec(), subdomain).await?;
         let capacity = sender.capacity() / 2;
@@ -275,7 +276,7 @@ impl SubscriptionManager {
         &self,
         subscription_id: SubscriptionId,
         filters: Vec<Filter>,
-        subdomain: Option<&str>,
+        subdomain: &Scope,
     ) -> Result<(), Error> {
         let sender = self
             .outgoing_sender
@@ -352,9 +353,9 @@ impl Drop for SubscriptionManager {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum StoreCommand {
-    SaveUnsignedEvent(UnsignedEvent, Option<String>),
-    SaveSignedEvent(Box<Event>, Option<String>),
-    DeleteEvents(Filter, Option<String>),
+    SaveUnsignedEvent(UnsignedEvent, Scope),
+    SaveSignedEvent(Box<Event>, Scope),
+    DeleteEvents(Filter, Scope),
 }
 
 impl StoreCommand {
@@ -366,11 +367,21 @@ impl StoreCommand {
         }
     }
 
-    pub fn subdomain(&self) -> Option<&str> {
+    pub fn subdomain_scope(&self) -> &Scope {
         match self {
-            StoreCommand::SaveUnsignedEvent(_, subdomain) => subdomain.as_deref(),
-            StoreCommand::SaveSignedEvent(_, subdomain) => subdomain.as_deref(),
-            StoreCommand::DeleteEvents(_, subdomain) => subdomain.as_deref(),
+            StoreCommand::SaveUnsignedEvent(_, scope) => scope,
+            StoreCommand::SaveSignedEvent(_, scope) => scope,
+            StoreCommand::DeleteEvents(_, scope) => scope,
+        }
+    }
+    
+    /// Convert the Scope to an Option<&str> for backward compatibility with code that 
+    /// expects Option<&str> representing a subdomain.
+    /// This is NOT used for database operations, only for logging and compatibility.
+    pub fn subdomain(&self) -> Option<&str> {
+        match self.subdomain_scope() {
+            Scope::Named { name, .. } => Some(name),
+            Scope::Default => None,
         }
     }
 }
@@ -394,7 +405,7 @@ mod tests {
             .build_with_ctx(&Instant::now(), keys.public_key());
         let historical_event = keys.sign_event(historical_event).await.unwrap();
         database
-            .save_signed_event(historical_event.clone(), None)
+            .save_signed_event(historical_event.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -412,7 +423,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
+            .handle_subscription_request(subscription_id.clone(), vec![filter], &Scope::Default)
             .await
             .unwrap();
 
@@ -466,7 +477,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
+            .handle_subscription_request(subscription_id.clone(), vec![filter], &Scope::Default)
             .await
             .unwrap();
 
@@ -487,7 +498,7 @@ mod tests {
 
         // Save and broadcast the event
         connection
-            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event, None))
+            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event, Scope::Default))
             .await
             .unwrap();
 
@@ -527,7 +538,7 @@ mod tests {
             .build_with_ctx(&Instant::now(), keys.public_key());
         let historical_event = keys.sign_event(historical_event).await.unwrap();
         database
-            .save_signed_event(historical_event.clone(), None)
+            .save_signed_event(historical_event.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -545,7 +556,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
+            .handle_subscription_request(subscription_id.clone(), vec![filter], &Scope::Default)
             .await
             .unwrap();
 
@@ -584,7 +595,7 @@ mod tests {
 
         // Save and broadcast the event
         connection
-            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event, None))
+            .save_and_broadcast(StoreCommand::SaveSignedEvent(new_event, Scope::Default))
             .await
             .unwrap();
 
@@ -630,7 +641,7 @@ mod tests {
                 .build(keys.public_key());
             let event = keys.sign_event(event).await.unwrap();
             database
-                .save_signed_event(event.clone(), None)
+                .save_signed_event(event.clone(), Scope::Default)
                 .await
                 .unwrap();
             events.push(event);
@@ -651,7 +662,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
+            .handle_subscription_request(subscription_id.clone(), vec![filter], &Scope::Default)
             .await
             .unwrap();
 
@@ -728,7 +739,7 @@ mod tests {
             .build_with_ctx(&Instant::now(), keys.public_key());
         let text_note = keys.sign_event(text_note).await.unwrap();
         database
-            .save_signed_event(text_note.clone(), None)
+            .save_signed_event(text_note.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -746,7 +757,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
+            .handle_subscription_request(subscription_id.clone(), vec![filter], &Scope::Default)
             .await
             .unwrap();
 
@@ -796,7 +807,7 @@ mod tests {
             EventBuilder::metadata(&metadata).build_with_ctx(&Instant::now(), keys.public_key());
         let metadata_event = keys.sign_event(metadata_event).await.unwrap();
         database
-            .save_signed_event(metadata_event.clone(), None)
+            .save_signed_event(metadata_event.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -814,7 +825,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
+            .handle_subscription_request(subscription_id.clone(), vec![filter], &Scope::Default)
             .await
             .unwrap();
 
@@ -862,7 +873,7 @@ mod tests {
             .build_with_ctx(&Instant::now(), keys.public_key());
         let contacts_event = keys.sign_event(contacts_event).await.unwrap();
         database
-            .save_signed_event(contacts_event.clone(), None)
+            .save_signed_event(contacts_event.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -880,7 +891,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
+            .handle_subscription_request(subscription_id.clone(), vec![filter], &Scope::Default)
             .await
             .unwrap();
 
@@ -940,11 +951,11 @@ mod tests {
 
         // Save events
         database
-            .save_signed_event(event1.clone(), None)
+            .save_signed_event(event1.clone(), Scope::Default)
             .await
             .unwrap();
         database
-            .save_signed_event(event2.clone(), None)
+            .save_signed_event(event2.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -962,7 +973,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
+            .handle_subscription_request(subscription_id.clone(), vec![filter], &Scope::Default)
             .await
             .unwrap();
 
@@ -1041,15 +1052,15 @@ mod tests {
 
         // Save all events
         database
-            .save_signed_event(text_note.clone(), None)
+            .save_signed_event(text_note.clone(), Scope::Default)
             .await
             .unwrap();
         database
-            .save_signed_event(metadata_event.clone(), None)
+            .save_signed_event(metadata_event.clone(), Scope::Default)
             .await
             .unwrap();
         database
-            .save_signed_event(recommend_relay.clone(), None)
+            .save_signed_event(recommend_relay.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -1068,7 +1079,7 @@ mod tests {
 
         // Handle subscription request
         connection
-            .handle_subscription_request(subscription_id.clone(), vec![filter], None)
+            .handle_subscription_request(subscription_id.clone(), vec![filter], &Scope::Default)
             .await
             .unwrap();
 

@@ -3,7 +3,7 @@ use crate::subscription_manager::StoreCommand;
 use crate::utils::get_blocking_runtime;
 use nostr_database::nostr::{Event, Filter};
 use nostr_database::Events;
-use nostr_lmdb::NostrLMDB;
+use nostr_lmdb::{NostrLMDB, Scope};
 use nostr_sdk::prelude::*;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -89,7 +89,7 @@ impl RelayDatabase {
                     path: PathBuf,
                 }
 
-                let get_processor_env = |_subdomain: Option<&str>| -> Result<EnvInfo, Error> {
+                let get_processor_env = |_scope: &Scope| -> Result<EnvInfo, Error> {
                     Ok(EnvInfo {
                         env: Arc::clone(&env_clone),
                         path: db_path_clone.clone(),
@@ -97,19 +97,18 @@ impl RelayDatabase {
                 };
 
                 while let Some(store_command) = store_receiver.recv().await {
-                    let command_subdomain_opt: Option<String> =
-                        store_command.subdomain().map(|s| s.to_string());
-                    let command_subdomain_str: Option<&str> = command_subdomain_opt.as_deref();
+                    let scope_clone = store_command.subdomain_scope().clone();
 
+                    // Extract values before the match to avoid borrowing issues
                     match store_command {
-                        StoreCommand::DeleteEvents(filter, _subdomain_in_cmd) => {
+                        StoreCommand::DeleteEvents(filter, _) => {
                             info!(
-                                "Deleting events with filter: {:?} for subdomain: {:?} (using single DB)",
-                                filter, command_subdomain_str
+                                "Deleting events with filter: {:?} for scope: {:?} (using single DB)",
+                                filter, scope_clone
                             );
-                            match get_processor_env(command_subdomain_str) {
+                            match get_processor_env(&scope_clone) {
                                 Ok(env_info) => {
-                                    let scoped_view = match env_info.env.scoped(command_subdomain_str) {
+                                    let scoped_view = match env_info.env.scoped(&scope_clone) {
                                         Ok(view) => view,
                                         Err(e) => {
                                             error!("Error getting scoped view: {:?}, env_path: {:?}", e, env_info.path);
@@ -124,21 +123,21 @@ impl RelayDatabase {
                                 Err(e) => error!("Processor: Failed to get env for delete: {:?} (should not happen with single DB)", e),
                             }
                         }
-                        StoreCommand::SaveSignedEvent(event, _subdomain_in_cmd) => {
-                            match get_processor_env(command_subdomain_str) {
+                        StoreCommand::SaveSignedEvent(event, _) => {
+                            match get_processor_env(&scope_clone) {
                                 Ok(env_info) => {
                                     Self::handle_signed_event(
                                         env_info.env,
                                         event,
                                         &broadcast_sender,
-                                        command_subdomain_str,
+                                        &scope_clone,
                                     )
                                     .await;
                                 }
                                 Err(e) => error!("Processor: Failed to get env for signed event: {:?} (should not happen)", e),
                             }
                         }
-                        StoreCommand::SaveUnsignedEvent(unsigned_event, _subdomain_in_cmd) => {
+                        StoreCommand::SaveUnsignedEvent(unsigned_event, _) => {
                             let keys_clone = Arc::clone(&keys);
                             let sign_result = spawn_blocking(move || {
                                 get_blocking_runtime()
@@ -148,13 +147,13 @@ impl RelayDatabase {
 
                             match sign_result {
                                 Ok(Ok(event)) => {
-                                    match get_processor_env(command_subdomain_str) {
+                                    match get_processor_env(&scope_clone) {
                                         Ok(env_info) => {
                                             Self::handle_signed_event(
                                                 env_info.env,
                                                 Box::new(event),
                                                 &broadcast_sender,
-                                                command_subdomain_str,
+                                                &scope_clone,
                                             )
                                             .await;
                                         }
@@ -180,14 +179,15 @@ impl RelayDatabase {
         env: Arc<NostrLMDB>,
         event: Box<Event>,
         broadcast_sender: &broadcast::Sender<Box<Event>>,
-        subdomain: Option<&str>,
+        scope: &Scope,
     ) {
         info!(
-            "Saving event: {} for subdomain: {:?} (in single DB)",
+            "Saving event: {} for scope: {:?} (in single DB)",
             event.as_json(),
-            subdomain
+            scope
         );
-        match env.scoped(subdomain) {
+        
+        match env.scoped(scope) {
             Ok(scoped_view) => {
                 if let Err(e) = scoped_view.save_event(event.as_ref()).await {
                     error!("Error saving event: {:?}", e);
@@ -205,23 +205,24 @@ impl RelayDatabase {
         self.broadcast_sender.subscribe()
     }
 
-    pub async fn save_event(&self, event: &Event, subdomain: Option<&str>) -> Result<()> {
-        let env = self.get_env(subdomain).await?;
-        match env.scoped(subdomain) {
+    pub async fn save_event(&self, event: &Event, scope: &Scope) -> Result<()> {
+        let env = self.get_env(scope).await?;
+        
+        match env.scoped(scope) {
             Ok(scoped_view) => {
                 match scoped_view.save_event(event).await {
                     Ok(_) => {
                         debug!(
-                            "Event saved successfully: {} for subdomain: {:?} (in single DB)",
+                            "Event saved successfully: {} for scope: {:?} (in single DB)",
                             event.as_json(),
-                            subdomain
+                            scope
                         );
                         Ok(())
                     }
                     Err(e) => {
                         error!(
-                            "Error saving event for subdomain {:?} (in single DB): {:?}",
-                            subdomain, e
+                            "Error saving event for scope {:?} (in single DB): {:?}",
+                            scope, e
                         );
                         Err(e.into())
                     }
@@ -234,22 +235,23 @@ impl RelayDatabase {
         }
     }
 
-    pub async fn delete(&self, filter: Filter, subdomain: Option<&str>) -> Result<()> {
-        let env = self.get_env(subdomain).await?;
-        match env.scoped(subdomain) {
+    pub async fn delete(&self, filter: Filter, scope: &Scope) -> Result<()> {
+        let env = self.get_env(scope).await?;
+        
+        match env.scoped(scope) {
             Ok(scoped_view) => {
                 match scoped_view.delete(filter).await {
                     Ok(_) => {
                         debug!(
-                            "Deleted events successfully for subdomain: {:?} (from single DB)",
-                            subdomain
+                            "Deleted events successfully for scope: {:?} (from single DB)",
+                            scope
                         );
                         Ok(())
                     }
                     Err(e) => {
                         error!(
-                            "Error deleting events for subdomain {:?} (from single DB): {:?}",
-                            subdomain, e
+                            "Error deleting events for scope {:?} (from single DB): {:?}",
+                            scope, e
                         );
                         Err(e.into())
                     }
@@ -274,35 +276,35 @@ impl RelayDatabase {
     pub async fn save_unsigned_event(
         &self,
         event: UnsignedEvent,
-        subdomain: Option<String>,
+        scope: Scope,
     ) -> std::result::Result<(), Error> {
-        self.save_store_command(StoreCommand::SaveUnsignedEvent(event, subdomain))
+        self.save_store_command(StoreCommand::SaveUnsignedEvent(event, scope))
             .await
     }
 
     pub async fn save_signed_event(
         &self,
         event: Event,
-        subdomain: Option<String>,
+        scope: Scope,
     ) -> std::result::Result<(), Error> {
-        self.save_store_command(StoreCommand::SaveSignedEvent(Box::new(event), subdomain))
+        self.save_store_command(StoreCommand::SaveSignedEvent(Box::new(event), scope))
             .await
     }
 
     pub async fn query(
         &self,
         filters: Vec<Filter>,
-        subdomain: Option<&str>,
+        scope: &Scope,
     ) -> std::result::Result<Events, Error> {
-        let env = self.get_env(subdomain).await?;
+        let env = self.get_env(scope).await?;
         let log_path = &self.db_path;
         debug!(
-            "Fetching events with filters: {:?} for subdomain: {:?} using single env at path: {:?}",
-            filters, subdomain, log_path
+            "Fetching events with filters: {:?} for scope: {:?} using single env at path: {:?}",
+            filters, scope, log_path
         );
         let mut all_events = Events::new(&Filter::new());
 
-        let scoped_view = match env.scoped(subdomain) {
+        let scoped_view = match env.scoped(scope) {
             Ok(view) => view,
             Err(e) => {
                 error!("Error getting scoped view: {:?}", e);
@@ -314,17 +316,17 @@ impl RelayDatabase {
             match scoped_view.query(filter).await {
                 Ok(events) => {
                     debug!(
-                        "Fetched {} events for filter for subdomain: {:?} (single DB), env_path: {:?}",
+                        "Fetched {} events for filter for scope: {:?} (single DB), env_path: {:?}",
                         events.len(),
-                        subdomain,
+                        scope,
                         log_path
                     );
                     all_events.extend(events);
                 }
                 Err(e) => {
                     error!(
-                        "Error fetching events for subdomain {:?} (single DB): {:?}",
-                        subdomain, e
+                        "Error fetching events for scope {:?} (single DB): {:?}",
+                        scope, e
                     );
                     return Err(e.into());
                 }
@@ -332,15 +334,28 @@ impl RelayDatabase {
         }
 
         debug!(
-            "Fetched {} total events for subdomain: {:?} (from single DB)",
+            "Fetched {} total events for scope: {:?} (from single DB)",
             all_events.len(),
-            subdomain
+            scope
         );
         Ok(all_events)
     }
 
-    async fn get_env(&self, _subdomain: Option<&str>) -> Result<Arc<NostrLMDB>, Error> {
+    async fn get_env(&self, _scope: &Scope) -> Result<Arc<NostrLMDB>, Error> {
         Ok(Arc::clone(&self.env))
+    }
+    
+    /// List all available scopes in the database
+    pub async fn list_scopes(&self) -> Result<Vec<Scope>, Error> {
+        let env = Arc::clone(&self.env);
+        // Run list_scopes on a blocking thread since it's a potentially expensive operation
+        let scopes = tokio::task::spawn_blocking(move || {
+            env.list_scopes()
+        }).await
+        .map_err(|e| Error::internal(format!("Failed to spawn blocking task for list_scopes: {}", e)))?
+        .map_err(|e| Error::internal(format!("Failed to list scopes: {}", e)))?;
+        
+        Ok(scopes)
     }
 }
 
@@ -350,6 +365,7 @@ mod tests {
     use crate::test_utils::create_test_event;
     use nostr_sdk::{Keys, Kind};
     use tempfile::tempdir;
+    use std::collections::HashSet;
 
     #[tokio::test]
     async fn test_subdomain_data_isolation() {
@@ -364,19 +380,19 @@ mod tests {
         let oslo_event_keys = Keys::generate();
         let oslo_event = create_test_event(&oslo_event_keys, Kind::TextNote.as_u16(), vec![]).await;
 
-        db.save_event(&root_event, None).await.unwrap();
-        db.save_event(&oslo_event, Some("oslo")).await.unwrap();
+        db.save_event(&root_event, &Scope::Default).await.unwrap();
+        db.save_event(&oslo_event, &Scope::named("oslo").unwrap()).await.unwrap();
 
         // With the new scoped-heed, there's proper isolation between subdomains
         // so we should update our expectations
-        let root_results = db.query(vec![Filter::new()], None).await.unwrap();
+        let root_results = db.query(vec![Filter::new()], &Scope::Default).await.unwrap();
         assert_eq!(
             root_results.len(),
             1,
             "Root query should only return 1 event (with isolation)"
         );
 
-        let oslo_results = db.query(vec![Filter::new()], Some("oslo")).await.unwrap();
+        let oslo_results = db.query(vec![Filter::new()], &Scope::named("oslo").unwrap()).await.unwrap();
         assert_eq!(
             oslo_results.len(),
             1,
@@ -429,10 +445,10 @@ mod tests {
             let db_clone = Arc::clone(&db);
             let writer_keys = Keys::generate();
             let handle = tokio::spawn(async move {
-                let subdomain_opt = match i % 3 {
-                    0 => None,
-                    1 => Some("sub1"),
-                    _ => Some("sub2"),
+                let scope = match i % 3 {
+                    0 => Scope::Default,
+                    1 => Scope::named("sub1").unwrap(),
+                    _ => Scope::named("sub2").unwrap(),
                 };
                 for j in 0..num_events_per_writer {
                     // Create a unique event content/tag to identify it
@@ -443,7 +459,7 @@ mod tests {
                         vec![Tag::custom("content_id".into(), vec![&content])],
                     )
                     .await;
-                    db_clone.save_event(&event, subdomain_opt).await.unwrap();
+                    db_clone.save_event(&event, &scope).await.unwrap();
                 }
             });
             mut_writer_handles.push(handle);
@@ -453,15 +469,15 @@ mod tests {
         for i in 0..num_reader_tasks {
             let db_clone = Arc::clone(&db);
             let handle = tokio::spawn(async move {
-                let subdomain_opt = match i % 3 {
-                    0 => None,
-                    1 => Some("sub1"),
-                    _ => Some("sub2"),
+                let scope = match i % 3 {
+                    0 => Scope::Default,
+                    1 => Scope::named("sub1").unwrap(),
+                    _ => Scope::named("sub2").unwrap(),
                 };
                 for _ in 0..num_reads_per_reader {
                     // Query with a broad filter
                     let _events = db_clone
-                        .query(vec![Filter::new()], subdomain_opt)
+                        .query(vec![Filter::new()], &scope)
                         .await
                         .unwrap();
                     // In a real scenario with many events, we might check _events.len()
@@ -482,9 +498,9 @@ mod tests {
 
         // With isolation, we need to check each subdomain separately
         // First, check how many events were actually stored in each subdomain
-        let none_domain_events = db.query(vec![Filter::new()], None).await.unwrap();
-        let sub1_events = db.query(vec![Filter::new()], Some("sub1")).await.unwrap();
-        let sub2_events = db.query(vec![Filter::new()], Some("sub2")).await.unwrap();
+        let none_domain_events = db.query(vec![Filter::new()], &Scope::Default).await.unwrap();
+        let sub1_events = db.query(vec![Filter::new()], &Scope::named("sub1").unwrap()).await.unwrap();
+        let sub2_events = db.query(vec![Filter::new()], &Scope::named("sub2").unwrap()).await.unwrap();
         
         // Print the actual counts to help debug
         println!("Events in None subdomain: {}", none_domain_events.len());
@@ -535,16 +551,16 @@ mod tests {
         .await;
 
         // Save initial events
-        db.save_event(&event_a, None).await.unwrap(); // Subdomain: None
-        db.save_event(&event_b, Some("s1")).await.unwrap(); // Subdomain: s1
-        db.save_event(&event_c, Some("s2")).await.unwrap(); // Subdomain: s2
+        db.save_event(&event_a, &Scope::Default).await.unwrap(); // Subdomain: None
+        db.save_event(&event_b, &Scope::named("s1").unwrap()).await.unwrap(); // Subdomain: s1
+        db.save_event(&event_c, &Scope::named("s2").unwrap()).await.unwrap(); // Subdomain: s2
 
         // --- Test Case 1: Delete event_a (from None) using specific filter & None subdomain ---
         let filter_a = Filter::new().id(event_a.id);
-        db.delete(filter_a.clone(), None).await.unwrap();
+        db.delete(filter_a.clone(), &Scope::Default).await.unwrap();
 
         let results_after_delete_a_none = db
-            .query(vec![Filter::new().id(event_a.id)], None)
+            .query(vec![Filter::new().id(event_a.id)], &Scope::Default)
             .await
             .unwrap();
         assert!(
@@ -552,7 +568,7 @@ mod tests {
             "Event A should be deleted from None scope"
         );
         let results_after_delete_a_s1 = db
-            .query(vec![Filter::new().id(event_b.id)], Some("s1"))
+            .query(vec![Filter::new().id(event_b.id)], &Scope::named("s1").unwrap())
             .await
             .unwrap();
         assert_eq!(
@@ -561,7 +577,7 @@ mod tests {
             "Event B should still exist in s1 scope"
         );
         let results_after_delete_a_s2 = db
-            .query(vec![Filter::new().id(event_c.id)], Some("s2"))
+            .query(vec![Filter::new().id(event_c.id)], &Scope::named("s2").unwrap())
             .await
             .unwrap();
         assert_eq!(
@@ -572,10 +588,10 @@ mod tests {
 
         // --- Test Case 2: Delete event_b (from s1) using specific filter & s1 subdomain ---
         let filter_b = Filter::new().id(event_b.id);
-        db.delete(filter_b.clone(), Some("s1")).await.unwrap();
+        db.delete(filter_b.clone(), &Scope::named("s1").unwrap()).await.unwrap();
 
         let results_after_delete_b_s1 = db
-            .query(vec![Filter::new().id(event_b.id)], Some("s1"))
+            .query(vec![Filter::new().id(event_b.id)], &Scope::named("s1").unwrap())
             .await
             .unwrap();
         assert!(
@@ -583,7 +599,7 @@ mod tests {
             "Event B should be deleted from s1 scope"
         );
         let results_after_delete_b_s2 = db
-            .query(vec![Filter::new().id(event_c.id)], Some("s2"))
+            .query(vec![Filter::new().id(event_c.id)], &Scope::named("s2").unwrap())
             .await
             .unwrap();
         assert_eq!(
@@ -594,17 +610,17 @@ mod tests {
 
         // --- Test Case 3: Broad filter, different subdomain ---
         // Re-save A and B for this test case
-        db.save_event(&event_a, None).await.unwrap();
-        db.save_event(&event_b, Some("s1")).await.unwrap();
+        db.save_event(&event_a, &Scope::Default).await.unwrap();
+        db.save_event(&event_b, &Scope::named("s1").unwrap()).await.unwrap();
         // Event C is still in s2 from before
 
         // Delete all TextNote events, specifying subdomain "s2" for the delete operation.
         // With isolated operations, this should ONLY delete events in the s2 subdomain
         let broad_filter = Filter::new().kind(Kind::TextNote);
-        db.delete(broad_filter.clone(), Some("s2")).await.unwrap();
+        db.delete(broad_filter.clone(), &Scope::named("s2").unwrap()).await.unwrap();
 
         let remaining_a = db
-            .query(vec![Filter::new().id(event_a.id)], None)
+            .query(vec![Filter::new().id(event_a.id)], &Scope::Default)
             .await
             .unwrap();
         assert_eq!(
@@ -614,7 +630,7 @@ mod tests {
         );
 
         let remaining_b = db
-            .query(vec![Filter::new().id(event_b.id)], Some("s1"))
+            .query(vec![Filter::new().id(event_b.id)], &Scope::named("s1").unwrap())
             .await
             .unwrap();
         assert_eq!(
@@ -624,12 +640,57 @@ mod tests {
         );
 
         let remaining_c = db
-            .query(vec![Filter::new().id(event_c.id)], Some("s2"))
+            .query(vec![Filter::new().id(event_c.id)], &Scope::named("s2").unwrap())
             .await
             .unwrap();
         assert!(
             remaining_c.is_empty(),
             "Event C (s2) should be deleted by broad filter on s2"
         );
+    }
+
+    #[tokio::test]
+    async fn test_list_scopes_functionality() {
+        // Create a temporary database
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("scopes_test_db");
+        
+        // Open the database
+        let lmdb = NostrLMDB::open(&db_path).unwrap();
+        
+        // Create events in different scopes
+        let event_keys = Keys::generate();
+        
+        // Create and save events to different scopes
+        let default_event = create_test_event(&event_keys, Kind::TextNote.as_u16(), vec![]).await;
+        let group1_event = create_test_event(&event_keys, Kind::TextNote.as_u16(), vec![]).await;
+        let group2_event = create_test_event(&event_keys, Kind::TextNote.as_u16(), vec![]).await;
+        let group3_event = create_test_event(&event_keys, Kind::TextNote.as_u16(), vec![]).await;
+        
+        // Save events to their respective scopes
+        lmdb.scoped(&Scope::Default).unwrap().save_event(&default_event).await.unwrap();
+        lmdb.scoped(&Scope::named("group1").unwrap()).unwrap().save_event(&group1_event).await.unwrap();
+        lmdb.scoped(&Scope::named("group2").unwrap()).unwrap().save_event(&group2_event).await.unwrap();
+        lmdb.scoped(&Scope::named("group3").unwrap()).unwrap().save_event(&group3_event).await.unwrap();
+        
+        // Call list_scopes and verify it returns all scopes
+        let scopes = lmdb.list_scopes().unwrap();
+        
+        // Convert to a HashSet for easier verification
+        let scope_set: HashSet<String> = scopes.into_iter()
+            .map(|s| match s {
+                Scope::Default => "default".to_string(),
+                Scope::Named { name, .. } => name,
+            })
+            .collect();
+        
+        // Verify all expected scopes are included
+        assert!(scope_set.contains("default"), "Default scope should be included");
+        assert!(scope_set.contains("group1"), "group1 scope should be included");
+        assert!(scope_set.contains("group2"), "group2 scope should be included");
+        assert!(scope_set.contains("group3"), "group3 scope should be included");
+        
+        // Verify the number of scopes is correct (4 = default + 3 named scopes)
+        assert_eq!(scope_set.len(), 4, "Should have exactly 4 scopes");
     }
 }

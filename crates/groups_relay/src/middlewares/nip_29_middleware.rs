@@ -12,6 +12,7 @@ use crate::Groups;
 use crate::StoreCommand;
 use anyhow::Result;
 use async_trait::async_trait;
+use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tracing::{debug, error};
@@ -90,14 +91,14 @@ impl Nip29Middleware {
         &self,
         event: Box<Event>,
         authed_pubkey: &Option<PublicKey>,
-        subdomain: Option<String>,
+        subdomain: Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
         // Allow events through for unmanaged groups (groups not in relay state)
         // Per NIP-29: In unmanaged groups, everyone is considered a member
         // These groups can later be converted to managed groups by the relay admin
         if event.tags.find(TagKind::h()).is_some()
             && !Group::is_group_management_kind(event.kind)
-            && self.groups.find_group_from_event(&event).is_none()
+            && self.groups.find_group_from_event(&event, &subdomain).is_none()
         {
             debug!(target: "nip29", "Processing unmanaged group event: kind={}, id={}", event.kind, event.id);
             return Ok(vec![StoreCommand::SaveSignedEvent(event, subdomain)]);
@@ -106,57 +107,57 @@ impl Nip29Middleware {
         let events_to_save = match event.kind {
             k if k == KIND_GROUP_CREATE_9007 => {
                 debug!(target: "nip29", "Processing group create event: id={}", event.id);
-                self.groups.handle_group_create(event).await?
+                self.groups.handle_group_create(event, &subdomain).await?
             }
 
             k if k == KIND_GROUP_EDIT_METADATA_9002 => {
                 debug!(target: "nip29", "Processing group edit metadata event: id={}", event.id);
-                self.groups.handle_edit_metadata(event)?
+                self.groups.handle_edit_metadata(event, &subdomain)?
             }
 
             k if k == KIND_GROUP_USER_JOIN_REQUEST_9021 => {
                 debug!(target: "nip29", "Processing group join request: id={}", event.id);
-                self.groups.handle_join_request(event)?
+                self.groups.handle_join_request(event, &subdomain)?
             }
 
             k if k == KIND_GROUP_USER_LEAVE_REQUEST_9022 => {
                 debug!(target: "nip29", "Processing group leave request: id={}", event.id);
-                self.groups.handle_leave_request(event)?
+                self.groups.handle_leave_request(event, &subdomain)?
             }
 
             k if k == KIND_GROUP_SET_ROLES_9006 => {
                 debug!(target: "nip29", "Processing group set roles event: id={}", event.id);
-                self.groups.handle_set_roles(event)?
+                self.groups.handle_set_roles(event, &subdomain)?
             }
 
             k if k == KIND_GROUP_ADD_USER_9000 => {
                 debug!(target: "nip29", "Processing group add user event: id={}", event.id);
-                self.groups.handle_put_user(event)?
+                self.groups.handle_put_user(event, &subdomain)?
             }
 
             k if k == KIND_GROUP_REMOVE_USER_9001 => {
                 debug!(target: "nip29", "Processing group remove user event: id={}", event.id);
-                self.groups.handle_remove_user(event)?
+                self.groups.handle_remove_user(event, &subdomain)?
             }
 
             k if k == KIND_GROUP_DELETE_9008 => {
                 debug!(target: "nip29", "Processing group deletion event: id={}", event.id);
-                self.groups.handle_delete_group(event, authed_pubkey)?
+                self.groups.handle_delete_group(event, authed_pubkey, &subdomain)?
             }
 
             k if k == KIND_GROUP_DELETE_EVENT_9005 => {
                 debug!(target: "nip29", "Processing group content event deletion: id={}", event.id);
-                self.groups.handle_delete_event(event, authed_pubkey)?
+                self.groups.handle_delete_event(event, authed_pubkey, &subdomain)?
             }
 
             k if k == KIND_GROUP_CREATE_INVITE_9009 => {
                 debug!(target: "nip29", "Processing group create invite event: id={}", event.id);
-                self.groups.handle_create_invite(event)?
+                self.groups.handle_create_invite(event, &subdomain)?
             }
 
             k if !NON_GROUP_ALLOWED_KINDS.contains(&k) => {
                 debug!(target: "nip29", "Processing group content event: kind={}, id={}", event.kind, event.id);
-                self.groups.handle_group_content(event)?
+                self.groups.handle_group_content(event, &subdomain)?
             }
 
             _ => {
@@ -193,9 +194,12 @@ impl Nip29Middleware {
             return Ok(());
         }
 
+        // Use the default scope for filters - in production the scope comes from the subdomain
+        let scope = Scope::Default;
+
         for tag in self.get_group_tags(filter) {
-            if let Some(group_ref) = self.groups.get_group(&tag) {
-                self.groups.verify_group_access(&group_ref, authed_pubkey)?;
+            if let Some(group_ref) = self.groups.get_group(&scope, &tag) {
+                self.groups.verify_group_access(group_ref.value(), authed_pubkey)?;
             }
         }
         Ok(())
@@ -229,7 +233,7 @@ impl Nip29Middleware {
             return Ok(());
         };
 
-        let subdomain = conn.subdomain.as_deref();
+        let subdomain = &conn.subdomain;
 
         relay_conn
             .handle_subscription_request(subscription_id.clone(), filters, subdomain)
@@ -258,7 +262,7 @@ impl Middleware for Nip29Middleware {
             ClientMessage::Event(event_cow) => {
                 metrics::inbound_events_processed().increment(1);
                 let original_event_id = event_cow.as_ref().id; // Get ID before moving
-                let subdomain = ctx.state.subdomain().map(|s| s.to_string());
+                let subdomain = ctx.state.subdomain().clone();
                 match self
                     .handle_event(
                         Box::new(event_cow.into_owned()),
@@ -428,11 +432,11 @@ impl Middleware for Nip29Middleware {
             return ctx.next().await;
         };
 
-        let Some(group) = self.groups.find_group_from_event(event) else {
+        let Some(group) = self.groups.find_group_from_event(event, &ctx.state.subdomain()) else {
             return ctx.next().await;
         };
 
-        let Ok(can_see) = group.can_see_event(&ctx.state.authed_pubkey, &self.relay_pubkey, event)
+        let Ok(can_see) = group.value().can_see_event(&ctx.state.authed_pubkey, &self.relay_pubkey, event)
         else {
             ctx.message = None;
             return ctx.next().await;
@@ -543,7 +547,7 @@ mod tests {
                 connection_token: token.clone(),
                 event_start_time: None,
                 event_kind: None,
-                subdomain: None,
+                subdomain: Scope::Default,
             }
         }
     }
@@ -752,7 +756,7 @@ mod tests {
 
         // Should allow the event through since it's an unmanaged group
         let event_id = event.id;
-        let result = middleware.handle_event(Box::new(event), &None, None).await;
+        let result = middleware.handle_event(Box::new(event), &None, Scope::Default).await;
         assert!(result.is_ok());
         if let Ok(commands) = result {
             assert_eq!(commands.len(), 1);
@@ -785,7 +789,7 @@ mod tests {
         .await;
 
         // Should not return an error because group is not needed here
-        let result = middleware.handle_event(Box::new(event), &None, None).await;
+        let result = middleware.handle_event(Box::new(event), &None, Scope::Default).await;
         assert!(result.is_ok());
     }
 
@@ -809,7 +813,7 @@ mod tests {
         )
         .await;
         groups
-            .handle_group_create(Box::new(create_event))
+            .handle_group_create(Box::new(create_event), &Scope::Default)
             .await
             .unwrap();
 
@@ -823,7 +827,7 @@ mod tests {
             ],
         )
         .await;
-        groups.handle_put_user(Box::new(add_member_event)).unwrap();
+        groups.handle_put_user(Box::new(add_member_event), &Scope::Default).unwrap();
 
         // Create a group content event
         let content_event = create_test_event(
@@ -867,7 +871,7 @@ mod tests {
         )
         .await;
         groups
-            .handle_group_create(Box::new(create_event))
+            .handle_group_create(Box::new(create_event), &Scope::Default)
             .await
             .unwrap();
 
@@ -913,7 +917,7 @@ mod tests {
         )
         .await;
         groups
-            .handle_group_create(Box::new(create_event))
+            .handle_group_create(Box::new(create_event), &Scope::Default)
             .await
             .unwrap();
 
@@ -1110,7 +1114,7 @@ mod tests {
 
         // Save the unmanaged event
         database
-            .save_signed_event(unmanaged_event.clone(), None)
+            .save_signed_event(unmanaged_event.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -1125,7 +1129,7 @@ mod tests {
         .await;
 
         let result = middleware
-            .handle_event(Box::new(create_event_non_admin), &None, None)
+            .handle_event(Box::new(create_event_non_admin), &None, Scope::Default)
             .await;
         assert!(result.is_err());
         assert_eq!(
@@ -1143,7 +1147,7 @@ mod tests {
 
         let event_id = create_event_admin.id;
         let result = middleware
-            .handle_event(Box::new(create_event_admin), &None, None)
+            .handle_event(Box::new(create_event_admin), &None, Scope::Default)
             .await;
         assert!(result.is_ok());
         if let Ok(commands) = result {
@@ -1158,7 +1162,8 @@ mod tests {
         }
 
         // Verify the group was created and is managed
-        let group = groups.get_group(group_id).unwrap();
+        let scope = Scope::Default; // In tests we use the default scope
+        let group = groups.get_group(&scope, group_id).unwrap();
         assert!(group.is_admin(&admin_keys.public_key()));
     }
 
@@ -1345,14 +1350,14 @@ mod tests {
         )
         .await;
         groups
-            .handle_group_create(Box::new(create_event))
+            .handle_group_create(Box::new(create_event), &Scope::Default)
             .await
             .unwrap();
 
         // Persist group creation related events if necessary for the group to be found
         // This might involve saving commands from handle_group_create to the database
         // For simplicity here, assume group is in memory. If DB interaction is key:
-        // let commands = groups.handle_group_create(Box::new(create_event)).await.unwrap();
+        // let commands = groups.handle_group_create(Box::new(create_event), &Scope::Default).await.unwrap();
         // for cmd in commands { database.save_store_command(cmd).await.unwrap(); }
 
         let meta_filter = Filter::new()
@@ -1390,7 +1395,7 @@ mod tests {
         .await;
         // Ensure group is actually created and considered private by the Groups module.
         let commands = groups
-            .handle_group_create(Box::new(private_create_event))
+            .handle_group_create(Box::new(private_create_event), &Scope::Default)
             .await
             .unwrap();
         for cmd in commands {
@@ -1407,7 +1412,7 @@ mod tests {
         )
         .await;
         let commands_add = groups
-            .handle_put_user(Box::new(add_to_private_event))
+            .handle_put_user(Box::new(add_to_private_event), &Scope::Default)
             .unwrap();
         for cmd in commands_add {
             middleware.database.save_store_command(cmd).await.unwrap();
@@ -1447,7 +1452,7 @@ mod tests {
         )
         .await;
         let commands = groups
-            .handle_group_create(Box::new(private_create_event))
+            .handle_group_create(Box::new(private_create_event), &Scope::Default)
             .await
             .unwrap();
         for cmd in commands {
@@ -1485,7 +1490,7 @@ mod tests {
         )
         .await;
         let commands = groups
-            .handle_group_create(Box::new(private_create_event))
+            .handle_group_create(Box::new(private_create_event), &Scope::Default)
             .await
             .unwrap();
         for cmd in commands {
@@ -1523,7 +1528,7 @@ mod tests {
         )
         .await;
         let commands = groups
-            .handle_group_create(Box::new(private_create_event))
+            .handle_group_create(Box::new(private_create_event), &Scope::Default)
             .await
             .unwrap();
         for cmd in commands {

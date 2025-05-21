@@ -2,6 +2,7 @@ use crate::metrics;
 use crate::nostr_session_state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
+use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
 use std::time::Instant;
 use tracing::{debug, info, info_span};
@@ -35,7 +36,10 @@ impl Middleware for LoggerMiddleware {
         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         // Extract subdomain from connection state
-        let subdomain = ctx.state.subdomain.as_deref();
+        let subdomain = match &ctx.state.subdomain {
+            Scope::Named { name, .. } => Some(name.as_str()),
+            Scope::Default => None,
+        };
 
         // Create a span with connection ID and subdomain to ensure logs always have context
         let connection_span = info_span!(
@@ -97,7 +101,10 @@ impl Middleware for LoggerMiddleware {
         ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         // Extract subdomain from connection state
-        let subdomain = ctx.state.subdomain.as_deref();
+        let subdomain = match &ctx.state.subdomain {
+            Scope::Named { name, .. } => Some(name.as_str()),
+            Scope::Default => None,
+        };
 
         // Create a span with connection ID and subdomain to ensure logs always have context
         let connection_span = info_span!(
@@ -168,7 +175,10 @@ impl Middleware for LoggerMiddleware {
         ctx: &mut DisconnectContext<'a, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         // Extract subdomain from connection state
-        let subdomain = ctx.state.subdomain.as_deref();
+        let subdomain = match &ctx.state.subdomain {
+            Scope::Named { name, .. } => Some(name.as_str()),
+            Scope::Default => None,
+        };
 
         // Create a span with connection ID and subdomain to ensure logs always have context
         let connection_span = info_span!(
@@ -191,7 +201,10 @@ impl Middleware for LoggerMiddleware {
         ctx: &mut ConnectionContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
         // Extract subdomain from connection state
-        let subdomain = ctx.state.subdomain.as_deref();
+        let subdomain = match &ctx.state.subdomain {
+            Scope::Named { name, .. } => Some(name.as_str()),
+            Scope::Default => None,
+        };
 
         // Create a span with connection ID and subdomain to ensure logs always have context
         let connection_span = info_span!(

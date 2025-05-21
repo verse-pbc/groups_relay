@@ -2,6 +2,7 @@ use crate::nostr_database::RelayDatabase;
 use crate::nostr_session_state::NostrConnectionState;
 use crate::StoreCommand;
 use async_trait::async_trait;
+use nostr_lmdb::Scope; // Needed for tests
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use websocket_builder::{InboundContext, Middleware, OutboundContext};
@@ -58,7 +59,7 @@ impl Middleware for Nip40ExpirationMiddleware {
                     let filter = Filter::new().id(event_ref.id);
                     let delete_command = StoreCommand::DeleteEvents(
                         filter,
-                        ctx.state.subdomain().map(|s| s.to_string()),
+                        ctx.state.subdomain().clone(),
                     );
 
                     if let Err(e) = self.database.save_store_command(delete_command).await {
@@ -117,7 +118,7 @@ mod tests {
         let expired_event = admin_keys.sign_event(unsigned_expired_event).await.unwrap();
 
         database
-            .save_signed_event(expired_event.clone(), None)
+            .save_signed_event(expired_event.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -147,7 +148,7 @@ mod tests {
 
         sleep(Duration::from_millis(100)).await;
         let events = database
-            .query(vec![Filter::new().id(expired_event.id)], None)
+            .query(vec![Filter::new().id(expired_event.id)], &Scope::Default)
             .await
             .unwrap();
         assert!(events.is_empty(), "Expired event should be deleted");
@@ -170,7 +171,7 @@ mod tests {
             .unwrap();
 
         database
-            .save_signed_event(non_expired_event.clone(), None)
+            .save_signed_event(non_expired_event.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -200,7 +201,7 @@ mod tests {
 
         sleep(Duration::from_millis(100)).await;
         let events = database
-            .query(vec![Filter::new().id(non_expired_event.id)], None)
+            .query(vec![Filter::new().id(non_expired_event.id)], &Scope::Default)
             .await
             .unwrap();
         assert_eq!(events.len(), 1, "Non-expired event should not be deleted");
@@ -220,7 +221,7 @@ mod tests {
             .unwrap();
 
         database
-            .save_signed_event(no_expiration_event.clone(), None)
+            .save_signed_event(no_expiration_event.clone(), Scope::Default)
             .await
             .unwrap();
 
@@ -252,7 +253,7 @@ mod tests {
 
         sleep(Duration::from_millis(100)).await;
         let events = database
-            .query(vec![Filter::new().id(no_expiration_event.id)], None)
+            .query(vec![Filter::new().id(no_expiration_event.id)], &Scope::Default)
             .await
             .unwrap();
         assert_eq!(

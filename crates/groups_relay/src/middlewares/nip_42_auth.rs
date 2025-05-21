@@ -3,6 +3,7 @@ use crate::nostr_session_state::NostrConnectionState;
 use crate::subdomain::extract_subdomain;
 use anyhow::Result;
 use async_trait::async_trait;
+use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::Duration;
@@ -32,9 +33,9 @@ impl Nip42Middleware {
     }
     
     // Check if the auth event's relay URL is valid for the current connection
-    fn validate_relay_url(&self, client_relay_url: &str, connection_subdomain: Option<&str>) -> bool {
-        debug!(target: "auth", "Validating relay URL - client: {}, auth: {}, connection_subdomain: {:?}", 
-              client_relay_url, self.auth_url, connection_subdomain);
+    fn validate_relay_url(&self, client_relay_url: &str, connection_scope: &Scope) -> bool {
+        debug!(target: "auth", "Validating relay URL - client: {}, auth: {}, connection_scope: {:?}", 
+              client_relay_url, self.auth_url, connection_scope);
         
         // For localhost or IP addresses, require exact match
         if client_relay_url.contains("localhost") || 
@@ -95,7 +96,7 @@ impl Nip42Middleware {
         }
         
         // If we have a specific subdomain from the connection, ensure it matches
-        if let Some(conn_subdomain) = connection_subdomain {
+        if let Scope::Named { name: conn_subdomain, .. } = connection_scope {
             // Extract subdomain from client's relay URL using the same extraction logic used elsewhere
             let client_subdomain = extract_subdomain(&client_host, self.base_domain_parts);
             
@@ -105,18 +106,20 @@ impl Nip42Middleware {
             // Check subdomain match
             let matches = match client_subdomain {
                 // If client URL has a subdomain, it must match the connection subdomain
-                Some(client_sub) => client_sub == conn_subdomain,
-                // If client URL has no subdomain, connection should also have no subdomain
-                None => conn_subdomain.is_empty(),
+                Some(client_sub) => client_sub == conn_subdomain.as_str(),
+                // If client URL has no subdomain, connection should also have no subdomain (which would be Scope::Default, not here)
+                None => false,
             };
             
             debug!(target: "auth", "Subdomain match result: {}", matches);
             
             matches
-        } else {
-            // If no specific subdomain in connection, just verify base domain match
-            debug!(target: "auth", "No connection subdomain specified, base domain match is sufficient");
-            true
+        } else /* if let Scope::Default = connection_scope, which is the only other case */ {
+            // If no specific subdomain in connection (Scope::Default), ensure client URL has no subdomain
+            let client_subdomain = extract_subdomain(&client_host, self.base_domain_parts);
+            let matches = client_subdomain.is_none();
+            debug!(target: "auth", "Default scope, checking client has no subdomain: {}", matches);
+            matches
         }
     }
 }
@@ -249,14 +252,15 @@ impl Middleware for Nip42Middleware {
                         let client_relay_url = tag_relay_url.as_str_without_trailing_slash();
                         
                         // Get the connection's subdomain for validation
-                        let connection_subdomain = ctx.state.subdomain();
+                        let connection_scope = ctx.state.subdomain();
                         
                         // Validate the relay URL against the current connection
-                        if !self.validate_relay_url(client_relay_url, connection_subdomain) {
+                        if !self.validate_relay_url(client_relay_url, connection_scope) {
                             let conn_id_err = ctx.connection_id.clone();
-                            let subdomain_msg = connection_subdomain
-                                .map(|s| format!(" with subdomain '{}'", s))
-                                .unwrap_or_default();
+                            let subdomain_msg = match connection_scope {
+                                Scope::Named { name, .. } => format!(" with subdomain '{}'", name),
+                                Scope::Default => String::new(),
+                            };
                                 
                             error!(
                                 target: "auth",
@@ -629,10 +633,13 @@ mod tests {
         let mut state = create_test_state(None);
         let challenge = "test_challenge".to_string();
         state.challenge = Some(challenge.clone());
-        state.subdomain = Some("test".to_string()); // Connection is for test.example.com
+        state.subdomain = Scope::named("test").unwrap(); // Connection is for test.example.com
         
         // Debug connection state before creating context
-        let subdomain_str = state.subdomain.as_ref().unwrap_or(&"None".to_string()).clone();
+        let subdomain_str = match &state.subdomain {
+            Scope::Named { name, .. } => name.clone(),
+            Scope::Default => "Default".to_string(),
+        };
         println!("Test setup - subdomain: {}, auth_url: {}", subdomain_str, auth_url);
 
         // Auth event with correct subdomain (test.example.com)
@@ -686,7 +693,7 @@ mod tests {
         let mut state = create_test_state(None);
         let challenge = "test_challenge".to_string();
         state.challenge = Some(challenge.clone());
-        state.subdomain = Some("test".to_string()); // Connection is for test.example.com
+        state.subdomain = Scope::named("test").unwrap(); // Connection is for test.example.com
 
         println!("Wrong subdomain test - connection subdomain: test, auth_url: {}", auth_url);
 
@@ -725,7 +732,7 @@ mod tests {
         let mut state = create_test_state(None);
         let challenge = "test_challenge".to_string();
         state.challenge = Some(challenge.clone());
-        state.subdomain = Some("test".to_string()); // Connection is for test.example.com
+        state.subdomain = Scope::named("test").unwrap(); // Connection is for test.example.com
 
         println!("Different base domain test - connection subdomain: test, auth_url: {}", auth_url);
 

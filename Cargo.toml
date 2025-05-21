@@ -24,8 +24,9 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 futures = "0.3.31"
 clap = { version = "4.5.17", features = ["derive"] }
-nostr-sdk = { git = "https://github.com/verse-pbc/nostr", branch = "master", features = ["all-nips"] }
-nostr = { git = "https://github.com/verse-pbc/nostr", branch = "master", features = ["std"] }
+nostr-sdk = { git = "https://github.com/verse-pbc/nostr", features = ["all-nips"] }
+nostr = { git = "https://github.com/verse-pbc/nostr", features = ["std"] }
+nostr-lmdb = { git = "https://github.com/verse-pbc/nostr" }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 metrics = "0.24.1"
 metrics-exporter-prometheus = "0.16.2"

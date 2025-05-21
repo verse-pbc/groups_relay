@@ -104,11 +104,11 @@ async fn run_websocket_connection(
     let subdomain = host_string
         .as_ref()
         .and_then(|host| extract_subdomain(host, state.base_domain_parts));
-        
+
     // Create isolated span for this connection
     let span = tracing::info_span!(parent: None, "websocket_connection", ip = %real_ip, subdomain = ?subdomain);
     let _guard = span.enter();
-    
+
     // Create the connection counter guard - it will be automatically dropped when the connection ends
     let _counter = ConnectionCounter::new(state.connection_counter.clone());
 
@@ -141,12 +141,12 @@ pub async fn handle_root(
         let host_string = headers
             .get(axum::http::header::HOST)
             .and_then(|hv| hv.to_str().ok().map(String::from));
-            
+
         // Extract subdomain for logging
         let subdomain = host_string
             .as_ref()
             .and_then(|host| extract_subdomain(host, state.base_domain_parts));
-            
+
         // Create a display string with subdomain information
         let display_info = if let Some(sub) = &subdomain {
             if !sub.is_empty() {
@@ -157,7 +157,7 @@ pub async fn handle_root(
         } else {
             String::new()
         };
-        
+
         // Log upgrade request in isolated span
         let upgrade_span = tracing::info_span!(parent: None, "http_upgrade");
         let _guard = upgrade_span.enter();
@@ -217,7 +217,7 @@ pub async fn handle_nostr_json(State(state): State<Arc<ServerState>>) -> impl In
         description: Some(
             "A specialized relay implementing NIP-29 for Nostr group management. This relay is under development and all data may be deleted in the future".to_string(),
         ),
-        supported_nips: Some(vec![1, 11, 29, 40, 42, 70]),
+        supported_nips: Some(vec![1, 9, 11, 29, 40, 42, 70]),
         software: Some("groups_relay".to_string()),
         version: Some(env!("CARGO_PKG_VERSION").to_string()),
         pubkey: Some(state.http_state.groups.relay_pubkey.to_string()),
