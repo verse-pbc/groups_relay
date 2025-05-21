@@ -23,7 +23,7 @@ pub struct MinimalStateFactory;
 
 impl StateFactory<Arc<MinimalState>> for MinimalStateFactory {
     fn create_state(&self, _token: CancellationToken) -> Arc<MinimalState> {
-        Arc::new(MinimalState::default())
+        Arc::new(MinimalState)
     }
 }
 

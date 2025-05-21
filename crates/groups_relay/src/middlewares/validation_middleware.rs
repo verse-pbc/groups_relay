@@ -29,10 +29,11 @@ impl ValidationMiddleware {
         }
 
         // For all other cases, require an 'h' tag for group events unless the kind is in the non-group allowed set.
-        if event.tags.find(TagKind::h()).is_none() && !NON_GROUP_ALLOWED_KINDS.contains(&event.kind)
-        {
-            return Err("invalid: group events must contain an 'h' tag");
-        }
+        // Turned off so we can use this with any type of event
+        // if event.tags.find(TagKind::h()).is_none() && !NON_GROUP_ALLOWED_KINDS.contains(&event.kind)
+        // {
+        //     return Err("invalid: group events must contain an 'h' tag");
+        // }
 
         Ok(())
     }

@@ -94,7 +94,7 @@ impl Middleware for LoggerMiddleware {
                     status,
                     message,
                 } => {
-                    let event_id_clone = event_id.clone();
+                    let event_id_clone = *event_id;
                     let status_clone = *status;
                     let message_clone = message.clone();
 

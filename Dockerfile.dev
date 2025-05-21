@@ -1,12 +1,11 @@
 FROM rust:1.84.0-slim-bookworm AS rust-builder
 
 RUN set -eux; \
-    mkdir -p /usr/share/keyrings; \
-    apt-get update -y; \
-    apt-get install -y --no-install-recommends wget ca-certificates; \
-    wget -O /usr/share/keyrings/debian-archive-keyring.gpg https://deb.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2023.3+deb12u1_all.deb; \
     apt-get update -y; \
     apt-get install -y --no-install-recommends \
+        wget \
+        ca-certificates \
+        debian-archive-keyring \
         pkg-config \
         libssl-dev; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
@@ -55,12 +54,11 @@ RUN pnpm run build
 FROM debian:bookworm-slim
 
 RUN set -eux; \
-    mkdir -p /usr/share/keyrings; \
-    apt-get update -y; \
-    apt-get install -y --no-install-recommends wget ca-certificates; \
-    wget -O /usr/share/keyrings/debian-archive-keyring.gpg https://deb.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2023.3+deb12u1_all.deb; \
     apt-get update -y; \
     apt-get install -y --no-install-recommends \
+        wget \
+        ca-certificates \
+        debian-archive-keyring \
         pkg-config \
         libssl-dev \
         iputils-ping; \
