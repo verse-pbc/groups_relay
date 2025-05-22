@@ -48,6 +48,11 @@ pub struct SubdomainResponse {
     subdomains: Vec<String>,
 }
 
+#[derive(Serialize)]
+pub struct ConfigResponse {
+    base_domain_parts: usize,
+}
+
 /// A RAII guard for tracking active WebSocket connections
 #[derive(Debug)]
 struct ConnectionCounter {
@@ -272,4 +277,12 @@ pub async fn handle_subdomains(State(state): State<Arc<ServerState>>) -> impl In
     debug!("Found {} subdomains: {:?}", subdomains.len(), subdomains);
     
     Json(SubdomainResponse { subdomains })
+}
+
+pub async fn handle_config(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
+    debug!("Handling config request");
+    
+    Json(ConfigResponse {
+        base_domain_parts: state.base_domain_parts,
+    })
 }

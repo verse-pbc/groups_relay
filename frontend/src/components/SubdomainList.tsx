@@ -10,6 +10,7 @@ interface SubdomainListState {
   subdomains: string[];
   isLoadingSubdomains: boolean;
   error: string | null;
+  baseDomainParts: number;
 }
 
 export class SubdomainList extends Component<SubdomainListProps, SubdomainListState> {
@@ -19,12 +20,32 @@ export class SubdomainList extends Component<SubdomainListProps, SubdomainListSt
       subdomains: [],
       isLoadingSubdomains: true,
       error: null,
+      baseDomainParts: 2, // Default fallback
     };
   }
 
   async componentDidMount() {
+    await this.fetchConfig();
     await this.fetchSubdomains();
   }
+
+  fetchConfig = async () => {
+    try {
+      const response = await fetch('/api/config');
+      if (!response.ok) {
+        console.warn(`Failed to fetch config: ${response.status}, using defaults`);
+        return;
+      }
+      
+      const data = await response.json();
+      this.setState({
+        baseDomainParts: data.base_domain_parts || 2,
+      });
+    } catch (error) {
+      console.warn('Error fetching config, using defaults:', error);
+      // Keep default baseDomainParts value
+    }
+  };
 
   fetchSubdomains = async () => {
     try {
@@ -66,9 +87,9 @@ export class SubdomainList extends Component<SubdomainListProps, SubdomainListSt
       return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
     }
     
-    // Assume the base domain is the last 2 parts (e.g., example.com)
-    // This might need adjustment based on your domain structure
-    const baseDomain = parts.slice(-2).join('.');
+    // Use configured base_domain_parts for proper domain extraction
+    const { baseDomainParts } = this.state;
+    const baseDomain = parts.slice(-baseDomainParts).join('.');
     return `${protocol}//${baseDomain}${port ? `:${port}` : ''}`;
   };
 
@@ -82,7 +103,8 @@ export class SubdomainList extends Component<SubdomainListProps, SubdomainListSt
     }
     
     const parts = hostname.split('.');
-    const baseDomain = parts.slice(-2).join('.');
+    const { baseDomainParts } = this.state;
+    const baseDomain = parts.slice(-baseDomainParts).join('.');
     
     const newHostname = subdomain ? `${subdomain}.${baseDomain}` : baseDomain;
     const newUrl = `${protocol}//${newHostname}${port ? `:${port}` : ''}`;

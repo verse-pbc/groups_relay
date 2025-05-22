@@ -88,6 +88,7 @@ pub async fn run_server(
         .route("/health", get(handler::handle_health))
         .route("/metrics", get(handler::handle_metrics))
         .route("/api/subdomains", get(handler::handle_subdomains))
+        .route("/api/config", get(handler::handle_config))
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .fallback_service(ServeDir::new("frontend/dist"))
         .layer(cors)
