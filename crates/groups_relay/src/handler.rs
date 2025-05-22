@@ -7,6 +7,7 @@ use axum::{
     http::{Method, Request, StatusCode},
     response::{IntoResponse, Json},
 };
+use nostr_lmdb::Scope;
 use nostr_sdk::nips::nip11::RelayInformationDocument;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -40,6 +41,11 @@ pub struct GroupResponse {
 struct MemberResponse {
     pubkey: String,
     roles: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct SubdomainResponse {
+    subdomains: Vec<String>,
 }
 
 /// A RAII guard for tracking active WebSocket connections
@@ -238,4 +244,32 @@ pub async fn handle_nostr_json(State(state): State<Arc<ServerState>>) -> impl In
 
 pub async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     state.metrics_handle.render()
+}
+
+pub async fn handle_subdomains(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
+    debug!("Handling subdomains request");
+    
+    // Get all scopes from the groups
+    let scopes = state.http_state.groups.get_all_scopes();
+    
+    // Convert scopes to subdomain strings
+    let mut subdomains = Vec::new();
+    for scope in scopes {
+        match scope {
+            Scope::Default => {
+                // The default scope represents the main domain (no subdomain)
+                // We could add an empty string or skip it
+            }
+            Scope::Named { name, .. } => {
+                subdomains.push(name);
+            }
+        }
+    }
+    
+    // Sort subdomains alphabetically
+    subdomains.sort();
+    
+    debug!("Found {} subdomains: {:?}", subdomains.len(), subdomains);
+    
+    Json(SubdomainResponse { subdomains })
 }

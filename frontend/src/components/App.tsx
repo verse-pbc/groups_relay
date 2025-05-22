@@ -7,6 +7,7 @@ import { FlashMessage } from "./FlashMessage";
 import { GroupSidebar } from "./GroupSidebar";
 import { BurgerButton } from "./BurgerButton";
 import { ProfileMenu } from "./ProfileMenu";
+import { SubdomainList } from "./SubdomainList";
 
 // Import NDK types if possible from your client setup, otherwise define them
 // Assuming they might be available like this (adjust if needed):
@@ -60,6 +61,7 @@ interface AppState {
   isMobileMenuOpen: boolean;
   pendingGroupSelection: string | null; // Queue of one for simplicity
   isLoadingHistory: boolean; // Added state to indicate loading
+  currentSubdomain: string | null; // Current subdomain being viewed
 }
 
 export class App extends Component<AppProps, AppState> {
@@ -76,7 +78,27 @@ export class App extends Component<AppProps, AppState> {
       isMobileMenuOpen: false,
       pendingGroupSelection: null,
       isLoadingHistory: true, // Start in loading state
+      currentSubdomain: this.extractCurrentSubdomain(),
     };
+  }
+
+  // Extract subdomain from current URL
+  private extractCurrentSubdomain(): string | null {
+    const { hostname } = window.location;
+    
+    // For localhost or IP addresses, no subdomain
+    if (hostname === 'localhost' || hostname.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+      return null;
+    }
+    
+    const parts = hostname.split('.');
+    // Assume base domain is last 2 parts (e.g., example.com)
+    // If there are more than 2 parts, everything before the last 2 is subdomain
+    if (parts.length > 2) {
+      return parts.slice(0, -2).join('.');
+    }
+    
+    return null;
   }
 
   private getOrCreateGroup = (
@@ -631,9 +653,15 @@ export class App extends Component<AppProps, AppState> {
       return null; // No pending selection or not found yet
   }
 
+  handleSubdomainSelect = (subdomain: string) => {
+    // This will be called when user clicks on a subdomain in the list
+    // The SubdomainList component will handle the actual navigation
+    console.log('Subdomain selected:', subdomain);
+  };
+
   render() {
     const { client, onLogout } = this.props;
-    const { flashMessage, groupsMap, selectedGroup, isMobileMenuOpen, isLoadingHistory } = this.state;
+    const { flashMessage, groupsMap, selectedGroup, isMobileMenuOpen, isLoadingHistory, currentSubdomain } = this.state;
     // Always derive groups from the map for consistency
     const groups = Array.from(groupsMap.values()).sort((a, b) => b.updated_at - a.updated_at);
 
@@ -671,12 +699,21 @@ export class App extends Component<AppProps, AppState> {
         )}
 
         {/* Main container adjusted for fixed header */}
-        <div class="flex flex-col lg:flex-row gap-8 pt-16 min-h-screen">
-            {/* Left Sidebar */}
+        <div class="flex flex-col xl:flex-row gap-8 pt-16 min-h-screen">
+            {/* Subdomain Sidebar - Far Left */}
+            <div class="hidden xl:block xl:w-64 xl:flex-shrink-0 p-4">
+                <SubdomainList
+                    currentSubdomain={currentSubdomain || ''}
+                    onSubdomainSelect={this.handleSubdomainSelect}
+                    isLoading={isLoadingHistory}
+                />
+            </div>
+
+            {/* Groups Sidebar */}
             <div
                 class={`
                     fixed lg:sticky top-16 inset-y-0 left-0 z-40 lg:z-auto
-                    w-full sm:w-80 lg:w-80 lg:flex-shrink-0
+                    w-full sm:w-80 lg:w-80 xl:w-80 lg:flex-shrink-0
                     transform transition-transform duration-300 ease-in-out
                     ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
                     bg-[var(--color-bg-primary)] lg:bg-transparent border-r border-[var(--color-border)]
@@ -685,6 +722,15 @@ export class App extends Component<AppProps, AppState> {
                 `}
                 // style={{ height: 'calc(100vh - 4rem)' }} /* Alt height style */
             >
+                {/* Mobile subdomain list */}
+                <div class="xl:hidden mb-4">
+                    <SubdomainList
+                        currentSubdomain={currentSubdomain || ''}
+                        onSubdomainSelect={this.handleSubdomainSelect}
+                        isLoading={isLoadingHistory}
+                    />
+                </div>
+                
                 <CreateGroupForm
                     client={client}
                     updateGroupsMap={this.updateGroupsMap}
