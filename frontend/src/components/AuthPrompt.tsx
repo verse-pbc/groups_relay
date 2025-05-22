@@ -1,5 +1,6 @@
 import { FunctionComponent } from 'preact'
 import { useState } from 'preact/hooks'
+import { nip19 } from 'nostr-tools'
 
 interface AuthPromptProps {
   onSubmit: (key: string) => void
@@ -10,28 +11,37 @@ export const AuthPrompt: FunctionComponent<AuthPromptProps> = ({ onSubmit }) => 
   const [error, setError] = useState('')
   const [isConnecting, setIsConnecting] = useState(false)
 
-  // Validate that the key is a valid hex string of the correct length
-  const validatePrivateKey = (key: string): boolean => {
-    // Remove any 'nsec' prefix if present
-    let cleanKey = key.trim();
+  // Convert nsec to hex if needed, return hex private key
+  const processPrivateKey = (key: string): string | null => {
+    const cleanKey = key.trim();
+    
     if (cleanKey.startsWith('nsec')) {
       try {
-        // This is a bech32 encoded key, we'll assume it's valid for now
-        // In a real app, you'd want to decode it properly
-        return true;
+        const decoded = nip19.decode(cleanKey);
+        if (decoded.type === 'nsec') {
+          // Convert Uint8Array to hex string
+          return Array.from(decoded.data as Uint8Array)
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('');
+        }
+        return null;
       } catch (e) {
-        return false;
+        return null;
       }
     }
 
     // Check if it's a valid hex string
     const hexRegex = /^[0-9a-fA-F]+$/;
     if (!hexRegex.test(cleanKey)) {
-      return false;
+      return null;
     }
 
     // Check length (32 bytes = 64 hex characters)
-    return cleanKey.length === 64;
+    if (cleanKey.length !== 64) {
+      return null;
+    }
+
+    return cleanKey;
   }
 
   const handleSubmit = (e: Event) => {
@@ -41,13 +51,15 @@ export const AuthPrompt: FunctionComponent<AuthPromptProps> = ({ onSubmit }) => 
       return
     }
 
-    // Validate the key format
-    if (!validatePrivateKey(key)) {
-      setError('Invalid private key format. Please enter a valid 64-character hex string or nsec value.')
+    // Process and validate the key
+    const hexKey = processPrivateKey(key);
+    if (!hexKey) {
+      setError('Invalid private key format. Please enter a valid nsec key or 64-character hex string.')
       return
     }
 
-    onSubmit(key)
+    // Always pass the hex version to maintain backward compatibility
+    onSubmit(hexKey)
   }
 
   const handleConnectExtension = async () => {
@@ -138,9 +150,9 @@ export const AuthPrompt: FunctionComponent<AuthPromptProps> = ({ onSubmit }) => 
                     type="password"
                     value={key}
                     onChange={(e) => setKey((e.target as HTMLInputElement).value)}
-                    placeholder="Enter your private key (hex format)"
+                    placeholder="nsec..."
                     class="w-full p-3 pl-10 border rounded-lg bg-[var(--color-bg-primary)]
-                           text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)]
+                           text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)]/40
                            focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent
                            transition-all"
                   />
@@ -159,7 +171,7 @@ export const AuthPrompt: FunctionComponent<AuthPromptProps> = ({ onSubmit }) => 
                        transform hover:-translate-y-0.5 active:translate-y-0
                        focus:outline-none focus:ring-2 focus:ring-accent/20"
               >
-                Connect with Private Key
+                Connect with nsec
               </button>
             </form>
           </div>
