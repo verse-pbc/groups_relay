@@ -677,7 +677,7 @@ export class App extends Component<AppProps, AppState> {
                   onClick={this.toggleMobileMenu}
                 />
               </div>
-              <h1 class="text-xl font-bold whitespace-nowrap">Nostr Groups</h1>
+              <h1 class="text-xl font-bold whitespace-nowrap">Holis👋 Communities Engine</h1>
                {isLoadingHistory && <span class="ml-4 text-sm text-[var(--color-text-secondary)] animate-pulse">Loading history...</span>}
             </div>
 
@@ -699,9 +699,9 @@ export class App extends Component<AppProps, AppState> {
         )}
 
         {/* Main container adjusted for fixed header */}
-        <div class="flex flex-col xl:flex-row gap-8 pt-16 min-h-screen">
+        <div class="flex flex-col xl:flex-row pt-16 min-h-screen">
             {/* Subdomain Sidebar - Far Left */}
-            <div class="hidden xl:block xl:w-64 xl:flex-shrink-0 p-4">
+            <div class="hidden xl:block xl:w-56 xl:flex-shrink-0 p-3 border-r border-[var(--color-border)]">
                 <SubdomainList
                     currentSubdomain={currentSubdomain || ''}
                     onSubdomainSelect={this.handleSubdomainSelect}
@@ -717,13 +717,13 @@ export class App extends Component<AppProps, AppState> {
                     transform transition-transform duration-300 ease-in-out
                     ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
                     bg-[var(--color-bg-primary)] lg:bg-transparent border-r border-[var(--color-border)]
-                    p-4 lg:p-4
+                    p-3 lg:p-3
                     overflow-y-auto h-[calc(100vh-4rem)] /* Full height minus header */
                 `}
                 // style={{ height: 'calc(100vh - 4rem)' }} /* Alt height style */
             >
                 {/* Mobile subdomain list */}
-                <div class="xl:hidden mb-4">
+                <div class="xl:hidden mb-3">
                     <SubdomainList
                         currentSubdomain={currentSubdomain || ''}
                         onSubdomainSelect={this.handleSubdomainSelect}
@@ -735,9 +735,9 @@ export class App extends Component<AppProps, AppState> {
                     client={client}
                     updateGroupsMap={this.updateGroupsMap}
                     showMessage={this.showMessage}
-                     onGroupCreated={this.handleGroupSelect} // Pass handleGroupSelect
+                    onGroupCreated={this.handleGroupSelect}
                 />
-                <hr class="my-4 border-[var(--color-border)]" />
+                
                 <GroupSidebar
                     groups={groups}
                     selectedGroupId={selectedGroup?.id}
@@ -757,7 +757,7 @@ export class App extends Component<AppProps, AppState> {
              )}
 
             {/* Main Content Area - Remove fixed height and overflow */}
-            <main class="flex-grow p-4 lg:p-8"> {/* Removed overflow-y-auto h-[calc(...)] */}
+            <main class="flex-grow p-4 lg:p-6"> {/* Removed overflow-y-auto h-[calc(...)] */}
                  {isLoadingHistory ? (
                      <div class="text-center text-[var(--color-text-secondary)] mt-8">
                          <p>Loading historical messages...</p>
@@ -774,12 +774,12 @@ export class App extends Component<AppProps, AppState> {
                     />
                 ) : groups.length > 0 ? (
                      <div class="text-center text-[var(--color-text-secondary)] mt-8">
-                         <p>Select a group from the sidebar.</p>
+                         <p>Select a channel from the sidebar.</p>
                      </div>
                  ) : (
                     <div class="text-center text-[var(--color-text-secondary)] mt-8">
-                        <p>Create a new group or join one to get started.</p>
-                        <p class="text-xs mt-2">(If you recently created/joined a group, it might still be loading)</p>
+                        <p>Create a new channel or join one to get started.</p>
+                        <p class="text-xs mt-2">(If you recently created/joined a channel, it might still be loading)</p>
                     </div>
                  )}
             </main>

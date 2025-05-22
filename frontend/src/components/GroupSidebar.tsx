@@ -74,25 +74,25 @@ export class GroupSidebar extends Component<GroupSidebarProps, GroupSidebarState
 
   renderGroupButton = (group: Group) => {
     const { selectedGroupId: _selectedGroupId, onSelectGroup: _onSelectGroup } = this.props;
-    const { adminGroups, memberGroups } = this.state;
+    const { adminGroups } = this.state;
 
     return (
       <button
         key={group.id}
         onClick={() => _onSelectGroup(group)}
-        class={`w-full p-3 rounded-lg border text-left transition-colors
+        class={`w-full px-3 py-3 rounded-lg text-left transition-all duration-200
                ${_selectedGroupId === group.id
-                 ? 'bg-[var(--color-bg-primary)] border-[var(--color-border-hover)]'
-                 : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] hover:border-[var(--color-border-hover)]'
+                 ? 'bg-white/8 text-[var(--color-text-primary)]'
+                 : 'text-[var(--color-text-secondary)] hover:bg-white/4 hover:text-[var(--color-text-primary)]'
                }`}
       >
         <div class="flex items-center gap-3">
-          <div class="shrink-0 w-10 h-10 bg-[var(--color-bg-primary)] rounded-lg flex items-center justify-center text-lg overflow-hidden">
+          <div class="shrink-0 w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center text-sm font-medium overflow-hidden">
             {group.picture ? (
               <img
                 src={group.picture}
                 alt={group.name}
-                class="w-full h-full object-cover"
+                class="w-full h-full object-cover rounded-lg"
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = 'none';
                   e.currentTarget.parentElement!.textContent = group.name.charAt(0).toUpperCase();
@@ -102,29 +102,20 @@ export class GroupSidebar extends Component<GroupSidebarProps, GroupSidebarState
               group.name.charAt(0).toUpperCase()
             )}
           </div>
-          <div class="min-w-0">
-            <div class="flex items-center gap-2">
-              <h3 class="font-medium text-[var(--color-text-primary)] truncate">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 mb-0.5">
+              <h3 class="font-medium truncate text-sm">
                 {group.name}
               </h3>
-              {adminGroups.has(group.id) ? (
-                <span class="shrink-0 px-1.5 py-0.5 text-[10px] font-medium bg-purple-500/10 text-purple-400 rounded-full border border-purple-500/20">
+              {adminGroups.has(group.id) && (
+                <span class="shrink-0 px-1.5 py-0.5 text-[9px] font-medium bg-purple-400/20 text-purple-300 rounded">
                   Admin
-                </span>
-              ) : memberGroups.has(group.id) && (
-                <span class="shrink-0 px-1.5 py-0.5 text-[10px] font-medium bg-blue-500/10 text-blue-400 rounded-full border border-blue-500/20">
-                  Member
                 </span>
               )}
             </div>
-            <div class="flex items-center gap-2 text-sm text-[var(--color-text-tertiary)]">
-              <span>{group.members.length} members</span>
-              {group.private && (
-                <>
-                  <span>·</span>
-                  <span>Private</span>
-                </>
-              )}
+            <div class="text-xs opacity-60">
+              {group.members.length} member{group.members.length !== 1 ? 's' : ''}
+              {group.private && ' • Private'}
             </div>
           </div>
         </div>
@@ -170,35 +161,38 @@ export class GroupSidebar extends Component<GroupSidebarProps, GroupSidebarState
     }
 
     return (
-      <div class="mt-8 space-y-6">
+      <div class="mt-8">
+        {/* Channels Header - more prominent */}
+        <h3 class="text-base font-semibold text-[var(--color-text-primary)] uppercase tracking-wider mb-4 px-3">Channels</h3>
+        
         {/* Main Groups */}
-        <div class="space-y-2">
+        <div class="space-y-1 px-3">
           {isLoading ? (
-            <div class="text-center text-xs text-[var(--color-text-secondary)] py-4">
-              Loading...
+            <div class="text-center text-sm text-[var(--color-text-secondary)] py-6 opacity-60">
+              Loading channels...
             </div>
           ) : groups.length > 0 ? (
             mainGroups.map(this.renderGroupButton)
           ) : (
-            <div class="text-center text-xs text-[var(--color-text-secondary)] py-4">
-              No groups found.
+            <div class="text-center text-sm text-[var(--color-text-secondary)] py-6 opacity-40">
+              No channels found
             </div>
           )}
         </div>
 
         {/* Other Groups */}
         {otherGroups.length > 0 && (
-          <div class="space-y-2">
+          <div class="mt-6">
             <button
               onClick={this.toggleOtherGroups}
-              class="w-full flex items-center justify-between text-sm font-medium text-[var(--color-text-secondary)] px-1 hover:text-[var(--color-text-primary)] transition-colors"
+              class="w-full flex items-center justify-between text-sm text-[var(--color-text-secondary)]/80 px-3 py-2 hover:text-[var(--color-text-secondary)] transition-colors"
             >
               <div class="flex items-center gap-2">
-                <span>Other groups</span>
-                <span class="text-xs text-[var(--color-text-tertiary)]">({otherGroups.length})</span>
+                <span>Other channels</span>
+                <span class="text-xs opacity-60">({otherGroups.length})</span>
               </div>
               <svg
-                class={`w-4 h-4 transition-transform duration-200 ${showOtherGroups ? 'rotate-180' : ''}`}
+                class={`w-3 h-3 transition-transform duration-200 ${showOtherGroups ? 'rotate-180' : ''}`}
                 viewBox="0 0 24 24"
                 fill="none"
                 xmlns="http://www.w3.org/2000/svg"
@@ -207,7 +201,7 @@ export class GroupSidebar extends Component<GroupSidebarProps, GroupSidebarState
               </svg>
             </button>
             {showOtherGroups && (
-              <div class="space-y-2">
+              <div class="space-y-1 px-3 mt-2">
                 {otherGroups.map(this.renderGroupButton)}
               </div>
             )}

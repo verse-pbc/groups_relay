@@ -107,49 +107,49 @@ export class CreateGroupForm extends BaseComponent<CreateGroupFormProps, CreateG
     const { isSubmitting } = this.state
 
     return (
-      <div class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] p-4">
-        <h2 class="text-lg font-semibold text-[var(--color-text-primary)] mb-4">Create New Group</h2>
-        <form onSubmit={this.handleSubmit} class="space-y-4">
-          <div class="space-y-4">
-            <div class="space-y-3">
-              <label class="block text-sm font-medium text-white">
+      <div class="mb-8">
+        {/* Modern header - more prominent */}
+        <h3 class="text-base font-semibold text-[var(--color-text-primary)] uppercase tracking-wider mb-4 px-3">Create New Channel</h3>
+        
+        <form onSubmit={this.handleSubmit} class="space-y-5 px-3">
+          <div class="space-y-5">
+            <div class="space-y-2">
+              <label class="block text-sm font-medium text-[var(--color-text-primary)]">
                 Name
               </label>
               <input
                 type="text"
                 value={this.state.name}
                 onInput={(e) => this.setState({ name: (e.target as HTMLInputElement).value })}
-                placeholder="Enter group name"
-                class="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
-                       text-sm rounded-lg text-[var(--color-text-primary)]
-                       placeholder-[#8484ac]
-                       focus:outline-none focus:ring-1 focus:ring-accent
-                       hover:border-[var(--color-border-hover)] transition-colors"
+                placeholder="Enter channel name"
+                class="w-full px-4 py-3 bg-white/5 border-0 rounded-lg text-[var(--color-text-primary)]
+                       placeholder-[var(--color-text-secondary)]/60 text-sm
+                       focus:outline-none focus:bg-white/8 focus:ring-1 focus:ring-white/20
+                       transition-all duration-200"
                 required
                 disabled={isSubmitting}
               />
             </div>
 
-            <div class="space-y-3">
-              <label class="block text-sm font-medium text-white">
+            <div class="space-y-2">
+              <label class="block text-sm font-medium text-[var(--color-text-primary)]">
                 Description
               </label>
               <textarea
                 value={this.state.about}
                 onInput={(e) => this.setState({ about: (e.target as HTMLTextAreaElement).value })}
-                placeholder="Enter group description"
+                placeholder="Enter channel description"
                 rows={3}
-                class="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
-                       text-sm rounded-lg text-[var(--color-text-primary)]
-                       placeholder-[#8484ac]
-                       focus:outline-none focus:ring-1 focus:ring-accent
-                       hover:border-[var(--color-border-hover)] transition-colors resize-none"
+                class="w-full px-4 py-3 bg-white/5 border-0 rounded-lg text-[var(--color-text-primary)]
+                       placeholder-[var(--color-text-secondary)]/60 text-sm
+                       focus:outline-none focus:bg-white/8 focus:ring-1 focus:ring-white/20
+                       transition-all duration-200 resize-none"
                 disabled={isSubmitting}
               />
             </div>
 
-            <div class="space-y-3">
-              <label class="block text-sm font-medium text-white">
+            <div class="space-y-2">
+              <label class="block text-sm font-medium text-[var(--color-text-primary)]">
                 Picture URL
               </label>
               <input
@@ -157,11 +157,10 @@ export class CreateGroupForm extends BaseComponent<CreateGroupFormProps, CreateG
                 value={this.state.picture}
                 onInput={(e) => this.setState({ picture: (e.target as HTMLInputElement).value })}
                 placeholder="Enter picture URL"
-                class="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)]
-                       text-sm rounded-lg text-[var(--color-text-primary)]
-                       placeholder-[#8484ac]
-                       focus:outline-none focus:ring-1 focus:ring-accent
-                       hover:border-[var(--color-border-hover)] transition-colors"
+                class="w-full px-4 py-3 bg-white/5 border-0 rounded-lg text-[var(--color-text-primary)]
+                       placeholder-[var(--color-text-secondary)]/60 text-sm
+                       focus:outline-none focus:bg-white/8 focus:ring-1 focus:ring-white/20
+                       transition-all duration-200"
                 disabled={isSubmitting}
               />
             </div>
@@ -170,9 +169,10 @@ export class CreateGroupForm extends BaseComponent<CreateGroupFormProps, CreateG
               <button
                 type="submit"
                 disabled={isSubmitting || !this.state.name.trim()}
-                class="w-full px-4 py-2 bg-accent text-white rounded-lg text-sm font-medium
-                       hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed
-                       transition-colors flex items-center justify-center gap-2"
+                class="w-full px-4 py-3 bg-white/10 hover:bg-white/15 text-[var(--color-text-primary)] 
+                       rounded-lg text-sm font-medium border-0
+                       disabled:opacity-40 disabled:cursor-not-allowed
+                       transition-all duration-200 flex items-center justify-center gap-2"
               >
                 {isSubmitting ? (
                   <>
@@ -181,8 +181,8 @@ export class CreateGroupForm extends BaseComponent<CreateGroupFormProps, CreateG
                   </>
                 ) : (
                   <>
-                    <span>✨</span>
-                    Create Group
+                    <span>+</span>
+                    Create Channel
                   </>
                 )}
               </button>

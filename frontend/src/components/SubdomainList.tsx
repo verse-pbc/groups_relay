@@ -95,76 +95,89 @@ export class SubdomainList extends Component<SubdomainListProps, SubdomainListSt
     const { subdomains, isLoadingSubdomains, error } = this.state;
 
     return (
-      <div class="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg p-4 mb-4">
-        <h3 class="text-lg font-semibold mb-3 text-[var(--color-text-primary)]">
-          Domains
-        </h3>
+      <div class="mb-8">
+        {/* Communities Header - more prominent */}
+        <h3 class="text-base font-semibold text-[var(--color-text-primary)] uppercase tracking-wider mb-4 px-3">Communities</h3>
         
         {error && (
-          <div class="text-red-500 text-sm mb-3 p-2 bg-red-50 rounded">
+          <div class="text-red-400 text-sm mb-4 px-3 py-2">
             {error}
           </div>
         )}
         
         {isLoadingSubdomains ? (
-          <div class="text-[var(--color-text-secondary)] text-sm animate-pulse">
-            Loading domains...
+          <div class="text-[var(--color-text-secondary)] text-sm py-6 text-center opacity-60">
+            Loading communities...
           </div>
         ) : (
-          <div class="space-y-2">
-            {/* Main domain option */}
+          <div class="space-y-1 px-3">
+            {/* Main community option - minimal design */}
             <button
               onClick={() => this.navigateToSubdomain('')}
               class={`
-                w-full text-left px-3 py-2 rounded-md transition-colors text-sm
+                w-full px-3 py-3 rounded-lg text-left transition-all duration-200
                 ${!currentSubdomain 
-                  ? 'bg-[var(--color-accent)] text-white' 
-                  : 'hover:bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]'
+                  ? 'bg-white/8 text-[var(--color-text-primary)]' 
+                  : 'text-[var(--color-text-secondary)] hover:bg-white/4 hover:text-[var(--color-text-primary)]'
                 }
                 ${isLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
               `}
               disabled={isLoading}
             >
-              <span class="font-medium">Main</span>
-              <span class="text-xs opacity-75 block">Primary domain</span>
+              <div class="flex items-center gap-3">
+                <div class="shrink-0 w-6 h-6 flex items-center justify-center text-sm">
+                  🌳
+                </div>
+                <div class="min-w-0">
+                  <span class="font-medium truncate">Root</span>
+                </div>
+              </div>
             </button>
             
-            {/* Subdomain options */}
+            {/* Subdomain options - cleaner cards */}
             {subdomains.map((subdomain) => (
               <button
                 key={subdomain}
                 onClick={() => this.navigateToSubdomain(subdomain)}
                 class={`
-                  w-full text-left px-3 py-2 rounded-md transition-colors text-sm
+                  w-full px-3 py-3 rounded-lg text-left transition-all duration-200
                   ${currentSubdomain === subdomain 
-                    ? 'bg-[var(--color-accent)] text-white' 
-                    : 'hover:bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]'
+                    ? 'bg-white/8 text-[var(--color-text-primary)]' 
+                    : 'text-[var(--color-text-secondary)] hover:bg-white/4 hover:text-[var(--color-text-primary)]'
                   }
                   ${isLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
                 `}
                 disabled={isLoading}
               >
-                <span class="font-medium">{subdomain}</span>
-                <span class="text-xs opacity-75 block">{subdomain}.domain.com</span>
+                <div class="flex items-center gap-3">
+                  <div class="shrink-0 w-6 h-6 bg-white/10 rounded flex items-center justify-center text-xs font-medium">
+                    {subdomain.charAt(0).toUpperCase()}
+                  </div>
+                  <div class="min-w-0">
+                    <span class="font-medium truncate">{subdomain}</span>
+                  </div>
+                </div>
               </button>
             ))}
             
             {subdomains.length === 0 && !isLoadingSubdomains && !error && (
-              <div class="text-[var(--color-text-secondary)] text-sm italic">
-                No subdomains available
+              <div class="text-[var(--color-text-secondary)] text-sm py-6 text-center opacity-40">
+                No other communities
               </div>
             )}
           </div>
         )}
         
-        {/* Refresh button */}
-        <button
-          onClick={this.fetchSubdomains}
-          class="mt-3 w-full text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
-          disabled={isLoadingSubdomains}
-        >
-          {isLoadingSubdomains ? 'Refreshing...' : 'Refresh domains'}
-        </button>
+        {/* Subtle refresh option */}
+        {!isLoadingSubdomains && (
+          <button
+            onClick={this.fetchSubdomains}
+            class="w-full text-xs text-[var(--color-text-secondary)]/60 hover:text-[var(--color-text-secondary)] transition-colors py-3 mt-2"
+            disabled={isLoadingSubdomains}
+          >
+            Refresh
+          </button>
+        )}
       </div>
     );
   }
