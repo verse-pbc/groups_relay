@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 use tracing_futures::Instrument;
@@ -20,6 +21,115 @@ enum SubscriptionMessage {
     CheckEvent { event: Box<Event> },
 }
 
+// Buffer for replaceable events to ensure only the latest per (pubkey, kind, scope) survives
+// when events are created in rapid succession within the same second
+struct ReplaceableEventsBuffer {
+    buffer: HashMap<(PublicKey, Kind, Scope), UnsignedEvent>,
+    sender: mpsc::UnboundedSender<(UnsignedEvent, Scope)>,
+    receiver: Option<mpsc::UnboundedReceiver<(UnsignedEvent, Scope)>>,
+}
+
+impl ReplaceableEventsBuffer {
+    pub fn new() -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        Self {
+            buffer: HashMap::new(),
+            sender,
+            receiver: Some(receiver),
+        }
+    }
+
+    pub fn get_sender(&self) -> mpsc::UnboundedSender<(UnsignedEvent, Scope)> {
+        self.sender.clone()
+    }
+
+    pub fn insert(&mut self, event: UnsignedEvent, scope: Scope) {
+        // Only buffer events that are replaceable or addressable (like 39000 for groups)
+        if !event.kind.is_replaceable() && !event.kind.is_addressable() {
+            debug!(
+                "Skipping non-replaceable/non-addressable event kind {} for buffering",
+                event.kind
+            );
+            return;
+        }
+
+        let key = (event.pubkey, event.kind, scope.clone());
+
+        // Check if we already have an event for this key
+        if let Some(existing_event) = self.buffer.get(&key) {
+            debug!(
+                "Replacing buffered event: pubkey={}, kind={}, scope={:?}, old_timestamp={}, new_timestamp={}",
+                event.pubkey, event.kind, scope, existing_event.created_at, event.created_at
+            );
+        } else {
+            debug!(
+                "Buffering new event: pubkey={}, kind={}, scope={:?}, timestamp={}",
+                event.pubkey, event.kind, scope, event.created_at
+            );
+        }
+
+        self.buffer.insert(key, event);
+    }
+
+    async fn flush(&mut self, database: &Arc<RelayDatabase>) {
+        if self.buffer.is_empty() {
+            return;
+        }
+
+        debug!(
+            "Flushing {} replaceable events from buffer",
+            self.buffer.len()
+        );
+
+        for ((pubkey, kind, scope), event) in self.buffer.drain() {
+            match database.save_unsigned_event(event, scope.clone()).await {
+                Ok(_saved_event) => {
+                    info!(
+                        "Saved buffered replaceable event: pubkey={}, kind={}, scope={:?}",
+                        pubkey, kind, scope
+                    );
+                    // Optionally broadcast the event here if needed
+                }
+                Err(e) => {
+                    error!(
+                        "Error saving buffered replaceable event: pubkey={}, kind={}, scope={:?}, error={:?}",
+                        pubkey, kind, scope, e
+                    );
+                }
+            }
+        }
+    }
+
+    pub fn start(mut self, database: Arc<RelayDatabase>, token: CancellationToken, id: String) {
+        let mut receiver = self.receiver.take().expect("Receiver already taken");
+
+        tokio::spawn(Box::pin(async move {
+            loop {
+                tokio::select! {
+                    _ = token.cancelled() => {
+                        debug!(
+                            "[{}] Replaceable events buffer shutting down",
+                            id
+                        );
+                        self.flush(&database).await;
+                        return;
+                    }
+
+                    event_result = receiver.recv() => {
+                        if let Some((event, scope)) = event_result {
+                            self.insert(event, scope);
+                        }
+                    }
+
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                        self.flush(&database).await;
+                    }
+                }
+            }
+        }));
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SubscriptionManager {
     database: Arc<RelayDatabase>,
@@ -27,6 +137,7 @@ pub struct SubscriptionManager {
     outgoing_sender: Option<MessageSender<RelayMessage<'static>>>,
     local_subscription_count: Arc<AtomicUsize>,
     task_token: CancellationToken,
+    replaceable_event_queue: mpsc::UnboundedSender<(UnsignedEvent, Scope)>,
 }
 
 impl SubscriptionManager {
@@ -36,6 +147,17 @@ impl SubscriptionManager {
     ) -> Result<Self, Error> {
         let local_subscription_count = Arc::new(AtomicUsize::new(0));
         let task_token = CancellationToken::new();
+
+        // Create and start the replaceable events buffer
+        let buffer = ReplaceableEventsBuffer::new();
+        let replaceable_event_queue = buffer.get_sender();
+
+        // Start the buffer task
+        buffer.start(
+            database.clone(),
+            task_token.clone(),
+            "replaceable_events_buffer".to_string(),
+        );
 
         let subscription_sender = Self::start_subscription_task(
             outgoing_sender.clone(),
@@ -49,6 +171,7 @@ impl SubscriptionManager {
             outgoing_sender: Some(outgoing_sender),
             local_subscription_count,
             task_token,
+            replaceable_event_queue,
         };
 
         manager.start_database_subscription_task()?;
@@ -206,13 +329,35 @@ impl SubscriptionManager {
     }
 
     pub async fn save_and_broadcast(&self, store_command: StoreCommand) -> Result<(), Error> {
-        self.database
-            .save_store_command(store_command)
-            .await
-            .map_err(|e| {
-                error!("Failed to save store command: {}", e);
-                e
-            })
+        match store_command {
+            StoreCommand::SaveUnsignedEvent(event, scope)
+                if event.kind.is_replaceable() || event.kind.is_addressable() =>
+            {
+                // Send replaceable/addressable unsigned events to the buffer instead of saving directly
+                debug!(
+                    "Sending replaceable/addressable unsigned event to buffer: kind={}, scope={:?}",
+                    event.kind, scope
+                );
+                if let Err(e) = self.replaceable_event_queue.send((event, scope)) {
+                    error!("Failed to send replaceable event to buffer: {:?}", e);
+                    return Err(Error::Internal {
+                        message: format!("Failed to send replaceable event to buffer: {}", e),
+                        backtrace: Backtrace::capture(),
+                    });
+                }
+                Ok(())
+            }
+            _ => {
+                // All other commands go directly to the database
+                self.database
+                    .save_store_command(store_command)
+                    .await
+                    .map_err(|e| {
+                        error!("Failed to save store command: {}", e);
+                        e
+                    })
+            }
+        }
     }
 
     pub async fn fetch_events(
@@ -374,8 +519,8 @@ impl StoreCommand {
             StoreCommand::DeleteEvents(_, scope) => scope,
         }
     }
-    
-    /// Convert the Scope to an Option<&str> for backward compatibility with code that 
+
+    /// Convert the Scope to an Option<&str> for backward compatibility with code that
     /// expects Option<&str> representing a subdomain.
     /// This is NOT used for database operations, only for logging and compatibility.
     pub fn subdomain(&self) -> Option<&str> {
@@ -668,30 +813,37 @@ mod tests {
 
         // Collect all received messages and sort them later
         let mut received_messages = vec![];
-        for _ in 0..4 { // Receive all 4 expected messages (3 events + 1 EOSE)
+        for _ in 0..4 {
+            // Receive all 4 expected messages (3 events + 1 EOSE)
             if let Some(message) = rx.recv().await {
                 received_messages.push(message);
             }
         }
-        
+
         // Sort and separate messages
         let mut received_events = vec![];
         let mut received_eose = None;
-        
+
         for message in received_messages {
             match message {
-                (RelayMessage::Event { event, subscription_id: sub_id }, _idx) => {
+                (
+                    RelayMessage::Event {
+                        event,
+                        subscription_id: sub_id,
+                    },
+                    _idx,
+                ) => {
                     assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
                     received_events.push(event.clone());
-                },
+                }
                 (RelayMessage::EndOfStoredEvents(sub_id), _idx) => {
                     assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
                     received_eose = Some(sub_id);
-                },
+                }
                 other => panic!("Unexpected message: {:?}", other),
             }
         }
-        
+
         // Verify we received both events and EOSE
         assert_eq!(received_events.len(), 3, "Should receive exactly 3 events");
         assert!(received_eose.is_some(), "Should receive EOSE message");
@@ -1085,30 +1237,37 @@ mod tests {
 
         // Collect all received messages
         let mut received_messages = vec![];
-        for _ in 0..4 { // Receive all 4 expected messages (3 events + 1 EOSE)
+        for _ in 0..4 {
+            // Receive all 4 expected messages (3 events + 1 EOSE)
             if let Some(message) = rx.recv().await {
                 received_messages.push(message);
             }
         }
-        
+
         // Sort and process messages
         let mut received_kinds = vec![];
         let mut received_eose = false;
-        
+
         for message in received_messages {
             match message {
-                (RelayMessage::Event { event, subscription_id: sub_id }, _idx) => {
+                (
+                    RelayMessage::Event {
+                        event,
+                        subscription_id: sub_id,
+                    },
+                    _idx,
+                ) => {
                     assert_eq!(*sub_id, subscription_id, "Subscription ID mismatch");
                     received_kinds.push(event.kind);
-                },
+                }
                 (RelayMessage::EndOfStoredEvents(sub_id), _idx) => {
                     assert_eq!(*sub_id, subscription_id, "EOSE subscription ID mismatch");
                     received_eose = true;
-                },
+                }
                 other => panic!("Unexpected message: {:?}", other),
             }
         }
-        
+
         // Verify we received both events and EOSE
         assert_eq!(received_kinds.len(), 3, "Should receive exactly 3 events");
         assert!(received_eose, "Should receive EOSE message");
