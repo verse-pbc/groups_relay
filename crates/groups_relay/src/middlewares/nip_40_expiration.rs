@@ -2,10 +2,12 @@ use crate::nostr_database::RelayDatabase;
 use crate::nostr_session_state::NostrConnectionState;
 use crate::StoreCommand;
 use async_trait::async_trait;
-use nostr_lmdb::Scope; // Needed for tests
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use websocket_builder::{InboundContext, Middleware, OutboundContext};
+
+#[cfg(test)]
+use nostr_lmdb::Scope;
 
 // Helper function to get expiration timestamp from event tags
 fn get_event_expiration(event: &Event) -> Option<Timestamp> {

@@ -1167,12 +1167,19 @@ impl Group {
                 roles.push(GroupRole::Member.to_string());
             }
 
-            let roles = roles
+            let new_roles = roles
                 .iter()
                 .map(|r| GroupRole::from_str(r).unwrap_or(GroupRole::Member))
                 .collect::<HashSet<_>>();
 
-            self.members.insert(pubkey, GroupMember::new(pubkey, roles));
+            // Merge roles instead of replacing - if member already exists, combine their roles
+            if let Some(existing_member) = self.members.get_mut(&pubkey) {
+                // Union the existing roles with the new roles
+                existing_member.roles.extend(new_roles);
+            } else {
+                // New member, insert with the roles from this event
+                self.members.insert(pubkey, GroupMember::new(pubkey, new_roles));
+            }
         }
 
         self.update_roles();

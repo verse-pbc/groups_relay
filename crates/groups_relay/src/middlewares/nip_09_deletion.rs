@@ -4,11 +4,13 @@ use crate::nostr_session_state::NostrConnectionState;
 use crate::subscription_manager::StoreCommand;
 use anyhow::Result;
 use async_trait::async_trait;
-use nostr_lmdb::Scope; // Needed for tests
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tracing::{debug, error};
 use websocket_builder::{InboundContext, Middleware, SendMessage};
+
+#[cfg(test)]
+use nostr_lmdb::Scope;
 
 #[derive(Debug)]
 pub struct Nip09Middleware {
