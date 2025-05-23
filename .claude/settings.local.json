@@ -21,7 +21,9 @@
       "Bash(git commit:*)",
       "Bash(git reset:*)",
       "Bash(sed:*)",
-      "Bash(__NEW_LINE__ grep -A 5 \"downcast_ref\" \"/Users/daniel/code/nos/groups/clean_slate/groups_relay/crates/groups_relay/src/middlewares/error_handling_middleware.rs\")"
+      "Bash(__NEW_LINE__ grep -A 5 \"downcast_ref\" \"/Users/daniel/code/nos/groups/clean_slate/groups_relay/crates/groups_relay/src/middlewares/error_handling_middleware.rs\")",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(find:*)"
     ],
     "deny": []
   }

@@ -129,16 +129,44 @@ pub trait StateFactory<State> {
 /// * `Factory` - The type that creates new state instances
 ///
 /// # Example
-/// ```ignore
-/// use websocket_builder::{WebSocketBuilder, StateFactory};
+/// ```
+/// use websocket_builder::{WebSocketBuilder, StateFactory, MessageConverter, Middleware};
 /// use tokio_util::sync::CancellationToken;
+/// use anyhow::Result;
+/// use async_trait::async_trait;
 ///
+/// #[derive(Debug)]
 /// struct MyState;
+/// 
+/// #[derive(Clone)]
 /// struct MyStateFactory;
+/// 
 /// impl StateFactory<MyState> for MyStateFactory {
 ///     fn create_state(&self, _token: CancellationToken) -> MyState {
 ///         MyState
 ///     }
+/// }
+///
+/// #[derive(Clone)]
+/// struct JsonConverter;
+/// 
+/// impl MessageConverter<String, String> for JsonConverter {
+///     fn inbound_from_string(&self, msg: String) -> Result<Option<String>> {
+///         Ok(Some(msg))
+///     }
+///     fn outbound_to_string(&self, msg: String) -> Result<String> {
+///         Ok(msg)
+///     }
+/// }
+///
+/// #[derive(Debug)]
+/// struct LoggerMiddleware;
+/// 
+/// #[async_trait]
+/// impl Middleware for LoggerMiddleware {
+///     type State = MyState;
+///     type IncomingMessage = String;
+///     type OutgoingMessage = String;
 /// }
 ///
 /// let handler = WebSocketBuilder::new(MyStateFactory, JsonConverter)

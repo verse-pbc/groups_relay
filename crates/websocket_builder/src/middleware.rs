@@ -21,9 +21,15 @@ use async_trait::async_trait;
 /// * `OutgoingMessage` - The type of messages sent to clients
 ///
 /// # Example
-/// ```ignore
+/// ```
 /// use websocket_builder::{Middleware, InboundContext, OutboundContext};
 /// use async_trait::async_trait;
+/// use anyhow::Result;
+///
+/// #[derive(Debug)]
+/// struct MyState {
+///     counter: usize,
+/// }
 ///
 /// #[derive(Debug)]
 /// struct LoggerMiddleware;
@@ -37,8 +43,10 @@ use async_trait::async_trait;
 ///     async fn process_inbound(
 ///         &self,
 ///         ctx: &mut InboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
-///     ) -> Result<(), anyhow::Error> {
-///         println!("Received message: {}", ctx.message);
+///     ) -> Result<()> {
+///         if let Some(message) = &ctx.message {
+///             println!("Received message: {}", message);
+///         }
 ///         ctx.next().await
 ///     }
 /// }

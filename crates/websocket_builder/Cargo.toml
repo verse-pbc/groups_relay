@@ -24,6 +24,17 @@ futures-util = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 tokio-tungstenite = { workspace = true }
 pretty_assertions = "1.4.1"
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+uuid = { version = "1.10", features = ["v4"] }
+tracing-subscriber = "0.3"
+
+[[bench]]
+name = "websocket_performance"
+harness = false
+
+[[bench]]
+name = "simple_benchmark"
+harness = false
 
 [[test]]
 name = "integration_test"
