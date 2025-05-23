@@ -7,6 +7,7 @@ interface MembersSectionProps {
   group: Group
   client: NostrClient
   showMessage: (message: string, type: 'success' | 'error' | 'info') => void
+  isAdmin?: boolean
 }
 
 interface MembersSectionState {
@@ -83,13 +84,14 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
   }
 
   render() {
-    const { group, client, showMessage } = this.props
+    const { group, client, showMessage, isAdmin } = this.props
     const { newMemberNpub, isAddingMember, removingMembers, showConfirmRemove } = this.state
 
     return (
       <div class="space-y-4">
-        <div class="p-4 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]">
-          <form onSubmit={this.handleAddMember}>
+        {isAdmin && (
+          <div class="p-4 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]">
+            <form onSubmit={this.handleAddMember}>
             <div class="flex gap-2">
               <input
                 type="text"
@@ -118,7 +120,8 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
               </button>
             </div>
           </form>
-        </div>
+          </div>
+        )}
 
         <div class="space-y-2">
           {group.members.map(member => (

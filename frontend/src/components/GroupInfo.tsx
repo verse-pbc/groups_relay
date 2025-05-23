@@ -262,8 +262,8 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
           <div class="flex items-start justify-between">
             <div class="flex items-center gap-4 min-w-0">
               <div
-                class="relative w-20 h-20 bg-[var(--color-bg-primary)] rounded-full flex items-center justify-center text-3xl overflow-hidden border border-[var(--color-border)] group cursor-pointer"
-                onClick={this.handleShowEditImage}
+                class={`relative w-20 h-20 bg-[var(--color-bg-primary)] rounded-full flex items-center justify-center text-3xl overflow-hidden border border-[var(--color-border)] ${this.state.isAdmin ? 'group cursor-pointer' : ''}`}
+                onClick={this.state.isAdmin ? this.handleShowEditImage : undefined}
               >
                 {group.picture ? (
                   <img
@@ -278,13 +278,15 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
                 ) : (
                   group.name?.charAt(0).toUpperCase() || 'G'
                 )}
-                {/* Hover overlay */}
-                <div class="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                  <svg class="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
-                </div>
+                {/* Hover overlay - only for admins */}
+                {this.state.isAdmin && (
+                  <div class="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <svg class="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                )}
               </div>
               <div class="flex-1 min-w-0">
                 {!isEditing && (
@@ -328,16 +330,18 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
                             </span>
                           )}
                         </div>
-                        <button
-                          onClick={() => this.setState({ showEditName: true, editingName: group.name })}
-                          class="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors opacity-0 group-hover:opacity-100"
-                          title="Edit group name"
-                        >
-                          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                          </svg>
-                        </button>
+                        {this.state.isAdmin && (
+                          <button
+                            onClick={() => this.setState({ showEditName: true, editingName: group.name })}
+                            class="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors opacity-0 group-hover:opacity-100"
+                            title="Edit group name"
+                          >
+                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                              <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                          </button>
+                        )}
                       </div>
                     )}
                     {showEditAbout ? (
@@ -370,16 +374,18 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
                         <p class="text-sm text-[var(--color-text-secondary)] break-words line-clamp-3">
                           {group.about || 'No description'}
                         </p>
-                        <button
-                          onClick={() => this.setState({ showEditAbout: true, editingAbout: group.about || '' })}
-                          class="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors opacity-0 group-hover:opacity-100 shrink-0"
-                          title="Edit group description"
-                        >
-                          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                          </svg>
-                        </button>
+                        {this.state.isAdmin && (
+                          <button
+                            onClick={() => this.setState({ showEditAbout: true, editingAbout: group.about || '' })}
+                            class="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors opacity-0 group-hover:opacity-100 shrink-0"
+                            title="Edit group description"
+                          >
+                            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                              <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -387,8 +393,8 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
               </div>
             </div>
 
-            {/* Delete Group Button */}
-            {!isEditing && (
+            {/* Delete Group Button - Only for admins */}
+            {!isEditing && this.state.isAdmin && (
               <div class="shrink-0 ml-4">
                 {showConfirmDelete ? (
                   <div class="flex items-center gap-1">
@@ -470,16 +476,17 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
           )}
         </div>
 
-        {/* Settings */}
-        <div>
-          <div class="border-b border-[var(--color-border)] pb-3">
-            <h3 class="text-base font-semibold leading-6 text-[var(--color-text-primary)] flex items-center gap-2">
-              <span class="text-[var(--color-text-secondary)]">⚙️</span>
-              Privacy & Access
-            </h3>
-          </div>
+        {/* Settings - Only visible to admins */}
+        {this.state.isAdmin && (
+          <div>
+            <div class="border-b border-[var(--color-border)] pb-3">
+              <h3 class="text-base font-semibold leading-6 text-[var(--color-text-primary)] flex items-center gap-2">
+                <span class="text-[var(--color-text-secondary)]">⚙️</span>
+                Privacy & Access
+              </h3>
+            </div>
 
-          <div class="mt-4 space-y-4 bg-[var(--color-bg-primary)] rounded-lg p-4">
+            <div class="mt-4 space-y-4 bg-[var(--color-bg-primary)] rounded-lg p-4">
             {/* Private Group Toggle */}
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
@@ -564,7 +571,8 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
               </button>
             </div>
           </div>
-        </div>
+          </div>
+        )}
 
         {/* Image Edit Modal */}
         {showEditImage && (

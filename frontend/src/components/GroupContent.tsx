@@ -30,6 +30,25 @@ export class GroupContent extends Component<GroupContentProps, GroupContentState
     isAdmin: false
   }
 
+  async componentDidMount() {
+    await this.checkAdminStatus()
+  }
+
+  async componentDidUpdate(prevProps: GroupContentProps) {
+    if (prevProps.group.id !== this.props.group.id) {
+      await this.checkAdminStatus()
+    }
+  }
+
+  async checkAdminStatus() {
+    const user = await this.props.client.ndkInstance.signer?.user()
+    if (user?.pubkey) {
+      const member = this.props.group.members.find(m => m.pubkey === user.pubkey)
+      const isAdmin = member?.roles.includes('Admin') || false
+      this.setState({ isAdmin })
+    }
+  }
+
   handleTabChange = (tab: TabType) => {
     this.setState({ activeTab: tab })
   }
@@ -70,6 +89,7 @@ export class GroupContent extends Component<GroupContentProps, GroupContentState
           group={groupWithFilteredInvites}
           activeTab={activeTab}
           onTabChange={this.handleTabChange}
+          isAdmin={isAdmin}
         />
         <div class="mt-4">
           {/* Conditionally pass isAdmin only if the component is NOT ContentSection */}
