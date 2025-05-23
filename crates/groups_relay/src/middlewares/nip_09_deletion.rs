@@ -188,8 +188,7 @@ impl Middleware for Nip09Middleware {
                         event_cow.id,
                         false,
                         format!("Failed to process deletion request: {}", e),
-                    ))
-                    .await;
+                    ));
             }
 
             return ctx
@@ -197,8 +196,7 @@ impl Middleware for Nip09Middleware {
                     event_cow.id,
                     true,
                     "Deletion request processed successfully",
-                ))
-                .await;
+                ));
         }
 
         ctx.next().await

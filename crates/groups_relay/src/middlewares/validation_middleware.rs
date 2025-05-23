@@ -117,8 +117,7 @@ impl Middleware for ValidationMiddleware {
             );
 
             // Send error message
-            ctx.send_message(RelayMessage::ok(event.id, false, reason))
-                .await?;
+            ctx.send_message(RelayMessage::ok(event.id, false, reason))?;
 
             // Stop the chain here with Ok since we've handled the error
             return Ok(());

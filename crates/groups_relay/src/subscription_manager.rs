@@ -226,7 +226,7 @@ impl SubscriptionManager {
                                                 subscription_id: Cow::Owned(subscription_id.clone()),
                                                 event: Cow::Owned(*event.clone()),
                                             };
-                                            if let Err(e) = outgoing_sender.send(message).await {
+                                            if let Err(e) = outgoing_sender.send(message) {
                                                 error!("Failed to send event: {:?}", e);
                                                 info!("Outgoing sender closed, terminating subscription task");
                                                 return;
@@ -388,13 +388,10 @@ impl SubscriptionManager {
         let events_len = events.len();
 
         for event_item in events.into_iter().take(capacity) {
-            if let Err(e) = sender
-                .send(RelayMessage::Event {
-                    subscription_id: Cow::Owned(subscription_id.clone()),
-                    event: Cow::Owned(event_item),
-                })
-                .await
-            {
+            if let Err(e) = sender.send(RelayMessage::Event {
+                subscription_id: Cow::Owned(subscription_id.clone()),
+                event: Cow::Owned(event_item),
+            }) {
                 return Err(Error::Internal {
                     message: format!("Failed to send event: {}", e),
                     backtrace: Backtrace::capture(),
@@ -402,12 +399,9 @@ impl SubscriptionManager {
             }
         }
 
-        if let Err(e) = sender
-            .send(RelayMessage::EndOfStoredEvents(Cow::Owned(
-                subscription_id.clone(),
-            )))
-            .await
-        {
+        if let Err(e) = sender.send(RelayMessage::EndOfStoredEvents(Cow::Owned(
+            subscription_id.clone(),
+        ))) {
             return Err(Error::Internal {
                 message: format!("Failed to send EOSE: {}", e),
                 backtrace: Backtrace::capture(),

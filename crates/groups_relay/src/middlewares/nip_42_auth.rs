@@ -158,8 +158,7 @@ impl Middleware for Nip42Middleware {
                         auth_event_id,
                         false,
                         "auth-required: no challenge pending",
-                    ))
-                    .await?;
+                    ))?;
                     return Err(Error::auth_required("No challenge found in state").into());
                 };
                 let expected_challenge_clone = expected_challenge.clone();
@@ -175,8 +174,7 @@ impl Middleware for Nip42Middleware {
                         auth_event_id,
                         false,
                         "auth-required: invalid event kind",
-                    ))
-                    .await?;
+                    ))?;
                     return Err(Error::auth_required("Invalid event kind").into());
                 }
 
@@ -191,8 +189,7 @@ impl Middleware for Nip42Middleware {
                         auth_event_id,
                         false,
                         "auth-required: invalid signature",
-                    ))
-                    .await?;
+                    ))?;
                     return Err(Error::auth_required("Invalid signature").into());
                 }
 
@@ -217,8 +214,7 @@ impl Middleware for Nip42Middleware {
                                 auth_event_id,
                                 false,
                                 "auth-required: challenge mismatch",
-                            ))
-                            .await?;
+                            ))?;
                             return Err(Error::auth_required("Challenge mismatch").into());
                         }
                     }
@@ -233,8 +229,7 @@ impl Middleware for Nip42Middleware {
                             auth_event_id,
                             false,
                             "auth-required: missing challenge tag",
-                        ))
-                        .await?;
+                        ))?;
                         return Err(Error::auth_required("No challenge tag found").into());
                     }
                 }
@@ -272,8 +267,7 @@ impl Middleware for Nip42Middleware {
                                 auth_event_id,
                                 false,
                                 "auth-required: relay mismatch",
-                            ))
-                            .await?;
+                            ))?;
                             return Err(Error::auth_required("Relay mismatch").into());
                         }
                     }
@@ -288,8 +282,7 @@ impl Middleware for Nip42Middleware {
                             auth_event_id,
                             false,
                             "auth-required: missing relay tag",
-                        ))
-                        .await?;
+                        ))?;
                         return Err(Error::auth_required("No relay tag found").into());
                     }
                 }
@@ -309,8 +302,7 @@ impl Middleware for Nip42Middleware {
                         auth_event_id,
                         false,
                         "auth-required: expired auth event",
-                    ))
-                    .await?;
+                    ))?;
                     return Err(Error::auth_required("Expired auth event").into());
                 }
 
@@ -326,8 +318,7 @@ impl Middleware for Nip42Middleware {
                     "[{}] Successfully authenticated pubkey {} (event ID {}).",
                     connection_id_clone, auth_event_pubkey, auth_event_id
                 );
-                ctx.send_message(RelayMessage::ok(auth_event_id, true, "authenticated"))
-                    .await?;
+                ctx.send_message(RelayMessage::ok(auth_event_id, true, "authenticated"))?;
                 Ok(())
             }
             _ => ctx.next().await,
@@ -357,7 +348,7 @@ impl Middleware for Nip42Middleware {
             ctx.connection_id,
             challenge_event
         );
-        ctx.send_message(challenge_event).await?;
+        ctx.send_message(challenge_event)?;
         ctx.next().await
     }
 }

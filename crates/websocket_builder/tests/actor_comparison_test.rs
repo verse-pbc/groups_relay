@@ -89,7 +89,7 @@ impl Middleware for HeavyProcessingMiddleware {
                     payload: format!("Response {} to {}", i, msg_id),
                 };
                 
-                match ctx.send_message(response).await {
+                match ctx.send_message(response) {
                     Ok(_) => {
                         self.processed_count.fetch_add(1, Ordering::Relaxed);
                     }

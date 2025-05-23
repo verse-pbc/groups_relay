@@ -105,7 +105,7 @@ impl Middleware for HelloEchoMiddleware {
         };
 
         // Echo the fully inbound-processed message. This will go through the outbound pipeline.
-        if let Err(e) = ctx.send_message(processed_message.clone()).await {
+        if let Err(e) = ctx.send_message(processed_message.clone()) {
             eprintln!("HelloEchoMiddleware: Failed to send echo: {:?}", e);
         }
 

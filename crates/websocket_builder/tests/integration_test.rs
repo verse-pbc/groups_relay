@@ -117,7 +117,7 @@ impl Middleware for ThreeMiddleware {
         ctx.message = Some(message.clone());
 
         // Send the processed message back as a response
-        ctx.send_message(message).await?;
+        ctx.send_message(message)?;
         ctx.next().await
     }
 
@@ -175,7 +175,7 @@ impl Middleware for FloodMiddleware {
     ) -> Result<(), anyhow::Error> {
         // Send 200 messages (more than the channel size of 10)
         for i in 0..200 {
-            if let Err(_e) = ctx.send_message(format!("flood message {i}")).await {
+            if let Err(_e) = ctx.send_message(format!("flood message {i}")) {
                 break;
             }
         }

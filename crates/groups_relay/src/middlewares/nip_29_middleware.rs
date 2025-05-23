@@ -283,14 +283,13 @@ impl Middleware for Nip29Middleware {
                                 original_event_id,
                                 true,
                                 "Event processed successfully",
-                            ))
-                            .await?;
+                            ))?;
                         }
                     }
                     Err(e) => {
                         if ctx.sender.is_some() {
                             let notice_msg = format!("Error processing event: {}", e);
-                            ctx.send_message(RelayMessage::notice(notice_msg)).await?;
+                            ctx.send_message(RelayMessage::notice(notice_msg))?;
                         }
                         error!(target: "nip29", "Error handling inbound event: {:?}", e);
                         return Err(e.into());
@@ -316,7 +315,7 @@ impl Middleware for Nip29Middleware {
                     Err(e) => {
                         if ctx.sender.is_some() {
                             let notice_msg = format!("Error processing REQ: {}", e);
-                            ctx.send_message(RelayMessage::notice(notice_msg)).await?;
+                            ctx.send_message(RelayMessage::notice(notice_msg))?;
                         }
                         error!(target: "nip29", "Error handling REQ: {:?}", e);
                         return Err(e.into());
@@ -330,7 +329,7 @@ impl Middleware for Nip29Middleware {
                         if ctx.sender.is_some() {
                             let notice_msg =
                                 format!("Error processing CLOSE for {}: {}", sub_id_cow, e);
-                            ctx.send_message(RelayMessage::notice(notice_msg)).await?;
+                            ctx.send_message(RelayMessage::notice(notice_msg))?;
                         }
                     } else {
                         debug!(target: "nip29", "Successfully closed subscription: {}", sub_id_cow);
@@ -340,8 +339,7 @@ impl Middleware for Nip29Middleware {
                             ctx.send_message(RelayMessage::closed(
                                 sub_id_cow.into_owned(),
                                 "Subscription closed by client request",
-                            ))
-                            .await?;
+                            ))?;
                         }
                     }
                 } else {
@@ -350,8 +348,7 @@ impl Middleware for Nip29Middleware {
                         ctx.send_message(RelayMessage::notice(format!(
                             "Error: No subscription manager to process CLOSE for {}",
                             sub_id_cow
-                        )))
-                        .await?;
+                        )))?;
                     }
                 }
             }
@@ -364,8 +361,7 @@ impl Middleware for Nip29Middleware {
                         auth_event_cow.as_ref().id,
                         true,
                         "AUTH received",
-                    ))
-                    .await?;
+                    ))?;
                 }
                 return Ok(());
             }
@@ -404,7 +400,7 @@ impl Middleware for Nip29Middleware {
                     Err(e) => {
                         if ctx.sender.is_some() {
                             let notice_msg = format!("Error processing ReqMultiFilter: {}", e);
-                            ctx.send_message(RelayMessage::notice(notice_msg)).await?;
+                            ctx.send_message(RelayMessage::notice(notice_msg))?;
                         }
                         error!(target: "nip29", "Error handling ReqMultiFilter: {:?}", e);
                     }

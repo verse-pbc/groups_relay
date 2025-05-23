@@ -87,7 +87,7 @@ impl Middleware for HeavyMiddleware {
                 timestamp: Instant::now(),
             };
             
-            match ctx.send_message(response).await {
+            match ctx.send_message(response) {
                 Ok(_) => {
                     self.response_count.fetch_add(1, Ordering::Relaxed);
                 }

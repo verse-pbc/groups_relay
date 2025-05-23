@@ -42,7 +42,7 @@ impl<O> MessageSender<O> {
     /// # Returns
     /// * `Ok(())` - Message sent successfully
     /// * `Err(TrySendError)` - Channel is full or closed
-    pub async fn send(&mut self, message: O) -> Result<(), TrySendError<(O, usize)>> {
+    pub fn send(&mut self, message: O) -> Result<(), TrySendError<(O, usize)>> {
         debug!(
             "MessageSender sending message from middleware index: {}",
             self.index
@@ -82,7 +82,7 @@ pub trait SendMessage<O> {
     /// • Preserves outbound-middleware order (continues after current middleware)
     ///
     /// Returns `Err(TrySendError::Full | Closed)` as the back-pressure signal.
-    async fn send_message(&mut self, message: O) -> Result<()>;
+    fn send_message(&mut self, message: O) -> Result<()>;
 
     /// Returns the number of available slots in the channel.
     fn capacity(&self) -> usize;
@@ -142,9 +142,9 @@ impl<'a, S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 's
 impl<S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 'static> SendMessage<O>
     for ConnectionContext<'_, S, M, O>
 {
-    async fn send_message(&mut self, message: O) -> Result<()> {
+    fn send_message(&mut self, message: O) -> Result<()> {
         if let Some(sender) = &mut self.sender {
-            sender.send(message).await?;
+            sender.send(message)?;
         }
         Ok(())
     }
@@ -208,9 +208,9 @@ impl<'a, S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 's
 impl<S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 'static> SendMessage<O>
     for DisconnectContext<'_, S, M, O>
 {
-    async fn send_message(&mut self, message: O) -> Result<()> {
+    fn send_message(&mut self, message: O) -> Result<()> {
         if let Some(sender) = &mut self.sender {
-            sender.send(message).await?;
+            sender.send(message)?;
         }
         Ok(())
     }
@@ -281,9 +281,9 @@ impl<'a, S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 's
 impl<S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 'static> SendMessage<O>
     for InboundContext<'_, S, M, O>
 {
-    async fn send_message(&mut self, message: O) -> Result<()> {
+    fn send_message(&mut self, message: O) -> Result<()> {
         if let Some(sender) = &mut self.sender {
-            sender.send(message).await?;
+            sender.send(message)?;
         }
         Ok(())
     }
@@ -350,9 +350,9 @@ impl<'a, S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 's
 impl<S: Send + Sync + 'static, M: Send + Sync + 'static, O: Send + Sync + 'static> SendMessage<O>
     for OutboundContext<'_, S, M, O>
 {
-    async fn send_message(&mut self, message: O) -> Result<()> {
+    fn send_message(&mut self, message: O) -> Result<()> {
         if let Some(sender) = &mut self.sender {
-            sender.send(message).await?;
+            sender.send(message)?;
         }
         Ok(())
     }

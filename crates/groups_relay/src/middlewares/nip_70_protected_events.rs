@@ -38,8 +38,7 @@ impl Middleware for Nip70Middleware {
                     event.id,
                     false,
                     "rejected: this event may only be published by its author",
-                ))
-                .await;
+                ));
         }
 
         ctx.next().await

@@ -259,7 +259,7 @@ impl Error {
         };
 
         for msg in relay_messages {
-            if let Err(e) = ctx.send_message(msg).await {
+            if let Err(e) = ctx.send_message(msg) {
                 error!("Failed to send error message: {:?}", e);
             }
         }

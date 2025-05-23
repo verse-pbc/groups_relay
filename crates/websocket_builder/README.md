@@ -117,7 +117,7 @@ impl Middleware for StageTwoEchoMiddleware {
         };
 
         // Echo the fully inbound-processed message. This will go through the outbound pipeline.
-        if let Err(e) = ctx.send_message(processed_message.clone()).await {
+        if let Err(e) = ctx.send_message(processed_message.clone()) {
             eprintln!("StageTwoEchoMiddleware: Failed to send echo: {:?}", e);
             // Decide if error should halt further processing or be passed, e.g. by returning Err(e)
         }

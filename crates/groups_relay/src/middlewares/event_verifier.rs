@@ -48,8 +48,7 @@ impl Middleware for EventVerifierMiddleware {
                     event_id,
                     false,
                     Cow::Borrowed("invalid: event signature verification failed"),
-                ))
-                .await?;
+                ))?;
                 return Ok(());
             }
         }

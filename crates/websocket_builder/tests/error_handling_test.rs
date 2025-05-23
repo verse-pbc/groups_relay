@@ -89,7 +89,7 @@ impl Middleware for ErrorMiddleware {
         } else {
             let message = format!("Error({})", ctx.message.clone().unwrap());
             ctx.message = Some(message.clone());
-            ctx.send_message(message).await?;
+            ctx.send_message(message)?;
             ctx.next().await
         }
     }
@@ -144,7 +144,7 @@ impl Middleware for FloodMiddleware {
             for i in 0..1000 {
                 // Add a small delay to ensure messages build up
                 tokio::time::sleep(Duration::from_micros(30)).await;
-                ctx.send_message(format!("flood_message_{}", i)).await?;
+                ctx.send_message(format!("flood_message_{}", i))?;
             }
             Ok(())
         } else {
