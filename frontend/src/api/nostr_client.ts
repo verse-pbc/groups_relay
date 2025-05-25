@@ -20,6 +20,9 @@ export enum GroupEventKind {
   CreateGroup = 9007,
   DeleteGroup = 9008,
   CreateInvite = 9009,
+  GroupMetadata = 39000,
+  GroupAdmins = 39001,
+  GroupMembers = 39002,
 }
 
 export interface NostrClientConfig {

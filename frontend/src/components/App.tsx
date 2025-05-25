@@ -38,6 +38,8 @@ const relevantKinds: NDKKind[] = [
   GroupEventKind.CreateGroup,
   GroupEventKind.CreateInvite,
   GroupEventKind.JoinRequest,
+  GroupEventKind.PutUser, // Add/update user roles (admin, member, etc)
+  GroupEventKind.RemoveUser, // Remove user from group
   9, // Chat message
   11, // DM (Note: DMs might require specific handling/decryption not shown here)
   // Add other kinds if needed, e.g., deletions (Kind 5) if you handle them
@@ -214,76 +216,94 @@ export class App extends Component<AppProps, AppState> {
               break;
           }
 
-          case 39001: { // Group admins - Replace logic
-              const currentMembers = new Map(mutableGroup.members.map(m => [m.pubkey, { ...m }]));
-              const eventAdmins = new Map(
+          case 39001: { // Group admins - NIP-29: AUTHORITATIVE list of admins
+              // According to NIP-29, kind 39001 is the authoritative list of admins
+              // This event completely replaces the admin list - not additive
+              
+              const eventAdmins = new Set(
                   event.tags
                       .filter((t: string[]) => t[0] === "p")
-                      .map((t: string[]) => [t[1], t.slice(2)]) // [pubkey, roles_array]
+                      .map((t: string[]) => t[1]) // Just get pubkeys
               );
 
               let membersChanged = false;
-
-              // Update existing members or add new ones from the event
-              for (const [pubkey, roles] of eventAdmins.entries()) {
-                  // Explicitly cast pubkey to string
-                  const pubkeyStr = pubkey as string;
-                  const member = currentMembers.get(pubkeyStr) || { pubkey: pubkeyStr, roles: [] };
-                  // Explicitly type roles as string[]
-                  const newRoles = (roles as string[]).length > 0 ? (roles as string[]) : ["Admin"];
-                  if (JSON.stringify(member.roles.sort()) !== JSON.stringify(newRoles.sort())) {
-                      member.roles = newRoles;
-                      currentMembers.set(pubkeyStr, member); // Use casted pubkeyStr
+              
+              // Process all members to update admin status
+              const updatedMembers = mutableGroup.members.map(member => {
+                  const memberCopy = { ...member };
+                  const hasAdminRole = member.roles.some(r => r.toLowerCase() === 'admin');
+                  const shouldBeAdmin = eventAdmins.has(member.pubkey);
+                  
+                  if (shouldBeAdmin && !hasAdminRole) {
+                      // Add Admin role
+                      memberCopy.roles = [...member.roles, 'Admin'];
+                      membersChanged = true;
+                  } else if (!shouldBeAdmin && hasAdminRole) {
+                      // Remove Admin role
+                      memberCopy.roles = member.roles.filter(r => r.toLowerCase() !== 'admin');
+                      if (memberCopy.roles.length === 0) {
+                          memberCopy.roles = ['Member'];
+                      }
+                      membersChanged = true;
+                  }
+                  
+                  return memberCopy;
+              });
+              
+              // Add any admins that aren't in the members list yet
+              for (const adminPubkey of eventAdmins) {
+                  if (!updatedMembers.some(m => m.pubkey === adminPubkey)) {
+                      updatedMembers.push({
+                          pubkey: adminPubkey as string,
+                          roles: ['Admin', 'Member']
+                      });
                       membersChanged = true;
                   }
               }
 
-              // Iterate over current members to potentially remove admin role if not in event
-              for (const [pubkey, member] of currentMembers.entries()) {
-                   if (member.roles.includes('Admin') || member.roles.includes('admin')) { // Check if they were admin
-                       if (!eventAdmins.has(pubkey)) { // And are no longer in the admin event
-                           const nonAdminRoles = member.roles.filter(r => r.toLowerCase() !== 'admin');
-                            if (nonAdminRoles.length === 0) nonAdminRoles.push("Member"); // Fallback to member if no other roles
-                            if (JSON.stringify(member.roles.sort()) !== JSON.stringify(nonAdminRoles.sort())) {
-                               member.roles = nonAdminRoles;
-                               membersChanged = true;
-                            }
-                       }
-                   }
-              }
-
-
               if (membersChanged) {
-                  mutableGroup.members = Array.from(currentMembers.values());
+                  mutableGroup.members = updatedMembers;
                   updated = true;
               }
               break;
           }
 
 
-          case 39002: { // Group members metadata - Replace logic (Full replacement)
-              const eventMembers = new Map(
+          case 39002: { // Group members metadata - NIP-29: Lists all members WITHOUT roles
+              // According to NIP-29, kind 39002 lists all members (including admins) but without role information
+              // We need to preserve existing roles while updating the member list
+              
+              const eventMemberPubkeys = new Set<string>(
                   event.tags
                       .filter((t: string[]) => t[0] === "p")
-                      .map((t: string[]) => [t[1], t.slice(2)]) // [pubkey, roles_array]
+                      .map((t: string[]) => t[1])
+              );
+
+              // Create a map of existing members to preserve their roles
+              const existingMembersMap = new Map(
+                  mutableGroup.members.map(m => [m.pubkey, m])
               );
 
               const newMemberList: { pubkey: string; roles: string[] }[] = [];
-              let listChanged = false;
-
-              for(const [pubkey, roles] of eventMembers.entries()) {
-                  // Explicitly type roles as string[]
-                  newMemberList.push({ pubkey: pubkey as string, roles: (roles as string[]).length > 0 ? (roles as string[]) : ["Member"] });
+              
+              // Add all members from the event, preserving existing roles
+              for (const pubkey of eventMemberPubkeys) {
+                  const existingMember = existingMembersMap.get(pubkey);
+                  if (existingMember) {
+                      // Keep existing roles
+                      newMemberList.push({ ...existingMember });
+                  } else {
+                      // New member, default to Member role
+                      newMemberList.push({ pubkey, roles: ["Member"] });
+                  }
               }
 
-              // Simple check if the lists differ (could be more sophisticated)
-              if (mutableGroup.members.length !== newMemberList.length ||
-                  JSON.stringify(mutableGroup.members.map(m => m.pubkey).sort()) !== JSON.stringify(newMemberList.map(m => m.pubkey).sort())) {
-                  listChanged = true;
-              }
-              // Add role comparison if needed for more accuracy
+              // Check if the member list actually changed
+              const existingPubkeys = new Set(mutableGroup.members.map(m => m.pubkey));
+              const membersChanged = eventMemberPubkeys.size !== existingPubkeys.size ||
+                  [...eventMemberPubkeys].some(pk => !existingPubkeys.has(pk));
 
-              if (listChanged) {
+              if (membersChanged) {
                   mutableGroup.members = newMemberList;
                   // Clear join requests for users who are now members
                    mutableGroup.joinRequests = mutableGroup.joinRequests.filter(pubkey =>
@@ -324,6 +344,66 @@ export class App extends Component<AppProps, AppState> {
                       mutableGroup.joinRequests = [...mutableGroup.joinRequests, event.pubkey];
                       updated = true;
                   }
+              }
+              break;
+          }
+
+          case GroupEventKind.PutUser: {
+              // Handle adding/updating user roles
+              // NOTE: Kind 9000 events should not add Admin roles - those come from 39001
+              const userTag = event.tags.find((t: string[]) => t[0] === "p");
+              if (userTag) {
+                  const pubkey = userTag[1];
+                  const newRoles = userTag.slice(2).length > 0 ? userTag.slice(2) : ["Member"];
+                  
+                  // Normalize and filter roles - remove any admin roles from Kind 9000
+                  const normalizedNew = newRoles.map((r: string) => {
+                      const lower = r.toLowerCase();
+                      return lower === 'admin' ? 'Admin' : lower === 'member' ? 'Member' : r;
+                  }).filter((r: string) => r.toLowerCase() !== 'admin'); // Filter out admin roles from Kind 9000
+                  
+                  // If no roles left after filtering, default to Member
+                  if (normalizedNew.length === 0) {
+                      normalizedNew.push('Member');
+                  }
+                  
+                  // Find existing member or create new one
+                  const existingMemberIndex = mutableGroup.members.findIndex(m => m.pubkey === pubkey);
+                  
+                  if (existingMemberIndex >= 0) {
+                      // Get existing roles and preserve Admin if they have it
+                      const existingRoles = mutableGroup.members[existingMemberIndex].roles;
+                      const hasAdmin = existingRoles.some(r => r.toLowerCase() === 'admin');
+                      
+                      // Build new role set
+                      const roleSet = new Set<string>(normalizedNew);
+                      
+                      // Preserve admin role if they already have it
+                      if (hasAdmin) {
+                          roleSet.add('Admin');
+                      }
+                      
+                      mutableGroup.members[existingMemberIndex].roles = Array.from(roleSet);
+                  } else {
+                      // Add new member (without admin role - that comes from 39001)
+                      mutableGroup.members.push({ pubkey, roles: normalizedNew });
+                  }
+                  
+                  // Remove from join requests if they're being added
+                  mutableGroup.joinRequests = mutableGroup.joinRequests.filter(p => p !== pubkey);
+                  
+                  updated = true;
+              }
+              break;
+          }
+
+          case GroupEventKind.RemoveUser: {
+              // Handle removing users from the group
+              const userTag = event.tags.find((t: string[]) => t[0] === "p");
+              if (userTag) {
+                  const pubkey = userTag[1];
+                  mutableGroup.members = mutableGroup.members.filter(m => m.pubkey !== pubkey);
+                  updated = true;
               }
               break;
           }

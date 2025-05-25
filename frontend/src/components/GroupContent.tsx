@@ -35,7 +35,8 @@ export class GroupContent extends Component<GroupContentProps, GroupContentState
   }
 
   async componentDidUpdate(prevProps: GroupContentProps) {
-    if (prevProps.group.id !== this.props.group.id) {
+    if (prevProps.group.id !== this.props.group.id || 
+        prevProps.group.members !== this.props.group.members) {
       await this.checkAdminStatus()
     }
   }

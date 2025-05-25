@@ -1161,24 +1161,43 @@ impl Group {
             })
             .collect::<Vec<_>>();
 
-        for (pubkey, roles) in pubkey_and_roles {
-            let mut roles = roles.to_vec();
-            if roles.is_empty() {
-                roles.push(GroupRole::Member.to_string());
+        // Handle based on event kind
+        if event.kind == KIND_GROUP_MEMBERS_39002 {
+            // Kind 39002: Members list without roles
+            // For each pubkey listed, ensure they have at least the Member role
+            for (pubkey, _) in pubkey_and_roles {
+                if let Some(existing_member) = self.members.get_mut(&pubkey) {
+                    // Member exists - ensure they have Member role (in addition to any existing roles)
+                    existing_member.roles.insert(GroupRole::Member);
+                } else {
+                    // New member without roles - default to Member role
+                    self.members.insert(
+                        pubkey, 
+                        GroupMember::new(pubkey, HashSet::from([GroupRole::Member]))
+                    );
+                }
             }
+        } else {
+            // Kind 39001 or other events: Include role information
+            for (pubkey, roles) in pubkey_and_roles {
+                let mut roles = roles.to_vec();
+                if roles.is_empty() {
+                    roles.push(GroupRole::Member.to_string());
+                }
 
-            let new_roles = roles
-                .iter()
-                .map(|r| GroupRole::from_str(r).unwrap_or(GroupRole::Member))
-                .collect::<HashSet<_>>();
+                let new_roles = roles
+                    .iter()
+                    .map(|r| GroupRole::from_str(r).unwrap_or(GroupRole::Member))
+                    .collect::<HashSet<_>>();
 
-            // Merge roles instead of replacing - if member already exists, combine their roles
-            if let Some(existing_member) = self.members.get_mut(&pubkey) {
-                // Union the existing roles with the new roles
-                existing_member.roles.extend(new_roles);
-            } else {
-                // New member, insert with the roles from this event
-                self.members.insert(pubkey, GroupMember::new(pubkey, new_roles));
+                // Merge roles instead of replacing - if member already exists, combine their roles
+                if let Some(existing_member) = self.members.get_mut(&pubkey) {
+                    // Union the existing roles with the new roles
+                    existing_member.roles.extend(new_roles);
+                } else {
+                    // New member, insert with the roles from this event
+                    self.members.insert(pubkey, GroupMember::new(pubkey, new_roles));
+                }
             }
         }
 
@@ -1321,7 +1340,13 @@ impl Group {
         // println!("[generate_admins_event] Creating tags for admins");
         for admin in admins {
             let mut tag_vals: Vec<String> = vec![admin.pubkey.to_string()];
-            tag_vals.extend(admin.roles.iter().map(|role| format!("{:?}", role)));
+            // Only include admin-related roles (not Member role) in the 39001 event
+            tag_vals.extend(
+                admin.roles
+                    .iter()
+                    .filter(|role| matches!(role, GroupRole::Admin))
+                    .map(|role| format!("{:?}", role))
+            );
 
             let tag = Tag::custom(TagKind::p(), tag_vals);
             tags.push(tag);

@@ -45,8 +45,9 @@ export class Member extends Component<MemberProps, MemberState> {
   }
 
   async componentDidUpdate(prevProps: MemberProps) {
-    // Check if member roles have changed
-    if (prevProps.member.roles !== this.props.member.roles) {
+    // Check if member roles have changed or group members have changed
+    if (prevProps.member.roles !== this.props.member.roles || 
+        prevProps.group.members !== this.props.group.members) {
       const user = await this.props.client.ndkInstance.signer?.user();
       if (user?.pubkey) {
         const isGroupAdmin = this.props.group.members.some(m =>
