@@ -75,11 +75,10 @@ async fn test_replaceable_events_buffer_deduplicates_same_second_events() {
         .await
         .unwrap();
 
-    // Wait for more than 1 second to ensure the buffer flushes
-    sleep(Duration::from_millis(1200)).await;
-
-    // Query for the events
-    let metadata_events = database
+    // Wait for buffer to flush with retry logic
+    let mut retries = 0;
+    let max_retries = 10;
+    let mut metadata_events = database
         .query(
             vec![Filter::new()
                 .kinds(vec![Kind::Custom(39000)])
@@ -88,6 +87,23 @@ async fn test_replaceable_events_buffer_deduplicates_same_second_events() {
         )
         .await
         .unwrap();
+
+    while metadata_events.is_empty() && retries < max_retries {
+        println!("Retry {}/{}: No events found yet, waiting...", retries + 1, max_retries);
+        sleep(Duration::from_millis(500)).await;
+        
+        metadata_events = database
+            .query(
+                vec![Filter::new()
+                    .kinds(vec![Kind::Custom(39000)])
+                    .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id)],
+                &Scope::Default,
+            )
+            .await
+            .unwrap();
+            
+        retries += 1;
+    }
 
     println!(
         "Found {} metadata events after buffering",
@@ -263,29 +279,42 @@ async fn test_different_scopes_are_separate_in_buffer() {
         .await
         .unwrap();
 
-    // Wait for buffer flush
-    sleep(Duration::from_millis(1200)).await;
+    // Wait for buffer flush with retry logic
+    let mut retries = 0;
+    let max_retries = 10;
+    let mut default_events;
+    let mut named_events;
+    
+    loop {
+        default_events = database
+            .query(
+                vec![Filter::new()
+                    .kinds(vec![Kind::Custom(39000)])
+                    .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id)],
+                &Scope::Default,
+            )
+            .await
+            .unwrap();
 
-    // Query both scopes
-    let default_events = database
-        .query(
-            vec![Filter::new()
-                .kinds(vec![Kind::Custom(39000)])
-                .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id)],
-            &Scope::Default,
-        )
-        .await
-        .unwrap();
-
-    let named_events = database
-        .query(
-            vec![Filter::new()
-                .kinds(vec![Kind::Custom(39000)])
-                .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id)],
-            &named_scope,
-        )
-        .await
-        .unwrap();
+        named_events = database
+            .query(
+                vec![Filter::new()
+                    .kinds(vec![Kind::Custom(39000)])
+                    .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id)],
+                &named_scope,
+            )
+            .await
+            .unwrap();
+            
+        if (!default_events.is_empty() && !named_events.is_empty()) || retries >= max_retries {
+            break;
+        }
+        
+        println!("Retry {}/{}: Default: {}, Named: {} events found", 
+            retries + 1, max_retries, default_events.len(), named_events.len());
+        sleep(Duration::from_millis(500)).await;
+        retries += 1;
+    }
 
     // Should have one event in each scope
     assert_eq!(
