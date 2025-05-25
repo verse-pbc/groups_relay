@@ -116,15 +116,62 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
     }
 
     // Execute the metadata commands through the subscription manager (using the buffer)
+    println!("Executing metadata commands...");
     for command in metadata_commands {
         subscription_manager
             .save_and_broadcast(command)
             .await
             .unwrap();
     }
+    println!("All metadata commands sent to buffer");
 
     // Allow time for the buffer to flush (>1 second)
-    sleep(Duration::from_millis(1200)).await;
+    // In CI environments, we need more time due to potential slowness
+    println!("Waiting for buffer to flush...");
+    
+    // Wait up to 5 seconds for the metadata event to appear
+    let mut retries = 0;
+    let max_retries = 10;
+    let mut found_metadata = false;
+    
+    while retries < max_retries && !found_metadata {
+        sleep(Duration::from_millis(500)).await;
+        
+        let check_filter = vec![Filter::new()
+            .kinds(vec![Kind::Custom(39000)])
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id)
+            .since(Timestamp::from(0))];
+            
+        let check_events = database
+            .query(check_filter, &Scope::Default)
+            .await
+            .unwrap();
+            
+        if !check_events.is_empty() {
+            found_metadata = true;
+            println!("Metadata event found after {} retries", retries);
+        } else {
+            retries += 1;
+            println!("Retry {}/{}: Metadata event not found yet", retries, max_retries);
+        }
+    }
+    
+    println!("Buffer flush wait completed");
+
+    // First, let's query for ALL events to see what's in the database
+    let all_events_filter = vec![Filter::new()
+        .since(Timestamp::from(0))]; // Get all events
+    
+    let all_events = database
+        .query(all_events_filter, &Scope::Default)
+        .await
+        .unwrap();
+    
+    println!("Found {} TOTAL events in database:", all_events.len());
+    for event in all_events.iter() {
+        println!("  Event: kind={}, id={}, tags={:?}", event.kind, event.id, 
+            event.tags.iter().map(|t| format!("{}:{:?}", t.kind(), t.content())).collect::<Vec<_>>());
+    }
 
     // Query for ALL kind 39000 events (group metadata) to see both
     let all_metadata_filter = vec![Filter::new()
