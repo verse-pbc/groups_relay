@@ -272,9 +272,15 @@ impl Middleware for Nip29Middleware {
                     .await
                 {
                     Ok(commands) => {
-                        // Save all commands first
-                        for command in commands {
-                            self.database.save_store_command(command).await?;
+                        // Use save_and_broadcast to properly handle replaceable events and broadcast to subscriptions
+                        if let Some(subscription_manager) = &ctx.state.subscription_manager {
+                            for command in commands {
+                                subscription_manager.save_and_broadcast(command).await?;
+                            }
+                        } else {
+                            // This should not happen - subscription manager should always be available
+                            error!(target: "nip29", "No subscription manager available for connection");
+                            return Err(Error::internal("No subscription manager available").into());
                         }
                         // If all saves were successful, send OK
                         if let Some(_sender) = ctx.sender.as_mut() {
