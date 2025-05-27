@@ -109,7 +109,7 @@ async fn test_rapid_metadata_edits_through_subscription_manager() {
     }
 
     // Wait less than buffer flush time
-    sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(800)).await;
 
     // Query for 39000 events - at this point edits should still be buffered
     let metadata_events_before_flush = database
@@ -135,7 +135,7 @@ async fn test_rapid_metadata_edits_through_subscription_manager() {
     );
 
     // Wait for buffer to flush
-    sleep(Duration::from_millis(700)).await; // Total 1.2 seconds
+    sleep(Duration::from_millis(1000)).await; // Total 1.8 seconds, ensuring flush happens
 
     // Query again after flush
     let metadata_events_after_flush = database

@@ -37,10 +37,13 @@ jobs:
           RUSTFLAGS: '-C target-feature=+crt-static'
         run: cargo build --release --target x86_64-unknown-linux-gnu --workspace --verbose
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Run tests
         env:
           RUST_TEST_THREADS: 5
-        run: cargo test --workspace --verbose -- --nocapture
+        run: cargo nextest run --workspace --status-level all
 
       - name: Setup build context
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
