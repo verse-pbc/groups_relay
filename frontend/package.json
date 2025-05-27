@@ -13,7 +13,8 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@nostr-dev-kit/ndk": "^2.13.3",
+    "@nostr-dev-kit/ndk": "^2.14.23",
+    "@nostr-dev-kit/ndk-wallet": "^0.6.0",
     "@preact/preset-vite": "^2.8.1",
     "nostr-tools": "^2.10.4",
     "preact": "^10.19.3"

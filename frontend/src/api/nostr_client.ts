@@ -6,6 +6,7 @@ import NDK, {
   NDKPublishError,
   NDKUser,
 } from "@nostr-dev-kit/ndk";
+import { NDKCashuWallet } from "@nostr-dev-kit/ndk-wallet";
 import { nip19 } from "nostr-tools";
 import type { Group } from "../types";
 
@@ -48,6 +49,7 @@ export class NostrClient {
   private profileNdk: NDK;
   readonly config: NostrClientConfig;
   private profileCache: Map<string, any> = new Map();
+  private wallet: NDKCashuWallet | null = null;
 
   constructor(key: string, config?: Partial<NostrClientConfig>) {
     try {
@@ -114,6 +116,43 @@ export class NostrClient {
 
   get ndkInstance(): NDK {
     return this.ndk;
+  }
+
+  // Wallet methods
+  async initializeWallet(mints?: string[]): Promise<void> {
+    try {
+      this.wallet = new NDKCashuWallet(this.ndk);
+      
+      // Add default mints if provided
+      if (mints && mints.length > 0) {
+        for (const mint of mints) {
+          this.wallet.mints = [...(this.wallet.mints || []), mint];
+        }
+      }
+    } catch (error) {
+      throw new NostrGroupError(
+        error instanceof Error ? error.message : String(error),
+        "Failed to initialize wallet"
+      );
+    }
+  }
+
+  get walletInstance(): NDKCashuWallet | null {
+    return this.wallet;
+  }
+
+  async getWalletBalance(): Promise<number> {
+    if (!this.wallet) {
+      throw new NostrGroupError("Wallet not initialized", "getWalletBalance");
+    }
+    // Balance might be an object with amount property
+    const balance = this.wallet.balance;
+    if (typeof balance === 'number') {
+      return balance;
+    } else if (balance && typeof balance === 'object' && 'amount' in balance) {
+      return (balance as any).amount || 0;
+    }
+    return 0;
   }
 
   async connect() {
