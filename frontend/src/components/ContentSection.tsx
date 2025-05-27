@@ -1,12 +1,16 @@
 import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
-import { UserDisplay } from './UserDisplay'
+import { UserDisplayWithNutzap } from './UserDisplayWithNutzap'
 import { BaseComponent } from './BaseComponent'
+import type { Proof } from '@cashu/cashu-ts'
 
 interface ContentSectionProps {
   group: Group
   client: NostrClient
   showMessage: (message: string, type: 'success' | 'error' | 'info') => void
+  cashuProofs?: Proof[]
+  mints?: string[]
+  onNutzapSent?: () => void
 }
 
 interface ContentSectionState {
@@ -80,9 +84,13 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
   }
 
   render() {
-    const { group } = this.props
+    const { group, client } = this.props
     const { deletingEvents, showConfirmDelete } = this.state
     const content = group.content || []
+
+    // Get wallet state from client
+    const cashuProofs = client.getAllCashuProofs()
+    const mints = client.getActiveMints()
 
     return (
       <div class="h-full flex flex-col overflow-hidden">
@@ -97,12 +105,18 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
                 <div class="flex items-start gap-1.5">
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center text-[11px] gap-1.5 text-[var(--color-text-tertiary)]">
-                      <UserDisplay
+                      <UserDisplayWithNutzap
                         pubkey={this.props.client.pubkeyToNpub(item.pubkey)}
                         client={this.props.client}
                         showCopy={true}
                         size="sm"
                         onCopy={() => this.props.showMessage('Npub copied to clipboard', 'success')}
+                        cashuProofs={cashuProofs}
+                        mints={mints}
+                        onSendNutzap={() => {
+                          this.props.showMessage('Nutzap sent successfully!', 'success');
+                          if (this.props.onNutzapSent) this.props.onNutzapSent();
+                        }}
                       />
                       <span>·</span>
                       <span>

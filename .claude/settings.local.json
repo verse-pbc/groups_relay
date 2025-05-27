@@ -23,7 +23,16 @@
       "Bash(sed:*)",
       "Bash(__NEW_LINE__ grep -A 5 \"downcast_ref\" \"/Users/daniel/code/nos/groups/clean_slate/groups_relay/crates/groups_relay/src/middlewares/error_handling_middleware.rs\")",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(npm run build:*)",
+      "Bash(fish:*)",
+      "Bash(npm view:*)",
+      "Bash(git checkout:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run dev:*)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:docs.cashu.space)",
+      "WebFetch(domain:testnut.cashu.space)"
     ],
     "deny": []
   }

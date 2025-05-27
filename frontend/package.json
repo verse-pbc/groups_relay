@@ -13,14 +13,18 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@cashu/cashu-ts": "^2.5.2",
     "@nostr-dev-kit/ndk": "^2.14.23",
     "@nostr-dev-kit/ndk-wallet": "^0.6.0",
     "@preact/preset-vite": "^2.8.1",
+    "localforage": "^1.10.0",
     "nostr-tools": "^2.10.4",
-    "preact": "^10.19.3"
+    "preact": "^10.19.3",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@types/qrcode": "^1.5.5",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.16",

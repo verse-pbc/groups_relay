@@ -8,7 +8,7 @@ import { GroupSidebar } from "./GroupSidebar";
 import { BurgerButton } from "./BurgerButton";
 import { ProfileMenu } from "./ProfileMenu";
 import { SubdomainList } from "./SubdomainList";
-import { WalletDisplay } from "./WalletDisplay";
+// WalletDisplay moved to ProfileMenu
 
 // Import NDK types if possible from your client setup, otherwise define them
 // Assuming they might be available like this (adjust if needed):
@@ -818,10 +818,6 @@ export class App extends Component<AppProps, AppState> {
                     showMessage={this.showMessage}
                     onGroupCreated={this.handleGroupSelect}
                 />
-                
-                <div class="mt-4 mb-4">
-                    <WalletDisplay client={client} />
-                </div>
                 
                 <GroupSidebar
                     groups={groups}

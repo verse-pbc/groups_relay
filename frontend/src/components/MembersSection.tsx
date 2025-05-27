@@ -87,6 +87,10 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
     const { group, client, showMessage, isAdmin } = this.props
     const { newMemberNpub, isAddingMember, removingMembers, showConfirmRemove } = this.state
 
+    // Get wallet state from client
+    const cashuProofs = client.getAllCashuProofs()
+    const mints = client.getActiveMints()
+
     return (
       <div class="space-y-4">
         {isAdmin && (
@@ -136,6 +140,11 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
               showConfirmRemove={showConfirmRemove === member.pubkey}
               onShowConfirmRemove={() => this.setState({ showConfirmRemove: member.pubkey })}
               onHideConfirmRemove={() => this.setState({ showConfirmRemove: null })}
+              cashuProofs={cashuProofs}
+              mints={mints}
+              onNutzapSent={() => {
+                // Trigger a refresh or update if needed
+              }}
             />
           ))}
 

@@ -2,12 +2,16 @@ import { Component } from 'preact'
 import { NostrClient, NostrGroupError } from '../api/nostr_client'
 import type { Group } from '../types'
 import { JoinRequestForm } from './JoinRequestForm'
-import { UserDisplay } from './UserDisplay'
+import { UserDisplayWithNutzap } from './UserDisplayWithNutzap'
+import type { Proof } from '@cashu/cashu-ts'
 
 interface JoinRequestSectionProps {
   group: Group
   client: NostrClient
   showMessage: (message: string, type: 'success' | 'error' | 'info') => void
+  cashuProofs?: Proof[]
+  mints?: string[]
+  onNutzapSent?: () => void
 }
 
 interface JoinRequestSectionState {
@@ -66,6 +70,10 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
   render() {
     const { group, client } = this.props
 
+    // Get wallet state from client
+    const cashuProofs = client.getAllCashuProofs()
+    const mints = client.getActiveMints()
+
     return (
       <div class="space-y-4">
         <div class="p-4 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)]">
@@ -86,10 +94,16 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
                        transition-colors"
               >
                 <div class="flex items-center gap-2">
-                  <UserDisplay
+                  <UserDisplayWithNutzap
                     pubkey={this.props.client.pubkeyToNpub(pubkey)}
                     client={client}
                     showCopy={false}
+                    cashuProofs={cashuProofs}
+                    mints={mints}
+                    onSendNutzap={() => {
+                      this.props.showMessage('Nutzap sent successfully!', 'success');
+                      if (this.props.onNutzapSent) this.props.onNutzapSent();
+                    }}
                   />
                   <button
                     onClick={() => this.handleAcceptRequest(pubkey)}
