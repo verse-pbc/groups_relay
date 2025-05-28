@@ -27,13 +27,15 @@ interface MemberState {
   npub: string
   isTogglingRole: boolean
   isCurrentUserAdmin: boolean
+  isCurrentUser: boolean
 }
 
 export class Member extends Component<MemberProps, MemberState> {
   state = {
     npub: this.props.client.pubkeyToNpub(this.props.member.pubkey),
     isTogglingRole: false,
-    isCurrentUserAdmin: false
+    isCurrentUserAdmin: false,
+    isCurrentUser: false
   }
 
   async componentDidMount() {
@@ -45,14 +47,22 @@ export class Member extends Component<MemberProps, MemberState> {
       );
       const isRelayAdmin = await this.props.client.checkIsRelayAdmin();
       const isAdmin = isGroupAdmin || isRelayAdmin;
-      this.setState({ isCurrentUserAdmin: isAdmin });
+      
+      // Check if this member is the current user
+      const isCurrentUser = this.props.member.pubkey === user.pubkey;
+      
+      this.setState({ 
+        isCurrentUserAdmin: isAdmin,
+        isCurrentUser: isCurrentUser
+      });
     }
   }
 
   async componentDidUpdate(prevProps: MemberProps) {
     // Check if member roles have changed or group members have changed
     if (prevProps.member.roles !== this.props.member.roles || 
-        prevProps.group.members !== this.props.group.members) {
+        prevProps.group.members !== this.props.group.members ||
+        prevProps.member.pubkey !== this.props.member.pubkey) {
       const user = await this.props.client.ndkInstance.signer?.user();
       if (user?.pubkey) {
         const isGroupAdmin = this.props.group.members.some(m =>
@@ -60,7 +70,14 @@ export class Member extends Component<MemberProps, MemberState> {
         );
         const isRelayAdmin = await this.props.client.checkIsRelayAdmin();
         const isAdmin = isGroupAdmin || isRelayAdmin;
-        this.setState({ isCurrentUserAdmin: isAdmin });
+        
+        // Check if this member is the current user
+        const isCurrentUser = this.props.member.pubkey === user.pubkey;
+        
+        this.setState({ 
+          isCurrentUserAdmin: isAdmin,
+          isCurrentUser: isCurrentUser
+        });
       }
     }
   }
@@ -130,6 +147,7 @@ export class Member extends Component<MemberProps, MemberState> {
                   if (this.props.onNutzapSent) this.props.onNutzapSent();
                 }}
                 showCopy={true}
+                hideNutzap={this.state.isCurrentUser && !window.location.search.includes('selfnutzap')}
               />
             ) : (
               <UserDisplay

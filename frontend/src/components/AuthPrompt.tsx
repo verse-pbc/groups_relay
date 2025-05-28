@@ -151,6 +151,7 @@ export const AuthPrompt: FunctionComponent<AuthPromptProps> = ({ onSubmit }) => 
                     value={key}
                     onChange={(e) => setKey((e.target as HTMLInputElement).value)}
                     placeholder="nsec..."
+                    autocomplete="off"
                     class="w-full p-3 pl-10 border rounded-lg bg-[var(--color-bg-primary)]
                            text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)]/40
                            focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent

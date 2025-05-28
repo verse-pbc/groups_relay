@@ -6,20 +6,19 @@ interface WalletDisplayProps {
   client: NostrClient;
   onClose?: () => void;
   isModal?: boolean;
+  initialCashuBalance?: number;
 }
 
-export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) => {
-  const [balance, setBalance] = useState<number | null>(null);
+export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }: WalletDisplayProps) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [hasCheckedWallet, setHasCheckedWallet] = useState(false);
-  const [cashuBalance, setCashuBalance] = useState<number>(0);
+  const [cashuBalance, setCashuBalance] = useState<number>(initialCashuBalance ?? 0);
   const [mints, setMints] = useState<string[]>([
-    "https://testnut.cashu.space",
-    "https://nofees.testnut.cashu.space",
-    "https://mint.minibits.cash/Bitcoin"
+    "https://mint.minibits.cash/Bitcoin",
+    "https://mint.coinos.io"
   ]);
   const [showMintManager, setShowMintManager] = useState(false);
   const [newMintUrl, setNewMintUrl] = useState("");
@@ -27,13 +26,15 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
   const [receiveMode, setReceiveMode] = useState<'paste' | 'mint'>('paste');
   const [tokenInput, setTokenInput] = useState("");
   const [mintAmount, setMintAmount] = useState("");
-  const [lightningInvoice, setLightningInvoice] = useState("");
+  const [mintInvoice, setMintInvoice] = useState("");
   const [isMinting, setIsMinting] = useState(false);
   const [selectedMint, setSelectedMint] = useState("");
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
   const [currentQuote, setCurrentQuote] = useState<any>(null);
   const [showTransactions, setShowTransactions] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [mintBalances, setMintBalances] = useState<Record<string, number>>({});
+  const [checkingPayment, setCheckingPayment] = useState(false);
 
   const initializeWallet = async () => {
     setLoading(true);
@@ -47,55 +48,17 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
       // Initialize NDK wallet (will check for existing NIP-60 wallet)
       await client.initializeWallet(mints);
       
-      // Check if we got mints from NIP-60
-      if (client.walletInstance?.mints && client.walletInstance.mints.length > 0) {
-        // Use mints from NIP-60 wallet
-        const nip60Mints = client.walletInstance.mints;
-        
-        // Filter out default mints that NDK might have added
-        const uniqueMints = Array.from(new Set(nip60Mints));
-        const hasNonDefaultMints = uniqueMints.some(mint => 
-          !mints.includes(mint)
-        );
-        
-        if (hasNonDefaultMints || uniqueMints.length > 0) {
-          setMints(uniqueMints);
-          setSuccess("Restored existing wallet from your relays!");
-          console.log("🎉 Wallet UI: Using mints from NIP-60:", uniqueMints);
-          
-          // Initialize Cashu mints from NIP-60 in parallel
-          await Promise.all(uniqueMints.map(async (mint) => {
-            try {
-              await client.initializeCashuMint(mint);
-            } catch (mintErr) {
-              console.warn(`⚠️ Failed to initialize mint ${mint}:`, mintErr);
-            }
-          }));
-        } else {
-          console.log("📝 Wallet UI: NIP-60 wallet found but using default mints");
-          // Initialize default Cashu mints in parallel
-          await Promise.all(mints.map(async (mint) => {
-            try {
-              await client.initializeCashuMint(mint);
-            } catch (mintErr) {
-              console.warn(`⚠️ Failed to initialize mint ${mint}:`, mintErr);
-            }
-          }));
-        }
-      } else {
-        console.log("📝 Wallet UI: No NIP-60 wallet found, using default mints:", mints);
-        // Initialize default Cashu mints in parallel
-        await Promise.all(mints.map(async (mint) => {
-          try {
-            await client.initializeCashuMint(mint);
-          } catch (mintErr) {
-            console.warn(`⚠️ Failed to initialize mint ${mint}:`, mintErr);
-          }
-        }));
+      // Get mints from wallet
+      const walletMints = await client.getCashuMints();
+      if (walletMints.length > 0) {
+        setMints(walletMints);
+        setSuccess("Wallet initialized successfully!");
       }
       
-      // Fetch balance after initialization
-      await fetchBalance();
+      // Only fetch balance if not provided as props
+      if (initialCashuBalance === undefined) {
+        await fetchBalance();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to initialize wallet");
       setIsInitialized(false);
@@ -104,33 +67,35 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
     }
   };
 
-  const fetchBalance = async () => {
+  const fetchBalance = async (forceRefresh: boolean = false) => {
     if (!client.walletInstance) return;
+    
+    // Skip if we have initial balance and not forcing refresh
+    if (!forceRefresh && initialCashuBalance !== undefined) {
+      return;
+    }
     
     setLoading(true);
     try {
-      // Prune spent proofs first
-      await client.pruneAllSpentProofs();
+      // Run all balance fetching operations in parallel
+      const [cashuBalance, txHistory] = await Promise.all([
+        // Fetch total Cashu balance
+        client.getCashuBalance().catch(() => {
+          return 0;
+        }),
+        
+        // Load transaction history
+        Promise.resolve(client.getTransactionHistory())
+      ]);
       
-      // Fetch NDK wallet balance
-      const walletBalance = await client.getWalletBalance();
-      setBalance(walletBalance);
+      // Update balance
+      setCashuBalance(cashuBalance);
       
-      // Fetch Cashu balance from all mints
-      let totalCashuBalance = 0;
-      for (const mintUrl of mints) {
-        try {
-          const mintBalance = await client.getCashuBalance(mintUrl);
-          totalCashuBalance += mintBalance;
-          console.log(`💰 Balance for ${mintUrl}: ${mintBalance} sats`);
-        } catch (err) {
-          console.warn(`Failed to get balance from ${mintUrl}:`, err);
-        }
-      }
-      setCashuBalance(totalCashuBalance);
+      // For now, we don't have per-mint balances with NDKCashuWallet
+      // Could be added later if needed
+      setMintBalances({});
       
-      // Load transaction history
-      const txHistory = client.getTransactionHistory();
+      // Update transaction history
       setTransactions(txHistory.slice(0, 10)); // Show last 10 transactions
       
       setError(null);
@@ -195,29 +160,32 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
     setError(null);
     try {
       const { invoice, quote } = await client.mintTokens(mintUrl, amount);
-      setLightningInvoice(invoice);
+      setMintInvoice(invoice);
       setCurrentQuote(quote);
       
       // Generate QR code for the invoice
-      try {
-        const qrDataUrl = await QRCode.toDataURL(invoice, {
-          width: 256,
-          margin: 2,
-          color: {
-            dark: '#000000',
-            light: '#FFFFFF'
-          }
-        });
-        setQrCodeDataUrl(qrDataUrl);
-      } catch (qrErr) {
-        console.error("Failed to generate QR code:", qrErr);
+      if (invoice) {
+        try {
+          const qrDataUrl = await QRCode.toDataURL(invoice, {
+            width: 256,
+            margin: 2,
+            color: {
+              dark: '#000000',
+              light: '#FFFFFF'
+            }
+          });
+          setQrCodeDataUrl(qrDataUrl);
+        } catch (qrErr) {
+          setError("Failed to generate QR code for invoice");
+        }
+      } else {
       }
       
       // For testnut mints, check immediately if tokens are available
       if (mintUrl.includes('testnut')) {
         setSuccess("Invoice generated! For testnut, tokens may be available immediately. Click 'Check & Claim Tokens'.");
       } else {
-        setSuccess("Lightning invoice generated! Pay it to receive Cashu tokens.");
+        setSuccess("Invoice generated! Pay it to receive Cashu tokens.");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate invoice");
@@ -232,10 +200,12 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
     setLoading(true);
     setError(null);
     try {
-      await client.initializeCashuMint(newMintUrl);
+      // Use the client's addMint method which handles NIP-60 persistence
+      await client.addMint(newMintUrl);
+      
       setMints([...mints, newMintUrl]);
       setNewMintUrl("");
-      setSuccess("Mint added successfully!");
+      setSuccess("Mint added and saved to wallet!");
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add mint");
@@ -244,15 +214,22 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
     }
   };
 
-  const removeMint = (mintUrl: string) => {
-    setMints(mints.filter(m => m !== mintUrl));
+  const removeMint = async (mintUrl: string) => {
+    try {
+      const updatedMints = mints.filter(m => m !== mintUrl);
+      
+      // TODO: Add mint management to wallet service
+      setMints(updatedMints);
+      setSuccess("Mint removed from wallet!");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove mint");
+    }
   };
 
   useEffect(() => {
     // Auto-initialize wallet on component mount
     const autoInitialize = async () => {
       if (!isInitialized && !loading && !hasCheckedWallet) {
-        console.log("🚀 Auto-initializing wallet...");
         setHasCheckedWallet(true);
         await initializeWallet();
       }
@@ -269,6 +246,15 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
     
     return () => clearInterval(interval);
   }, [client]);
+  
+  useEffect(() => {
+    // Subscribe to balance updates
+    const unsubscribe = client.onBalanceUpdate((balance) => {
+      setCashuBalance(balance);
+    });
+    
+    return () => unsubscribe();
+  }, [client]);
 
   useEffect(() => {
     if (success) {
@@ -276,6 +262,57 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
       return () => clearTimeout(timer);
     }
   }, [success]);
+
+  // Handle ESC key to close modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && showReceiveModal) {
+        setShowReceiveModal(false);
+        setTokenInput("");
+        setMintAmount("");
+        setMintInvoice("");
+        setSelectedMint("");
+        setQrCodeDataUrl(null);
+        setCurrentQuote(null);
+        setError(null);
+        setSuccess(null);
+      }
+    };
+
+    if (showReceiveModal) {
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [showReceiveModal]);
+
+  // Auto-check payment status when we have an active invoice
+  useEffect(() => {
+    if (!mintInvoice || !currentQuote || !selectedMint || checkingPayment) return;
+
+    const checkInterval = setInterval(async () => {
+      try {
+        setCheckingPayment(true);
+        const { claimed } = await client.checkAndClaimTokens(selectedMint, currentQuote);
+        
+        if (claimed) {
+          setSuccess("Payment received! Tokens claimed successfully.");
+          setShowReceiveModal(false);
+          setMintInvoice("");
+          setMintAmount("");
+          setQrCodeDataUrl(null);
+          setCurrentQuote(null);
+          setSelectedMint("");
+          await fetchBalance();
+          clearInterval(checkInterval);
+        }
+      } catch (err) {
+      } finally {
+        setCheckingPayment(false);
+      }
+    }, 5000); // Check every 5 seconds
+
+    return () => clearInterval(checkInterval);
+  }, [mintInvoice, currentQuote, selectedMint]);
 
   // Auto-initialize on mount for modal view
   useEffect(() => {
@@ -312,7 +349,7 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
           </div>
         ) : (
           <>
-            <p class="text-gray-400 mb-3">Initialize your wallet to enable Lightning and Ecash payments</p>
+            <p class="text-gray-400 mb-3">Initialize your wallet to enable Ecash payments</p>
             <button
               onClick={initializeWallet}
               disabled={loading}
@@ -334,7 +371,7 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
           <h3 class="text-lg font-semibold">Wallet</h3>
           <div class="flex items-center gap-2">
             <button
-              onClick={fetchBalance}
+              onClick={() => fetchBalance(true)}
               disabled={loading}
               class="text-purple-400 hover:text-purple-300 text-sm"
             >
@@ -356,18 +393,11 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
       <div class="space-y-3">
         <div>
           <div class="flex items-center justify-between">
-            <span class="text-gray-400 text-sm">Lightning Balance:</span>
-            <span class="text-lg font-mono">
-              {balance !== null ? `${balance} sats` : "---"}
-            </span>
-          </div>
-        </div>
-
-        <div>
-          <div class="flex items-center justify-between">
-            <span class="text-gray-400 text-sm">Cashu Balance:</span>
-            <span class="text-lg font-mono text-green-400">
-              {cashuBalance} sats
+            <span class="text-gray-400 text-sm">Balance:</span>
+            <span class="text-xl font-semibold text-[#f7931a] flex items-center gap-1">
+              <span class="text-base">₿</span>
+              {cashuBalance.toLocaleString()}
+              <span class="text-sm font-normal">sats</span>
             </span>
           </div>
         </div>
@@ -380,21 +410,34 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
         <button
           onClick={receiveToken}
           disabled={loading}
-          class="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 px-3 py-2 rounded-md text-sm font-medium transition-colors"
+          class="w-full bg-[#f7931a] hover:bg-[#f68e0a] disabled:bg-gray-600 px-4 py-3 rounded-lg text-white font-medium transition-all transform hover:scale-[1.02] active:scale-[0.98]"
         >
           Receive Cashu Token
         </button>
         
         <button
           onClick={() => setShowMintManager(!showMintManager)}
-          class="w-full bg-gray-600 hover:bg-gray-700 px-3 py-2 rounded-md text-sm font-medium transition-colors"
+          class="w-full bg-[var(--color-bg-tertiary)] hover:bg-gray-700 px-4 py-3 rounded-lg text-sm font-medium transition-all border border-[var(--color-border)]"
         >
           {showMintManager ? 'Hide' : 'Manage'} Mints ({mints.length})
         </button>
         
         <button
-          onClick={() => setShowTransactions(!showTransactions)}
-          class="w-full bg-gray-600 hover:bg-gray-700 px-3 py-2 rounded-md text-sm font-medium transition-colors"
+          onClick={async () => {
+            if (!showTransactions) {
+              // Fetch fresh transaction history when showing
+              setLoading(true);
+              try {
+                const txHistory = await client.getTransactionHistory();
+                setTransactions(txHistory.slice(0, 10));
+              } catch (err) {
+              } finally {
+                setLoading(false);
+              }
+            }
+            setShowTransactions(!showTransactions);
+          }}
+          class="w-full bg-[var(--color-bg-tertiary)] hover:bg-gray-700 px-4 py-3 rounded-lg text-sm font-medium transition-all border border-[var(--color-border)]"
         >
           {showTransactions ? 'Hide' : 'Show'} Transaction History
         </button>
@@ -402,19 +445,25 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
         {showMintManager && (
           <div class="space-y-2 pt-2 border-t border-gray-700">
             <div class="text-xs text-gray-400">Connected Mints:</div>
-            {mints.map(mint => (
-              <div key={mint} class="flex items-center justify-between text-xs">
-                <span class="text-gray-300 truncate flex-1 mr-2">
-                  {new URL(mint).hostname}
-                </span>
-                <button
-                  onClick={() => removeMint(mint)}
-                  class="text-red-400 hover:text-red-300"
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
+            {mints.map(mint => {
+              const balance = mintBalances[mint] || 0;
+              return (
+                <div key={mint} class="flex items-center justify-between text-xs">
+                  <span class="text-gray-300 truncate flex-1 mr-2">
+                    {new URL(mint).hostname}
+                    {balance > 0 && (
+                      <span class="text-[#f7931a] ml-2">₿{balance} sats</span>
+                    )}
+                  </span>
+                  <button
+                    onClick={() => removeMint(mint)}
+                    class="text-red-400 hover:text-red-300"
+                  >
+                    Remove
+                  </button>
+                </div>
+              );
+            })}
             
             <div class="flex gap-2 mt-2">
               <input
@@ -443,18 +492,20 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
             ) : (
               <div class="space-y-1 max-h-48 overflow-y-auto">
                 {transactions.map(tx => (
-                  <div key={tx.id} class="flex items-center justify-between text-xs py-1 px-2 bg-gray-700 rounded">
+                  <div key={tx.id} class="flex items-center justify-between text-xs py-2 px-3 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-hover)] transition-colors">
                     <div class="flex items-center gap-2">
-                      <span class={`font-medium ${
+                      <span class={`font-medium flex items-center gap-1 ${
                         tx.type === 'receive' ? 'text-green-400' : 
                         tx.type === 'send' ? 'text-red-400' : 
-                        tx.type === 'mint' ? 'text-blue-400' : 
+                        tx.type === 'mint' ? 'text-purple-400' : 
                         'text-gray-400'
                       }`}>
                         {tx.type === 'receive' ? '+' : 
                          tx.type === 'send' ? '-' : 
                          tx.type === 'mint' ? '⚡' : ''}
-                        {tx.amount} sats
+                        <span class="text-[#f7931a]">₿</span>
+                        <span>{tx.amount.toLocaleString()}</span>
+                        <span class="text-xs font-normal">sats</span>
                       </span>
                       <span class="text-gray-500">
                         {tx.type.charAt(0).toUpperCase() + tx.type.slice(1)}
@@ -540,8 +591,9 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
               <button
                 onClick={handlePasteToken}
                 disabled={loading || !tokenInput.trim()}
-                class="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 
-                       px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                class="w-full bg-[#f7931a] hover:bg-[#f68e0a] disabled:bg-gray-600 
+                       px-4 py-3 rounded-lg text-sm font-medium transition-all
+                       transform hover:scale-[1.02] active:scale-[0.98] disabled:transform-none"
               >
                 {loading ? 'Receiving...' : 'Receive Token'}
               </button>
@@ -551,28 +603,31 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
           {/* Mint New Mode */}
           {receiveMode === 'mint' && (
             <div class="space-y-4">
-              {!lightningInvoice ? (
+              {!mintInvoice ? (
                 <>
-                  {mints.length > 1 && (
-                    <div>
-                      <label class="block text-sm font-medium text-gray-400 mb-2">
-                        Select Mint
-                      </label>
-                      <select
-                        value={selectedMint}
-                        onChange={(e) => setSelectedMint((e.target as HTMLSelectElement).value)}
-                        class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm
-                               focus:outline-none focus:ring-1 focus:ring-purple-500"
-                      >
-                        <option value="">Select a mint...</option>
-                        {mints.map(mint => (
-                          <option key={mint} value={mint}>
-                            {new URL(mint).hostname}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                  <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-2">
+                      Select Mint
+                    </label>
+                    <select
+                      value={selectedMint}
+                      onChange={(e) => setSelectedMint((e.target as HTMLSelectElement).value)}
+                      class="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-sm
+                             focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent transition-all"
+                    >
+                      <option value="">Select a mint...</option>
+                      {mints.map(mint => (
+                        <option key={mint} value={mint}>
+                          {new URL(mint).hostname}
+                        </option>
+                      ))}
+                    </select>
+                    {window.location.hostname === 'localhost' && (
+                      <p class="text-xs text-yellow-400 mt-1">
+                        ⚠️ Running on localhost may cause CORS issues with some mints
+                      </p>
+                    )}
+                  </div>
                   
                   <div>
                     <label class="block text-sm font-medium text-gray-400 mb-2">
@@ -584,18 +639,19 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
                       onInput={(e) => setMintAmount((e.target as HTMLInputElement).value)}
                       placeholder="1000"
                       min="1"
-                      class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm
-                             placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                      class="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-sm
+                             placeholder-[var(--color-text-tertiary)] focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent transition-all"
                     />
                   </div>
                   
                   <button
                     onClick={handleRequestInvoice}
                     disabled={isMinting || !mintAmount || parseInt(mintAmount) <= 0}
-                    class="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 
-                           px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                    class="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 
+                           px-4 py-3 rounded-lg text-sm font-medium transition-all
+                           transform hover:scale-[1.02] active:scale-[0.98] disabled:transform-none"
                   >
-                    {isMinting ? 'Generating...' : 'Generate Lightning Invoice'}
+                    {isMinting ? 'Generating...' : 'Generate Invoice'}
                   </button>
                 </>
               ) : (
@@ -605,7 +661,7 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
                     <div class="flex justify-center">
                       <img 
                         src={qrCodeDataUrl} 
-                        alt="Lightning Invoice QR Code" 
+                        alt="Invoice QR Code" 
                         class="rounded-lg"
                       />
                     </div>
@@ -613,50 +669,51 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
                   
                   <div>
                     <label class="block text-sm font-medium text-gray-400 mb-2">
-                      Lightning Invoice
+                      Invoice
                     </label>
-                    <div class="p-3 bg-gray-900 rounded-lg break-all">
-                      <code class="text-xs text-green-400">{lightningInvoice}</code>
+                    <div class="p-3 bg-[var(--color-bg-primary)] rounded-lg break-all border border-[var(--color-border)]">
+                      <code class="text-xs text-green-400 font-mono">{mintInvoice}</code>
                     </div>
                   </div>
                   
                   <div class="flex items-center gap-2 text-xs text-gray-400">
-                    <span>Amount: {mintAmount} sats</span>
+                    <span class="flex items-center gap-1">
+                      Amount: <span class="text-[#f7931a]">₿{mintAmount} sats</span>
+                    </span>
                     <span>•</span>
                     <span>Mint: {new URL(selectedMint || mints[0]).hostname}</span>
                   </div>
                   
                   <div class="space-y-2">
                     <button
-                      onClick={() => navigator.clipboard.writeText(lightningInvoice)}
-                      class="w-full bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                      onClick={() => navigator.clipboard.writeText(mintInvoice)}
+                      class="w-full bg-purple-600 hover:bg-purple-700 px-4 py-3 rounded-lg text-sm font-medium transition-all
+                             transform hover:scale-[1.02] active:scale-[0.98]"
                     >
                       Copy Invoice
                     </button>
                     
                     <button
                       onClick={() => {
-                        setLightningInvoice("");
+                        setMintInvoice("");
                         setMintAmount("");
                         setQrCodeDataUrl(null);
                         setCurrentQuote(null);
                       }}
-                      class="w-full bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                      class="w-full bg-[var(--color-bg-tertiary)] hover:bg-gray-700 px-4 py-3 rounded-lg text-sm font-medium transition-all border border-[var(--color-border)]"
                     >
                       Generate New Invoice
                     </button>
                   </div>
                   
-                  <div class="bg-blue-900/20 border border-blue-700/30 rounded-lg p-3">
-                    <p class="text-xs text-blue-300">
-                      <strong>Testnut Info:</strong>
-                    </p>
-                    <ul class="text-xs text-blue-300 mt-1 space-y-1 list-disc list-inside">
-                      <li>Testnut mints issue fake tokens for testing</li>
-                      <li>Invoices may be auto-paid (no real payment needed)</li>
-                      <li>Check mint status after generating invoice</li>
-                    </ul>
-                  </div>
+                  {checkingPayment && (
+                    <div class="bg-purple-900/20 border border-purple-700/30 rounded-lg p-3">
+                      <div class="text-xs text-purple-300 flex items-center gap-2">
+                        <div class="inline-block animate-spin rounded-full h-3 w-3 border-b-2 border-purple-300"></div>
+                        Checking payment status...
+                      </div>
+                    </div>
+                  )}
                   
                   <button
                     onClick={async () => {
@@ -669,19 +726,19 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
                       setError(null);
                       try {
                         const mintUrl = selectedMint || mints[0];
-                        const { proofs, claimed } = await client.checkAndClaimTokens(mintUrl, currentQuote);
+                        const { claimed } = await client.checkAndClaimTokens(mintUrl, currentQuote);
                         
                         if (claimed) {
-                          setSuccess(`Successfully claimed ${proofs.length} tokens! Total: ${proofs.reduce((sum, p) => sum + p.amount, 0)} sats`);
+                          setSuccess(`Successfully claimed tokens!`);
                           setShowReceiveModal(false);
-                          setLightningInvoice("");
+                          setMintInvoice("");
                           setMintAmount("");
                           setQrCodeDataUrl(null);
                           setCurrentQuote(null);
                           setSelectedMint("");
                           
-                          // Refresh balance
-                          await fetchBalance();
+                          // Force refresh balance after claiming tokens
+                          await fetchBalance(true);
                         } else {
                           setError("Invoice not paid yet. For testnut mints, try again in a moment.");
                         }
@@ -691,11 +748,12 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
                         setLoading(false);
                       }
                     }}
-                    disabled={loading || !currentQuote}
-                    class="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 
-                           px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                    disabled={loading || !currentQuote || checkingPayment}
+                    class="w-full bg-[#f7931a] hover:bg-[#f68e0a] disabled:bg-gray-600 
+                           px-4 py-3 rounded-lg text-sm font-medium transition-all
+                           transform hover:scale-[1.02] active:scale-[0.98] disabled:transform-none"
                   >
-                    {loading ? 'Checking...' : 'Check & Claim Tokens'}
+                    {loading || checkingPayment ? 'Checking...' : 'Check & Claim Tokens Manually'}
                   </button>
                   
                   <p class="text-xs text-gray-400 text-center">
@@ -716,14 +774,14 @@ export const WalletDisplay = ({ client, onClose, isModal }: WalletDisplayProps) 
               setShowReceiveModal(false);
               setTokenInput("");
               setMintAmount("");
-              setLightningInvoice("");
+              setMintInvoice("");
               setSelectedMint("");
               setQrCodeDataUrl(null);
               setCurrentQuote(null);
               setError(null);
               setSuccess(null);
             }}
-            class="mt-4 w-full bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            class="mt-4 w-full bg-[var(--color-bg-tertiary)] hover:bg-gray-700 px-4 py-3 rounded-lg text-sm font-medium transition-all border border-[var(--color-border)]"
           >
             Close
           </button>

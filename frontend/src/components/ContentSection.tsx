@@ -16,12 +16,131 @@ interface ContentSectionProps {
 interface ContentSectionState {
   deletingEvents: Set<string>
   showConfirmDelete: string | null
+  showNutzapModal: string | null
+  nutzapAmount: string
+  nutzapLoading: boolean
+  nutzapError: string | null
+  walletBalance: number
+  eventNutzaps: Map<string, number> // eventId -> total amount
 }
 
 export class ContentSection extends BaseComponent<ContentSectionProps, ContentSectionState> {
   state = {
     deletingEvents: new Set<string>(),
-    showConfirmDelete: null
+    showConfirmDelete: null,
+    showNutzapModal: null,
+    nutzapAmount: '',
+    nutzapLoading: false,
+    nutzapError: null,
+    walletBalance: 0,
+    eventNutzaps: new Map<string, number>()
+  }
+
+  private nutzapSubscription: any = null
+
+  componentDidMount() {
+    this.subscribeToNutzaps()
+    // Add ESC key listener
+    document.addEventListener('keydown', this.handleKeyDown)
+  }
+
+  componentWillUnmount() {
+    if (this.nutzapSubscription) {
+      this.nutzapSubscription.stop()
+    }
+    // Remove ESC key listener
+    document.removeEventListener('keydown', this.handleKeyDown)
+  }
+
+  handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      if (this.state.showNutzapModal) {
+        this.setState({ showNutzapModal: null, nutzapError: null })
+      }
+      if (this.state.showConfirmDelete) {
+        this.setState({ showConfirmDelete: null })
+      }
+    }
+  }
+
+  componentDidUpdate(prevProps: ContentSectionProps) {
+    if (prevProps.group.id !== this.props.group.id) {
+      // Re-subscribe when group changes
+      if (this.nutzapSubscription) {
+        this.nutzapSubscription.stop()
+      }
+      this.setState({ eventNutzaps: new Map() })
+      this.subscribeToNutzaps()
+    }
+  }
+
+  private subscribeToNutzaps = async () => {
+    try {
+      // Get all event IDs from the current group content
+      const eventIds = this.props.group.content?.map(item => item.id) || []
+      if (eventIds.length === 0) return
+
+      // Subscribe to nutzaps for these events
+      const filter = {
+        kinds: [9321], // NIP-61 nutzap kind
+        '#e': eventIds // Events that are referenced
+      }
+
+      // Fetch existing nutzaps
+      const events = await this.props.client.fetchEvents(filter)
+      const nutzapTotals = new Map<string, number>()
+
+      events.forEach((event: any) => {
+        // Find the event tag
+        const eventTag = event.tags.find((tag: string[]) => tag[0] === 'e')
+        if (!eventTag) return
+
+        const eventId = eventTag[1]
+        
+        // Find the amount tag
+        const amountTag = event.tags.find((tag: string[]) => tag[0] === 'amount')
+        if (!amountTag) return
+
+        const amount = parseInt(amountTag[1])
+        if (isNaN(amount)) return
+
+        // Add to total
+        const currentTotal = nutzapTotals.get(eventId) || 0
+        nutzapTotals.set(eventId, currentTotal + amount)
+      })
+
+      this.setState({ eventNutzaps: nutzapTotals })
+
+      // Subscribe to new nutzaps
+      this.nutzapSubscription = await this.props.client.subscribe(filter, {
+        closeOnEose: false
+      })
+
+      this.nutzapSubscription.on('event', (event: any) => {
+        // Find the event tag
+        const eventTag = event.tags.find((tag: string[]) => tag[0] === 'e')
+        if (!eventTag) return
+
+        const eventId = eventTag[1]
+        
+        // Find the amount tag
+        const amountTag = event.tags.find((tag: string[]) => tag[0] === 'amount')
+        if (!amountTag) return
+
+        const amount = parseInt(amountTag[1])
+        if (isNaN(amount)) return
+
+        // Update state
+        this.setState(prev => {
+          const newTotals = new Map(prev.eventNutzaps)
+          const currentTotal = newTotals.get(eventId) || 0
+          newTotals.set(eventId, currentTotal + amount)
+          return { eventNutzaps: newTotals }
+        })
+      })
+    } catch (error) {
+      console.error('Failed to subscribe to nutzaps:', error)
+    }
   }
 
   handleDeleteEvent = async (eventId: string) => {
@@ -43,6 +162,77 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         newSet.delete(eventId)
         return { deletingEvents: newSet }
       })
+    }
+  }
+
+  getCurrentUserPubkey = (): string | null => {
+    try {
+      const signer = this.props.client.ndkInstance?.signer;
+      if (!signer) return null;
+      // Get the user synchronously if possible
+      const user = (signer as any)._user;
+      return user?.pubkey || null;
+    } catch {
+      return null;
+    }
+  }
+
+  fetchWalletBalance = async () => {
+    try {
+      const balance = await this.props.client.getCashuBalance()
+      this.setState({ walletBalance: balance })
+    } catch (error) {
+      console.error('Failed to fetch wallet balance:', error)
+      this.setState({ walletBalance: 0 })
+    }
+  }
+
+  handleSendEventNutzap = async (eventId: string) => {
+    const { nutzapAmount, walletBalance } = this.state
+    
+    const sats = parseInt(nutzapAmount)
+    if (!sats || sats <= 0) {
+      this.setState({ nutzapError: 'Please enter a valid amount' })
+      return
+    }
+
+    this.setState({ nutzapLoading: true, nutzapError: null })
+
+    try {
+      await this.props.client.sendNutzapToEvent(eventId, sats)
+      
+      // SUCCESS - Update balance optimistically (without re-fetching from mints)
+      const newBalance = Math.max(0, walletBalance - sats)
+      console.log('💸 [NUTZAP] Success! Optimistic balance update - Old:', walletBalance, 'New:', newBalance, 'Sent:', sats)
+      
+      // Notify other components immediately
+      this.props.client.notifyBalanceUpdate(newBalance)
+      
+      // Update local state with new balance and nutzap totals
+      this.setState(prev => {
+        const newTotals = new Map(prev.eventNutzaps)
+        const currentTotal = newTotals.get(eventId) || 0
+        newTotals.set(eventId, currentTotal + sats)
+        
+        return {
+          eventNutzaps: newTotals,
+          showNutzapModal: null, 
+          nutzapAmount: '', 
+          nutzapError: null,
+          walletBalance: newBalance
+        }
+      })
+      
+      this.props.showMessage('Nutzap sent to event successfully!', 'success')
+      if (this.props.onNutzapSent) this.props.onNutzapSent()
+    } catch (error) {
+      // Error - just show the error, no balance changes needed
+      console.log('🔴 [NUTZAP] Error:', error)
+      this.setState({ 
+        nutzapError: error instanceof Error ? error.message : 'Failed to send nutzap' 
+      })
+    } finally {
+      this.setState({ nutzapLoading: false })
     }
   }
 
@@ -85,12 +275,13 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
 
   render() {
     const { group, client } = this.props
-    const { deletingEvents, showConfirmDelete } = this.state
+    const { deletingEvents, showConfirmDelete, showNutzapModal, nutzapAmount, nutzapLoading, nutzapError, walletBalance } = this.state
     const content = group.content || []
 
     // Get wallet state from client
-    const cashuProofs = client.getAllCashuProofs()
-    const mints = client.getActiveMints()
+    const cashuProofs = client.getCashuProofs()
+    const mints = client.getWalletMints()
+    const hasWalletBalance = client.hasWalletBalance()
 
     return (
       <div class="h-full flex flex-col overflow-hidden">
@@ -117,51 +308,84 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
                           this.props.showMessage('Nutzap sent successfully!', 'success');
                           if (this.props.onNutzapSent) this.props.onNutzapSent();
                         }}
+                        hideNutzap={item.pubkey === this.getCurrentUserPubkey() && !window.location.search.includes('selfnutzap')}
                       />
                       <span>·</span>
                       <span>
                         {this.formatTimestamp(item.created_at)}
                       </span>
+                      {/* Nutzap total */}
+                      {this.state.eventNutzaps.get(item.id) && (
+                        <>
+                          <span>·</span>
+                          <span class="text-[#f7931a] flex items-center gap-0.5 font-medium">
+                            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="currentColor"/>
+                            </svg>
+                            ₿{this.state.eventNutzaps.get(item.id)?.toLocaleString() || 0} sats
+                          </span>
+                        </>
+                      )}
                     </div>
                     <p class="text-sm text-[var(--color-text-primary)] break-all whitespace-pre-wrap leading-relaxed mt-0.5">
                       {item.content}
                     </p>
                   </div>
 
-                  {showConfirmDelete === item.id ? (
-                    <div class="flex items-center gap-1 text-[11px]">
+                  <div class="flex items-center gap-1">
+                    {/* Event Nutzap Button */}
+                    {hasWalletBalance && (
                       <button
-                        onClick={() => this.handleDeleteEvent(item.id)}
-                        class="text-red-400 hover:text-red-300 transition-colors"
+                        onClick={() => {
+                          this.setState({ showNutzapModal: item.id })
+                          this.fetchWalletBalance()
+                        }}
+                        class="text-[11px] opacity-0 group-hover:opacity-100 text-[#f7931a]
+                               hover:text-[#f68e0a] transition-all duration-150 flex items-center p-1"
+                        title="Nutzap this message"
                       >
-                        Delete
-                      </button>
-                      <span class="text-[var(--color-text-tertiary)]">·</span>
-                      <button
-                        onClick={() => this.setState({ showConfirmDelete: null })}
-                        class="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => this.setState({ showConfirmDelete: item.id })}
-                      disabled={deletingEvents.has(item.id)}
-                      class="text-[11px] opacity-0 group-hover:opacity-100 text-red-400
-                             hover:text-red-300 transition-all duration-150 flex items-center"
-                      title="Delete message"
-                    >
-                      {deletingEvents.has(item.id) ? (
-                        <span class="animate-spin">⚡</span>
-                      ) : (
-                        <svg class="w-3.5 h-3.5 text-red-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                          <path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                         </svg>
-                      )}
-                    </button>
-                  )}
+                      </button>
+                    )}
+
+                    {/* Delete Button */}
+                    {showConfirmDelete === item.id ? (
+                      <div class="flex items-center gap-1 text-[11px]">
+                        <button
+                          onClick={() => this.handleDeleteEvent(item.id)}
+                          class="text-red-400 hover:text-red-300 transition-colors"
+                        >
+                          Delete
+                        </button>
+                        <span class="text-[var(--color-text-tertiary)]">·</span>
+                        <button
+                          onClick={() => this.setState({ showConfirmDelete: null })}
+                          class="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => this.setState({ showConfirmDelete: item.id })}
+                        disabled={deletingEvents.has(item.id)}
+                        class="text-[11px] opacity-0 group-hover:opacity-100 text-red-400
+                               hover:text-red-300 transition-all duration-150 flex items-center"
+                        title="Delete message"
+                      >
+                        {deletingEvents.has(item.id) ? (
+                          <span class="animate-spin">⚡</span>
+                        ) : (
+                          <svg class="w-3.5 h-3.5 text-red-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                          </svg>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -177,6 +401,95 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
             )}
           </div>
         </div>
+
+        {/* Event Nutzap Modal */}
+        {showNutzapModal && (
+          <>
+            {/* Modal backdrop */}
+            <div 
+              class="fixed inset-0 bg-black/50 z-50" 
+              onClick={() => this.setState({ showNutzapModal: null, nutzapError: null })}
+            />
+            
+            {/* Modal */}
+            <div class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-[var(--color-bg-primary)] rounded-lg border border-[var(--color-border)] p-6 z-50 w-96 max-w-[90vw]">
+              <h3 class="text-lg font-semibold mb-4">Nutzap Event</h3>
+              
+              <div class="space-y-4">
+                {/* Balance display */}
+                <div class="text-sm text-[var(--color-text-secondary)]">
+                  Balance: <span class="text-[#f7931a] font-medium">₿{walletBalance.toLocaleString()} sats</span>
+                </div>
+
+                {/* Amount input */}
+                <div>
+                  <label class="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
+                    Amount (sats)
+                  </label>
+                  <input
+                    type="number"
+                    value={nutzapAmount}
+                    onInput={(e: any) => this.setState({ nutzapAmount: e.target.value, nutzapError: null })}
+                    placeholder="Enter amount"
+                    class="w-full px-3 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded text-[var(--color-text-primary)] focus:outline-none focus:border-green-400"
+                    disabled={nutzapLoading}
+                  />
+                </div>
+
+                {/* Preset amounts */}
+                <div class="flex gap-2 flex-wrap">
+                  {[21, 100, 500].map(preset => (
+                    <button
+                      key={preset}
+                      onClick={() => this.setState({ nutzapAmount: preset.toString(), nutzapError: null })}
+                      class="px-3 py-1 text-sm bg-[var(--color-bg-secondary)] hover:bg-[#f7931a]/10 text-[var(--color-text-secondary)] hover:text-[#f7931a] rounded transition-colors"
+                      disabled={nutzapLoading}
+                    >
+                      <span class="text-[#f7931a]">₿{preset}</span> sats
+                    </button>
+                  ))}
+                </div>
+
+                {/* Error message */}
+                {nutzapError && (
+                  <div class="text-sm text-red-400">
+                    {nutzapError}
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                <div class="flex gap-2 justify-end">
+                  <button
+                    onClick={() => this.setState({ showNutzapModal: null, nutzapError: null })}
+                    class="px-4 py-2 text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
+                    disabled={nutzapLoading}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => this.handleSendEventNutzap(showNutzapModal)}
+                    disabled={nutzapLoading || !nutzapAmount}
+                    class="px-4 py-2 text-sm bg-[#f7931a] hover:bg-[#f68e0a] text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {nutzapLoading ? (
+                      <>
+                        <span class="animate-spin">⚡</span>
+                        Sending...
+                      </>
+                    ) : (
+                      <>
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        Send Nutzap
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     )
   }

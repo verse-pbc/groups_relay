@@ -19,7 +19,6 @@ interface ProfileMenuState {
   userPubkey: string | null;
   isRelayAdmin: boolean;
   cashuBalance: number;
-  lightningBalance: number | null;
   isRefreshing: boolean;
   showWalletModal: boolean;
 }
@@ -28,36 +27,54 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
   private menuRef = null as HTMLDivElement | null;
   private buttonRef = null as HTMLButtonElement | null;
   private balanceInterval: any = null;
+  private unsubscribeBalance: (() => void) | null = null;
 
   state = {
     showMenu: false,
     userPubkey: null,
     isRelayAdmin: false,
     cashuBalance: 0,
-    lightningBalance: null,
     isRefreshing: false,
     showWalletModal: false
   };
 
-  async componentDidMount() {
+  componentDidMount() {
+    console.log('🔔 [PROFILE] ProfileMenu mounting...');
     document.addEventListener('mousedown', this.handleClickOutside);
     document.addEventListener('keydown', this.handleKeyDown);
 
+    // Subscribe to balance updates IMMEDIATELY on mount
+    console.log('🔔 [PROFILE] Subscribing to balance updates IMMEDIATELY');
+    this.unsubscribeBalance = this.props.client.onBalanceUpdate((balance) => {
+      console.log('🔔 [PROFILE] Balance update received:', balance);
+      this.setState({ cashuBalance: balance });
+    });
+    console.log('🔔 [PROFILE] Subscription complete');
+
+    // Then get user info
+    this.loadUserInfo();
+
+  }
+
+  loadUserInfo = async () => {
     const user = await this.props.client.ndkInstance.signer?.user();
+    console.log('🔔 [PROFILE] User pubkey:', user?.pubkey ? 'found' : 'not found');
     if (user?.pubkey) {
       this.setState({ userPubkey: user.pubkey });
 
-      try {
-        const isAdmin = await this.props.client.checkIsRelayAdmin();
-        if (isAdmin) {
-          this.setState({ isRelayAdmin: true });
-        }
-      } catch (error) {
-        console.error('Failed to check relay admin status:', error);
+      // Run admin check and wallet initialization in parallel
+      const [isAdmin] = await Promise.all([
+        this.props.client.checkIsRelayAdmin().catch(error => {
+          console.error('Failed to check relay admin status:', error);
+          return false;
+        }),
+        // Initialize wallet and fetch balance in parallel with admin check
+        this.initializeAndFetchBalance()
+      ]);
+
+      if (isAdmin) {
+        this.setState({ isRelayAdmin: true });
       }
-      
-      // Initialize wallet and fetch balance
-      this.initializeAndFetchBalance();
       
       // Set up periodic balance refresh every 30 seconds
       this.balanceInterval = setInterval(() => {
@@ -69,27 +86,14 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
   initializeAndFetchBalance = async () => {
     try {
       // Check if wallet is initialized
-      if (!this.props.client.walletInstance) {
-        // Get active mints or use defaults
-        const mints = this.props.client.getActiveMints();
+      if (!this.props.client.isWalletInitialized()) {
         const defaultMints = [
-          "https://testnut.cashu.space",
-          "https://nofees.testnut.cashu.space",
-          "https://mint.minibits.cash/Bitcoin"
+          "https://mint.minibits.cash/Bitcoin",
+          "https://mint.coinos.io"
         ];
         
-        // Initialize wallet with existing mints or defaults
-        await this.props.client.initializeWallet(mints.length > 0 ? mints : defaultMints);
-        
-        // Initialize Cashu mints
-        const mintsToInit = mints.length > 0 ? mints : defaultMints;
-        for (const mint of mintsToInit) {
-          try {
-            await this.props.client.initializeCashuMint(mint);
-          } catch (err) {
-            console.warn(`Failed to initialize mint ${mint}:`, err);
-          }
-        }
+        // Initialize wallet with defaults
+        await this.props.client.initializeWallet(defaultMints);
       }
       
       // Now fetch the balance
@@ -102,29 +106,16 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
   fetchWalletBalance = async () => {
     this.setState({ isRefreshing: true });
     try {
-      // Prune spent proofs first
-      await this.props.client.pruneAllSpentProofs();
+      // Fetch total Cashu balance (NDKCashuWallet handles all mints)
+      const cashuBalance = await this.props.client.getCashuBalance().catch(err => {
+        console.warn("Failed to get Cashu balance:", err);
+        return 0;
+      });
       
-      // Fetch Lightning balance if wallet is initialized
-      if (this.props.client.walletInstance) {
-        const lightningBalance = await this.props.client.getWalletBalance();
-        this.setState({ lightningBalance });
-      }
-      
-      // Fetch Cashu balance from all mints
-      const mints = this.props.client.getActiveMints();
-      let totalCashuBalance = 0;
-      
-      for (const mintUrl of mints) {
-        try {
-          const mintBalance = await this.props.client.getCashuBalance(mintUrl);
-          totalCashuBalance += mintBalance;
-        } catch (err) {
-          console.warn(`Failed to get balance from ${mintUrl}:`, err);
-        }
-      }
-      
-      this.setState({ cashuBalance: totalCashuBalance });
+      // Update state with balance
+      this.setState({ 
+        cashuBalance 
+      });
     } catch (error) {
       console.error('Failed to fetch wallet balance:', error);
     } finally {
@@ -139,6 +130,11 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
     // Clear balance refresh interval
     if (this.balanceInterval) {
       clearInterval(this.balanceInterval);
+    }
+    
+    // Unsubscribe from balance updates
+    if (this.unsubscribeBalance) {
+      this.unsubscribeBalance();
     }
   }
 
@@ -209,15 +205,21 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
             showCopy={false}
             size="md"
             isRelayAdmin={isRelayAdmin}
-            hideNutzap={true}
+            hideNutzap={!window.location.search.includes('selfnutzap')}
           />
           
           {/* Show total balance */}
           <div class="flex items-center gap-2 text-sm">
-            <div class="text-[var(--color-text-secondary)] font-mono">
+            <div class="text-[#f7931a] font-semibold flex items-center gap-1">
               {(() => {
-                const totalBalance = this.state.cashuBalance + (this.state.lightningBalance || 0);
-                return totalBalance > 0 ? `${totalBalance.toLocaleString()} sats` : '';
+                const totalBalance = this.state.cashuBalance;
+                return totalBalance > 0 ? (
+                  <>
+                    <span class="text-sm">₿</span>
+                    {totalBalance.toLocaleString()}
+                    <span class="text-xs font-normal">sats</span>
+                  </>
+                ) : null;
               })()}
             </div>
             <svg
@@ -262,20 +264,13 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
                 </button>
               </div>
               
-              <div class="space-y-2">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs text-[var(--color-text-secondary)]">Lightning:</span>
-                  <span class="text-sm font-mono text-[var(--color-text-primary)]">
-                    {this.state.lightningBalance !== null ? `${this.state.lightningBalance} sats` : "---"}
-                  </span>
-                </div>
-                
-                <div class="flex items-center justify-between">
-                  <span class="text-xs text-[var(--color-text-secondary)]">Cashu:</span>
-                  <span class="text-sm font-mono text-green-400">
-                    {this.state.cashuBalance} sats
-                  </span>
-                </div>
+              <div class="flex items-center justify-between">
+                <span class="text-xs text-[var(--color-text-secondary)]">Balance:</span>
+                <span class="text-sm font-semibold text-[#f7931a] flex items-center gap-1">
+                  <span>₿</span>
+                  {this.state.cashuBalance.toLocaleString()}
+                  <span class="text-xs font-normal">sats</span>
+                </span>
               </div>
               
               <div class="mt-3 space-y-2">
@@ -329,6 +324,7 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
                 this.fetchWalletBalance();
               }}
               isModal={true}
+              initialCashuBalance={this.state.cashuBalance}
             />
           </div>
         </div>

@@ -88,8 +88,8 @@ export class MembersSection extends Component<MembersSectionProps, MembersSectio
     const { newMemberNpub, isAddingMember, removingMembers, showConfirmRemove } = this.state
 
     // Get wallet state from client
-    const cashuProofs = client.getAllCashuProofs()
-    const mints = client.getActiveMints()
+    const cashuProofs = client.getCashuProofs()
+    const mints = client.getWalletMints()
 
     return (
       <div class="space-y-4">

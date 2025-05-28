@@ -32,8 +32,13 @@
       "Bash(npm run dev:*)",
       "WebFetch(domain:www.npmjs.com)",
       "WebFetch(domain:docs.cashu.space)",
-      "WebFetch(domain:testnut.cashu.space)"
+      "WebFetch(domain:testnut.cashu.space)",
+      "Bash(pnpm run:*)",
+      "WebFetch(domain:dart-nostr.com)",
+      "Bash(git clone:*)",
+      "Bash(cat:*)"
     ],
     "deny": []
-  }
+  },
+  "enableAllProjectMcpServers": false
 }

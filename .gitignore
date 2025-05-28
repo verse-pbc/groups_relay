@@ -38,3 +38,4 @@ tasks.json
 tasks/ 
 flamegraph.svg
 db
+.claude/settings.local.json

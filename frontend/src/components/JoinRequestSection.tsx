@@ -27,6 +27,18 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
     isSubmitting: false
   }
 
+  getCurrentUserPubkey = (): string | null => {
+    try {
+      const signer = this.props.client.ndkInstance?.signer;
+      if (!signer) return null;
+      // Get the user synchronously if possible
+      const user = (signer as any)._user;
+      return user?.pubkey || null;
+    } catch {
+      return null;
+    }
+  }
+
   private showError = (prefix: string, error: unknown) => {
     console.error(prefix, error)
     const message = error instanceof NostrGroupError ? error.displayMessage : String(error)
@@ -71,8 +83,8 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
     const { group, client } = this.props
 
     // Get wallet state from client
-    const cashuProofs = client.getAllCashuProofs()
-    const mints = client.getActiveMints()
+    const cashuProofs = client.getCashuProofs()
+    const mints = client.getWalletMints()
 
     return (
       <div class="space-y-4">
@@ -104,6 +116,7 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
                       this.props.showMessage('Nutzap sent successfully!', 'success');
                       if (this.props.onNutzapSent) this.props.onNutzapSent();
                     }}
+                    hideNutzap={pubkey === this.getCurrentUserPubkey() && !window.location.search.includes('selfnutzap')}
                   />
                   <button
                     onClick={() => this.handleAcceptRequest(pubkey)}

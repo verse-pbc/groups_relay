@@ -36,6 +36,7 @@ impl From<GroupError> for Error {
 
 // NIP-60 Cashu Wallet kinds
 pub const KIND_WALLET_17375: Kind = Kind::Custom(17375);
+pub const KIND_WALLET_BACKUP_375: Kind = Kind::Custom(375);
 pub const KIND_TOKEN_7375: Kind = Kind::Custom(7375);
 pub const KIND_SPENDING_HISTORY_7376: Kind = Kind::Custom(7376);
 pub const KIND_QUOTE_7374: Kind = Kind::Custom(7374);
@@ -81,10 +82,11 @@ pub const ADDRESSABLE_EVENT_KINDS: [Kind; 4] = [
     KIND_GROUP_ROLES_39003,
 ];
 
-pub const NON_GROUP_ALLOWED_KINDS: [Kind; 13] = [
+pub const NON_GROUP_ALLOWED_KINDS: [Kind; 14] = [
     KIND_SIMPLE_LIST_10009,
     KIND_CLAIM_28934,
     KIND_WALLET_17375,
+    KIND_WALLET_BACKUP_375,
     KIND_TOKEN_7375,
     KIND_SPENDING_HISTORY_7376,
     KIND_QUOTE_7374,
