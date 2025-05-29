@@ -503,10 +503,8 @@ export class App extends Component<AppProps, AppState> {
                   // If we got a full batch and the oldest didn't change, something is wrong (e.g., duplicate timestamps exactly at the boundary)
                   // Prevent infinite loop by stopping. Or could try decrementing timestamp by 1.
                   if (oldestTimestampInBatch === batchOldest) {
-                      console.warn(`Oldest timestamp (${batchOldest}) did not change after fetching a full batch. Stopping pagination to prevent potential loop.`);
-                       // Option: Try decrementing: oldestTimestampInBatch = batchOldest - 1;
-                       // Or just stop:
-                      continueFetching = false;
+                      console.warn(`Oldest timestamp (${batchOldest}) did not change after fetching a full batch. Decrementing by 1 to continue.`);
+                      oldestTimestampInBatch = batchOldest - 1;
                   } else {
                       oldestTimestampInBatch = batchOldest;
                   }
