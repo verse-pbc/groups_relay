@@ -481,39 +481,77 @@ export class CashuWalletService implements ICashuWalletService {
     const user = new NDKUser({ pubkey });
     user.ndk = this.ndk;
 
-    const payment = {
-      amount: amount,
-      target: user,
+    // Use NDKZapper for consistent handling
+    const { NDKZapper } = await import('@nostr-dev-kit/ndk');
+    const zapper = new NDKZapper(user, amount, 'sat', {
       comment: '',
-      recipientPubkey: pubkey,
-      unit: 'sat',
-      mints: mint ? [mint] : undefined
-    };
+      ndk: this.ndk
+    });
 
-    
-    let result;
     try {
-      result = await this.wallet.cashuPay(payment);
-    } catch (error) {
-      console.error("Nutzap cashuPay failed:", error);
+      // Set the cashuPay callback to use our wallet
+      zapper.cashuPay = async (payment: any) => {
+        try {
+          const result = await this.wallet!.cashuPay({
+            ...payment,
+            mints: mint ? [mint] : undefined
+          });
+          
+          // Validate the result - NDK returns null on failure
+          if (!result || !result.proofs || result.proofs.length === 0) {
+            console.error("cashuPay failed in zapper - no valid result");
+            throw new Error('Failed to create nutzap: recipient may not have a compatible wallet');
+          }
+          
+          return result;
+        } catch (error: any) {
+          throw error;
+        }
+      };
+
+      // Execute the zap
+      const zapResult = await zapper.zap();
       
-      // Check for SSL/network errors
-      if (error instanceof Error) {
+      console.log('Profile zap result:', zapResult);
+      
+      if (!zapResult || zapResult.size === 0) {
+        throw new Error('Failed to send nutzap: zapper returned no result');
       }
+      
+      // Check if any of the zap splits succeeded
+      let hasValidCashuPayment = false;
+      let zapError: Error | null = null;
+      
+      for (const [, result] of zapResult) {
+        if (result instanceof Error) {
+          // Capture the error for better messaging
+          zapError = result;
+        } else if (result && 'proofs' in result && result.proofs && result.proofs.length > 0) {
+          // Found a valid cashu payment
+          hasValidCashuPayment = true;
+          break;
+        }
+      }
+      
+      if (!hasValidCashuPayment) {
+        if (zapError) {
+          console.error('Profile zap failed with error:', zapError.message);
+          throw new Error(`Failed to send nutzap: ${zapError.message}`);
+        } else {
+          console.error('Profile zap completed but no valid cashu payment was created');
+          throw new Error('Failed to send nutzap: unable to create valid payment');
+        }
+      }
+      
+      console.log(`Nutzap sent successfully with ${amount} sats`);
+      
+      // Update balance only if payment succeeded
+      this.updateCachedBalance(Math.max(0, this.cachedBalance - amount));
+      await this.updateBalance();
+    } catch (error) {
+      console.error("Profile nutzap failed:", error);
       throw error;
     }
-    
-    // CRITICAL: Check if result is valid
-    if (!result) {
-      console.error("Nutzap cashuPay returned null/undefined");
-      throw new Error('Failed to send nutzap: cashuPay returned no result');
-    }
-    
-    console.log(`Nutzap sent successfully with ${amount} sats`);
-    
-    // Update balance only if payment succeeded
-    this.updateCachedBalance(Math.max(0, this.cachedBalance - amount));
-    await this.updateBalance();
   }
   
   // Start nutzap monitoring after wallet is initialized
@@ -554,6 +592,13 @@ export class CashuWalletService implements ICashuWalletService {
             ...payment,
             mints: mint ? [mint] : undefined
           });
+          
+          // Validate the result - NDK returns null on failure
+          if (!result || !result.proofs || result.proofs.length === 0) {
+            console.error("cashuPay failed in zapper - no valid result");
+            throw new Error('Failed to create nutzap: recipient may not have a compatible wallet');
+          }
+          
           return result;
         } catch (error: any) {
           // Ignore swap-related errors as they're non-fatal
@@ -570,19 +615,46 @@ export class CashuWalletService implements ICashuWalletService {
       // Execute the zap - this will create and publish the nutzap event
       const zapResult = await zapper.zap();
       
-      if (!zapResult) {
+      console.log('Zap result:', zapResult);
+      
+      if (!zapResult || zapResult.size === 0) {
         throw new Error('Failed to send nutzap: zapper returned no result');
       }
+      
+      // Check if any of the zap splits succeeded
+      let hasValidCashuPayment = false;
+      let zapError: Error | null = null;
+      
+      for (const [, result] of zapResult) {
+        if (result instanceof Error) {
+          // Capture the error for better messaging
+          zapError = result;
+        } else if (result && 'proofs' in result && result.proofs && result.proofs.length > 0) {
+          // Found a valid cashu payment
+          hasValidCashuPayment = true;
+          break;
+        }
+      }
+      
+      if (!hasValidCashuPayment) {
+        if (zapError) {
+          console.error('Zap failed with error:', zapError.message);
+          throw new Error(`Failed to send nutzap: ${zapError.message}`);
+        } else {
+          console.error('Zap completed but no valid cashu payment was created');
+          throw new Error('Failed to send nutzap: unable to create valid payment');
+        }
+      }
+      
+      console.log(`Nutzap sent to event successfully with ${amount} sats`);
+      
+      // Update balance only if payment succeeded
+      this.updateCachedBalance(Math.max(0, this.cachedBalance - amount));
+      await this.updateBalance();
     } catch (error) {
       console.error("Nutzap failed:", error);
       throw error;
     }
-    
-    console.log(`Nutzap sent to event successfully with ${amount} sats`);
-    
-    // Update balance only if payment succeeded
-    this.updateCachedBalance(Math.max(0, this.cachedBalance - amount));
-    await this.updateBalance();
   }
 
   /**
