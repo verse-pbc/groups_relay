@@ -205,7 +205,7 @@ impl Nip29Middleware {
         Ok(())
     }
 
-    /// Verifies filters and handles subscription requests for a given subscription ID.
+    /// Verifies filters and handles subscription requests with fill-buffer pagination.
     async fn handle_subscription(
         &self,
         subscription_id: SubscriptionId,
@@ -213,6 +213,7 @@ impl Nip29Middleware {
         authed_pubkey: Option<PublicKey>,
         connection_state: Option<&NostrConnectionState>,
     ) -> Result<(), Error> {
+        // First verify all filters
         for filter in &filters {
             self.verify_filter(authed_pubkey, filter)?;
         }
@@ -234,10 +235,139 @@ impl Nip29Middleware {
         };
 
         let subdomain = &conn.subdomain;
+        
+        // Get the sender for sending events to the client
+        let Some(mut sender) = conn.subscription_manager.as_ref()
+            .and_then(|sm| sm.get_outgoing_sender().cloned()) else {
+            error!("No outgoing sender available for subscription {}", subscription_id);
+            return Ok(());
+        };
 
+        // Register the subscription
+        // Note: We call add_subscription directly since each connection is already
+        // scoped to a specific subdomain stored in the connection state
         relay_conn
-            .handle_subscription_request(subscription_id.clone(), filters, subdomain)
-            .await?;
+            .add_subscription(subscription_id.clone(), filters.clone())?;
+
+        // Now implement fill-buffer with exponential limit growth
+        use std::collections::HashSet;
+        
+        let mut seen_event_ids = HashSet::new();
+        let mut sent_count = 0;
+        let mut multiplier = 1usize;
+        const MAX_MULTIPLIER: usize = 32;
+        
+        // Use channel capacity as the default limit to match buffer size
+        // This ensures we don't try to send more events than the channel can handle
+        let channel_capacity = sender.capacity();
+        debug!("Fill-buffer: Channel capacity is {}", channel_capacity);
+        
+        // Track original limits for each filter
+        let original_limits: Vec<Option<usize>> = filters.iter().map(|f| f.limit).collect();
+        let target_limit = original_limits.iter()
+            .filter_map(|&l| l)
+            .max()
+            .unwrap_or(channel_capacity); // Use channel capacity as default limit
+        
+        loop {
+            // Adjust filters with exponentially growing limits
+            let mut adjusted_filters = filters.clone();
+            for (i, filter) in adjusted_filters.iter_mut().enumerate() {
+                if let Some(original_limit) = original_limits[i] {
+                    filter.limit = if multiplier <= MAX_MULTIPLIER {
+                        Some(original_limit.saturating_mul(multiplier))
+                    } else {
+                        None // No limit - get all events
+                    };
+                }
+            }
+            
+            // Fetch events from database
+            let events = relay_conn
+                .fetch_historical_events(&adjusted_filters, subdomain)
+                .await?;
+            
+            if events.is_empty() {
+                debug!("Fill-buffer: No more events in database");
+                break;
+            }
+            
+            debug!("Fill-buffer: Fetched {} events with multiplier {}", events.len(), multiplier);
+            
+            // Process events - filter and send immediately
+            for event in events {
+                // Skip duplicates
+                if seen_event_ids.contains(&event.id) {
+                    continue;
+                }
+                seen_event_ids.insert(event.id);
+                
+                // Check if user can see this event
+                if let Some(group) = self.groups.find_group_from_event(&event, subdomain) {
+                    match group.value().can_see_event(&authed_pubkey, &self.relay_pubkey, &event) {
+                        Ok(true) => {
+                            // Send event immediately
+                            if let Err(e) = sender.send(RelayMessage::Event {
+                                subscription_id: std::borrow::Cow::Owned(subscription_id.clone()),
+                                event: std::borrow::Cow::Owned(event),
+                            }) {
+                                error!("Failed to send event: {:?}", e);
+                                return Err(Error::internal("Failed to send event to client"));
+                            }
+                            
+                            sent_count += 1;
+                            if sent_count >= target_limit {
+                                debug!("Fill-buffer: Reached target limit of {}", target_limit);
+                                break;
+                            }
+                        }
+                        _ => {
+                            // Event filtered out by access control
+                            debug!("Fill-buffer: Event filtered out by access control");
+                        }
+                    }
+                } else {
+                    // Not a group event or unmanaged group - allow it through
+                    if let Err(e) = sender.send(RelayMessage::Event {
+                        subscription_id: std::borrow::Cow::Owned(subscription_id.clone()),
+                        event: std::borrow::Cow::Owned(event),
+                    }) {
+                        error!("Failed to send event: {:?}", e);
+                        return Err(Error::internal("Failed to send event to client"));
+                    }
+                    
+                    sent_count += 1;
+                    if sent_count >= target_limit {
+                        debug!("Fill-buffer: Reached target limit of {}", target_limit);
+                        break;
+                    }
+                }
+            }
+            
+            // Check if we've sent enough events
+            if sent_count >= target_limit {
+                break;
+            }
+            
+            // Check if we've hit the multiplier limit
+            if multiplier > MAX_MULTIPLIER {
+                debug!("Fill-buffer: Reached max multiplier, stopping");
+                break;
+            }
+            
+            // Exponentially increase the multiplier
+            multiplier *= 2;
+        }
+        
+        debug!("Fill-buffer: Sent {} events total to subscription {}", sent_count, subscription_id);
+        
+        // Send EOSE
+        if let Err(e) = sender.send(RelayMessage::EndOfStoredEvents(
+            std::borrow::Cow::Owned(subscription_id)
+        )) {
+            error!("Failed to send EOSE: {:?}", e);
+            return Err(Error::internal("Failed to send EOSE to client"));
+        }
 
         Ok(())
     }
@@ -594,6 +724,7 @@ mod tests {
                 Keys::generate().public_key(),
                 database,
             ))
+            .with_channel_size(1000) // Match production settings
             .build();
 
         let server_state = ServerState {
@@ -1545,4 +1676,5 @@ mod tests {
             .verify_filter(Some(admin_keys.public_key()), &private_filter) // Authenticated as relay admin
             .is_ok());
     }
+
 }

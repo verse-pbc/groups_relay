@@ -215,7 +215,7 @@ impl<
             state_factory,
             middlewares: Vec::new(),
             message_converter,
-            channel_size: 100, // Default size
+            channel_size: 100, // Default size (production may use larger values)
             max_connection_time: None,
             max_connections: None,
         }
