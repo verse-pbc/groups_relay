@@ -104,12 +104,22 @@ export class NostrClient {
       });
 
       // Separate NDK instance for profile fetching
+      // Include the current relay in addition to public relays
       this.profileNdk = new NDK({
-        explicitRelayUrls: ["wss://relay.nos.social", "wss://purplepag.es"],
+        explicitRelayUrls: [
+          this.config.relayUrl,  // Include current relay
+          "wss://relay.nos.social", 
+          "wss://purplepag.es"
+        ],
+        signer,  // Add signer for authentication
       });
 
       this.ndk.pool.on("relay:connect", (relay: NDKRelay) => {
         relay.authPolicy = NDKRelayAuthPolicies.signIn({ ndk: this.ndk });
+      });
+
+      this.profileNdk.pool.on("relay:connect", (relay: NDKRelay) => {
+        relay.authPolicy = NDKRelayAuthPolicies.signIn({ ndk: this.profileNdk });
       });
 
       // Initialize LocalForage

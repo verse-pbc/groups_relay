@@ -22,7 +22,6 @@ interface ContentSectionState {
   nutzapError: string | null
   walletBalance: number
   eventNutzaps: Map<string, number> // eventId -> total amount
-  authorizedMints: string[] // User's authorized mints
 }
 
 export class ContentSection extends BaseComponent<ContentSectionProps, ContentSectionState> {
@@ -34,11 +33,12 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
     nutzapLoading: false,
     nutzapError: null,
     walletBalance: 0,
-    eventNutzaps: new Map<string, number>(),
-    authorizedMints: []
+    eventNutzaps: new Map<string, number>()
   }
 
   private nutzapSubscription: any = null
+  private authorMints: Map<string, string[]> | undefined
+  private eventAuthors: Map<string, string> | undefined
 
   componentDidMount() {
     this.subscribeToNutzaps()
@@ -88,34 +88,37 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         '#e': eventIds // Events that are referenced
       }
 
-      // Get user's authorized mints
-      let authorizedMints: string[] = []
-      try {
-        const user = await this.props.client.ndkInstance.signer?.user()
-        if (user?.pubkey) {
-          // Get mints from user's kind:10019 event
-          const nutzapConfig = await this.props.client.fetchEvents({
-            kinds: [10019],
-            authors: [user.pubkey],
-            limit: 1
-          })
-          
-          const configArray = Array.from(nutzapConfig)
-          if (configArray.length > 0) {
-            const config = configArray[0]
-            config.tags.forEach((tag: string[]) => {
-              if (tag[0] === 'mint' && tag[1]) {
-                authorizedMints.push(tag[1])
-              }
-            })
-          }
-        }
-      } catch (err) {
-        console.warn('Failed to get authorized mints:', err)
-      }
+      // Build a map of eventId -> authorPubkey for later lookups
+      const eventAuthors = new Map<string, string>()
+      this.props.group.content?.forEach(item => {
+        eventAuthors.set(item.id, item.pubkey)
+      })
+
+      // Get unique authors to fetch their 10019 events
+      const uniqueAuthors = [...new Set(eventAuthors.values())]
       
-      // Store authorized mints in state for the event handler
-      this.setState({ authorizedMints })
+      // Fetch 10019 events for all content authors
+      const authorMints = new Map<string, string[]>()
+      if (uniqueAuthors.length > 0) {
+        const authorFilter = {
+          kinds: [10019],
+          authors: uniqueAuthors,
+          limit: uniqueAuthors.length
+        }
+        
+        const author10019Events = await this.props.client.fetchEvents(authorFilter)
+        author10019Events.forEach((event: any) => {
+          const mints: string[] = []
+          event.tags.forEach((tag: string[]) => {
+            if (tag[0] === 'mint' && tag[1]) {
+              mints.push(tag[1])
+            }
+          })
+          if (mints.length > 0) {
+            authorMints.set(event.pubkey, mints)
+          }
+        })
+      }
 
       // Fetch existing nutzaps
       const events = await this.props.client.fetchEvents(filter)
@@ -128,6 +131,16 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
 
         const eventId = eventTag[1]
         
+        // Get the author of the target event
+        const eventAuthor = eventAuthors.get(eventId)
+        if (!eventAuthor) return
+        
+        // Get the authorized mints for this event's author
+        const authorizedMints = authorMints.get(eventAuthor) || []
+        
+        // Skip if author has no 10019 config
+        if (authorizedMints.length === 0) return
+        
         // Find the amount tag
         const amountTag = event.tags.find((tag: string[]) => tag[0] === 'amount')
         if (!amountTag) return
@@ -139,14 +152,18 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         const mintTag = event.tags.find((tag: string[]) => tag[0] === 'mint')
         const mint = mintTag ? mintTag[1] : null
 
-        // Only count if from an authorized mint (or if we have no mint restrictions)
-        if (authorizedMints.length === 0 || (mint && authorizedMints.includes(mint))) {
+        // Only count if from an authorized mint
+        if (mint && authorizedMints.includes(mint)) {
           const currentTotal = nutzapTotals.get(eventId) || 0
           nutzapTotals.set(eventId, currentTotal + amount)
         }
       })
 
       this.setState({ eventNutzaps: nutzapTotals })
+
+      // Store the maps for the subscription handler
+      this.authorMints = authorMints
+      this.eventAuthors = eventAuthors
 
       // Subscribe to new nutzaps
       this.nutzapSubscription = await this.props.client.subscribe(filter, {
@@ -160,6 +177,16 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
 
         const eventId = eventTag[1]
         
+        // Get the author of the target event
+        const eventAuthor = this.eventAuthors?.get(eventId)
+        if (!eventAuthor) return
+        
+        // Get the authorized mints for this event's author
+        const authorizedMints = this.authorMints?.get(eventAuthor) || []
+        
+        // Skip if author has no 10019 config
+        if (authorizedMints.length === 0) return
+        
         // Find the amount tag
         const amountTag = event.tags.find((tag: string[]) => tag[0] === 'amount')
         if (!amountTag) return
@@ -172,7 +199,7 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         const mint = mintTag ? mintTag[1] : null
 
         // Only count if from an authorized mint
-        if (this.state.authorizedMints.length === 0 || (mint && (this.state.authorizedMints as string[]).includes(mint))) {
+        if (mint && authorizedMints.includes(mint)) {
           // Update state
           this.setState(prev => {
             const newTotals = new Map(prev.eventNutzaps)
@@ -386,14 +413,12 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
                   </div>
 
                   <div class="flex items-center gap-1">
-                    {/* Event Nutzap Button */}
-                    {hasWalletBalance && (
+                    {/* Event Nutzap Button - hide for own messages */}
+                    {hasWalletBalance && item.pubkey !== this.getCurrentUserPubkey() && (
                       <button
                         onClick={async () => {
                           this.setState({ showNutzapModal: item.id })
-                          console.log('🔍 [NUTZAP] Opening modal for event:', item.id, 'Current balance before fetch:', this.state.walletBalance)
                           await this.fetchWalletBalance()
-                          console.log('🔍 [NUTZAP] Balance after fetch:', this.state.walletBalance)
                         }}
                         class="text-[11px] opacity-0 group-hover:opacity-100 text-[#f7931a]
                                hover:text-[#f68e0a] transition-all duration-150 flex items-center p-1"

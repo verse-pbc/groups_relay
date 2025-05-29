@@ -25,6 +25,7 @@ interface UserDisplayWithNutzapState {
   walletBalance: number
   selectedMint: string
   mintBalances: Record<string, number>
+  targetUserHas10019: boolean
 }
 
 export class UserDisplayWithNutzap extends Component<UserDisplayWithNutzapProps, UserDisplayWithNutzapState> {
@@ -36,12 +37,22 @@ export class UserDisplayWithNutzap extends Component<UserDisplayWithNutzapProps,
     error: null,
     walletBalance: 0,
     selectedMint: '',
-    mintBalances: {}
+    mintBalances: {},
+    targetUserHas10019: false
   }
 
   componentDidMount() {
     // Add ESC key listener
     document.addEventListener('keydown', this.handleKeyDown);
+    // Check if target user has 10019 event with a small delay to ensure relay is ready
+    setTimeout(() => this.checkTargetUser10019(), 100);
+  }
+
+  componentDidUpdate(prevProps: UserDisplayWithNutzapProps) {
+    // Re-check if pubkey changes
+    if (prevProps.pubkey !== this.props.pubkey) {
+      this.checkTargetUser10019();
+    }
   }
 
   componentWillUnmount() {
@@ -51,7 +62,7 @@ export class UserDisplayWithNutzap extends Component<UserDisplayWithNutzapProps,
 
   handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Escape' && this.state.showNutzapModal) {
-      this.setState({ 
+      this.setState({
         showNutzapModal: false,
         amount: '',
         comment: '',
@@ -60,18 +71,48 @@ export class UserDisplayWithNutzap extends Component<UserDisplayWithNutzapProps,
     }
   }
 
+  // Check if target user has a kind:10019 event (nutzap config)
+  checkTargetUser10019 = async () => {
+    try {
+      const { pubkey, client } = this.props
+      // Convert npub to hex if needed
+      const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
+
+      // Use profile NDK instance which connects to public relays where 10019 events are published
+      const profileNdk = (client as any).profileNdk
+      
+      // Fetch kind:10019 event for the target user
+      const filter = {
+        kinds: [10019],
+        authors: [hexPubkey],
+        limit: 1
+      }
+
+      // Use profile NDK to fetch from public relays
+      const events = await profileNdk.fetchEvents(filter)
+      const has10019 = events.size > 0
+      
+      console.log(`10019 check for ${hexPubkey}: found=${has10019}, events.size=${events.size}`)
+
+      this.setState({ targetUserHas10019: has10019 })
+    } catch (error) {
+      console.error('Failed to check target user 10019:', error)
+      this.setState({ targetUserHas10019: false })
+    }
+  }
+
   // Fetch wallet balance and mint balances when modal opens
   fetchWalletBalance = async () => {
     try {
       const { mints } = this.props
-      
+
       // Get total balance and per-mint balances
       const [totalBalance, mintBalances] = await Promise.all([
         this.props.client.getCashuBalance(),
         this.props.client.getCashuMintBalances()
       ])
-      
-      this.setState({ 
+
+      this.setState({
         walletBalance: totalBalance,
         mintBalances: mintBalances || {},
         selectedMint: mints?.[0] || ''
@@ -85,7 +126,7 @@ export class UserDisplayWithNutzap extends Component<UserDisplayWithNutzapProps,
   handleSendNutzap = async () => {
     const { client, pubkey, onSendNutzap } = this.props
     const { amount } = this.state
-    
+
     const sats = parseInt(amount)
     if (!sats || sats <= 0) {
       this.setState({ error: 'Please enter a valid amount' })
@@ -100,34 +141,34 @@ export class UserDisplayWithNutzap extends Component<UserDisplayWithNutzapProps,
     }
 
     this.setState({ sending: true, error: null })
-    
+
     try {
       // Convert npub to hex if needed
       const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
-      
+
       // Let NDK choose the best mint
       await client.sendNutzap(hexPubkey, sats)
-      
+
       // SUCCESS - Update balance optimistically (without re-fetching from mints)
       const currentBalance = this.state.walletBalance
       const newBalance = Math.max(0, currentBalance - sats)
-      
+
       // Update balance and notify other components
-      this.setState({ 
-        showNutzapModal: false, 
-        amount: '', 
+      this.setState({
+        showNutzapModal: false,
+        amount: '',
         comment: '',
         error: null,
         walletBalance: newBalance
       })
-      
+
       client.notifyBalanceUpdate(newBalance)
-      
+
       if (onSendNutzap) onSendNutzap()
     } catch (error) {
       // Error - just show the error, no balance changes needed
-      this.setState({ 
-        error: error instanceof Error ? error.message : 'Failed to send nutzap' 
+      this.setState({
+        error: error instanceof Error ? error.message : 'Failed to send nutzap'
       })
     } finally {
       this.setState({ sending: false })
@@ -137,13 +178,13 @@ export class UserDisplayWithNutzap extends Component<UserDisplayWithNutzapProps,
   render() {
     const { pubkey, client, showCopy, size, isRelayAdmin, onCopy, hideNutzap } = this.props
     const { showNutzapModal, sending, amount, comment, error } = this.state
-    
+
     // Check if wallet has balance (NDKCashuWallet doesn't expose proofs directly)
     const hasWalletBalance = client.hasWalletBalance()
 
     return (
       <div class="flex items-center gap-2">
-        <UserDisplay 
+        <UserDisplay
           pubkey={pubkey}
           client={client}
           showCopy={showCopy}
@@ -151,8 +192,8 @@ export class UserDisplayWithNutzap extends Component<UserDisplayWithNutzapProps,
           isRelayAdmin={isRelayAdmin}
           onCopy={onCopy}
         />
-        
-        {!hideNutzap && hasWalletBalance && (
+
+        {!hideNutzap && hasWalletBalance && this.state.targetUserHas10019 && (
           <button
             onClick={() => {
               this.setState({ showNutzapModal: true })
@@ -170,15 +211,15 @@ export class UserDisplayWithNutzap extends Component<UserDisplayWithNutzapProps,
         {showNutzapModal && (
           <>
             {/* Modal backdrop */}
-            <div 
-              class="fixed inset-0 bg-black/50 z-50" 
+            <div
+              class="fixed inset-0 bg-black/50 z-50"
               onClick={() => this.setState({ showNutzapModal: false })}
             />
-            
+
             {/* Modal */}
             <div class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border)] p-6 z-50 w-96 max-w-[90vw] shadow-xl">
               <h3 class="text-lg font-semibold mb-4">Send Nutzap</h3>
-              
+
               <div class="space-y-4">
                 <div>
                   <label class="block text-sm text-[var(--color-text-secondary)] mb-1">

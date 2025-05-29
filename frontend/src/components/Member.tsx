@@ -47,11 +47,11 @@ export class Member extends Component<MemberProps, MemberState> {
       );
       const isRelayAdmin = await this.props.client.checkIsRelayAdmin();
       const isAdmin = isGroupAdmin || isRelayAdmin;
-      
+
       // Check if this member is the current user
       const isCurrentUser = this.props.member.pubkey === user.pubkey;
-      
-      this.setState({ 
+
+      this.setState({
         isCurrentUserAdmin: isAdmin,
         isCurrentUser: isCurrentUser
       });
@@ -60,7 +60,7 @@ export class Member extends Component<MemberProps, MemberState> {
 
   async componentDidUpdate(prevProps: MemberProps) {
     // Check if member roles have changed or group members have changed
-    if (prevProps.member.roles !== this.props.member.roles || 
+    if (prevProps.member.roles !== this.props.member.roles ||
         prevProps.group.members !== this.props.group.members ||
         prevProps.member.pubkey !== this.props.member.pubkey) {
       const user = await this.props.client.ndkInstance.signer?.user();
@@ -70,11 +70,11 @@ export class Member extends Component<MemberProps, MemberState> {
         );
         const isRelayAdmin = await this.props.client.checkIsRelayAdmin();
         const isAdmin = isGroupAdmin || isRelayAdmin;
-        
+
         // Check if this member is the current user
         const isCurrentUser = this.props.member.pubkey === user.pubkey;
-        
-        this.setState({ 
+
+        this.setState({
           isCurrentUserAdmin: isAdmin,
           isCurrentUser: isCurrentUser
         });
