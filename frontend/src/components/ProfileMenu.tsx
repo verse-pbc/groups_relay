@@ -19,14 +19,12 @@ interface ProfileMenuState {
   userPubkey: string | null;
   isRelayAdmin: boolean;
   cashuBalance: number;
-  isRefreshing: boolean;
   showWalletModal: boolean;
 }
 
 export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
   private menuRef = null as HTMLDivElement | null;
   private buttonRef = null as HTMLButtonElement | null;
-  private balanceInterval: any = null;
   private unsubscribeBalance: (() => void) | null = null;
 
   state = {
@@ -34,7 +32,6 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
     userPubkey: null,
     isRelayAdmin: false,
     cashuBalance: 0,
-    isRefreshing: false,
     showWalletModal: false
   };
 
@@ -51,7 +48,7 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
     });
     console.log('🔔 [PROFILE] Subscription complete');
 
-    // Then get user info
+    // Get user info first to get pubkey for cached balance
     this.loadUserInfo();
 
   }
@@ -62,75 +59,49 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
     if (user?.pubkey) {
       this.setState({ userPubkey: user.pubkey });
 
+      // Try to get cached balance immediately with pubkey
+      const cachedBalance = this.props.client.getCachedBalanceForUser(user.pubkey);
+      if (cachedBalance > 0) {
+        console.log('🔔 [PROFILE] Loaded cached balance:', cachedBalance);
+        this.setState({ cashuBalance: cachedBalance });
+      }
+
       // Run admin check and wallet initialization in parallel
-      const [isAdmin] = await Promise.all([
-        this.props.client.checkIsRelayAdmin().catch(error => {
-          console.error('Failed to check relay admin status:', error);
-          return false;
-        }),
-        // Initialize wallet and fetch balance in parallel with admin check
-        this.initializeAndFetchBalance()
-      ]);
+      const isAdmin = await this.props.client.checkIsRelayAdmin().catch(error => {
+        console.error('Failed to check relay admin status:', error);
+        return false;
+      });
 
       if (isAdmin) {
         this.setState({ isRelayAdmin: true });
       }
-      
-      // Set up periodic balance refresh every 30 seconds
-      this.balanceInterval = setInterval(() => {
-        this.fetchWalletBalance();
-      }, 30000);
+
+      // Initialize wallet if not already done
+      if (!this.props.client.isWalletInitialized()) {
+        console.log('🔔 [PROFILE] Wallet not initialized, initializing...');
+        try {
+          await this.props.client.initializeWallet();
+          console.log('🔔 [PROFILE] Wallet initialized successfully');
+        } catch (err) {
+          console.warn('🔔 [PROFILE] Failed to initialize wallet:', err);
+        }
+      }
+
+      // Fetch fresh balance after user is loaded
+      try {
+        const balance = await this.props.client.getCashuBalance();
+        console.log('🔔 [PROFILE] Fresh balance fetched:', balance);
+        this.setState({ cashuBalance: balance });
+      } catch (err) {
+        console.warn('🔔 [PROFILE] Failed to fetch fresh balance:', err);
+      }
     }
   }
 
-  initializeAndFetchBalance = async () => {
-    try {
-      // Check if wallet is initialized
-      if (!this.props.client.isWalletInitialized()) {
-        const defaultMints = [
-          "https://mint.minibits.cash/Bitcoin",
-          "https://mint.coinos.io"
-        ];
-        
-        // Initialize wallet with defaults
-        await this.props.client.initializeWallet(defaultMints);
-      }
-      
-      // Now fetch the balance
-      await this.fetchWalletBalance();
-    } catch (error) {
-      console.error('Failed to initialize wallet and fetch balance:', error);
-    }
-  };
-
-  fetchWalletBalance = async () => {
-    this.setState({ isRefreshing: true });
-    try {
-      // Fetch total Cashu balance (NDKCashuWallet handles all mints)
-      const cashuBalance = await this.props.client.getCashuBalance().catch(err => {
-        console.warn("Failed to get Cashu balance:", err);
-        return 0;
-      });
-      
-      // Update state with balance
-      this.setState({ 
-        cashuBalance 
-      });
-    } catch (error) {
-      console.error('Failed to fetch wallet balance:', error);
-    } finally {
-      this.setState({ isRefreshing: false });
-    }
-  };
 
   componentWillUnmount() {
     document.removeEventListener('mousedown', this.handleClickOutside);
     document.removeEventListener('keydown', this.handleKeyDown);
-    
-    // Clear balance refresh interval
-    if (this.balanceInterval) {
-      clearInterval(this.balanceInterval);
-    }
     
     // Unsubscribe from balance updates
     if (this.unsubscribeBalance) {
@@ -251,17 +222,8 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
 
             {/* Wallet Section */}
             <div class="px-4 py-3">
-              <div class="flex items-center justify-between mb-2">
-                <div class="text-xs font-medium text-[var(--color-text-tertiary)]">
-                  Wallet
-                </div>
-                <button
-                  onClick={this.initializeAndFetchBalance}
-                  disabled={this.state.isRefreshing}
-                  class="text-xs text-purple-400 hover:text-purple-300"
-                >
-                  {this.state.isRefreshing ? "Refreshing..." : "Refresh"}
-                </button>
+              <div class="text-xs font-medium text-[var(--color-text-tertiary)] mb-2">
+                Wallet
               </div>
               
               <div class="flex items-center justify-between">
@@ -312,7 +274,6 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
             // Close modal if clicking backdrop
             if (e.target === e.currentTarget) {
               this.setState({ showWalletModal: false });
-              this.fetchWalletBalance();
             }
           }}
         >
@@ -321,7 +282,6 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
               client={client} 
               onClose={() => {
                 this.setState({ showWalletModal: false });
-                this.fetchWalletBalance();
               }}
               isModal={true}
               initialCashuBalance={this.state.cashuBalance}

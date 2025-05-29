@@ -64,25 +64,18 @@ export class UserDisplayWithNutzap extends Component<UserDisplayWithNutzapProps,
   fetchWalletBalance = async () => {
     try {
       const { mints } = this.props
-      const mintBalances: Record<string, number> = {}
       
-      // Get total balance (per-mint balance not supported yet in NDK)
-      const totalBalance = await this.props.client.getCashuBalance()
-      this.setState({ walletBalance: totalBalance })
+      // Get total balance and per-mint balances
+      const [totalBalance, mintBalances] = await Promise.all([
+        this.props.client.getCashuBalance(),
+        this.props.client.getCashuMintBalances()
+      ])
       
-      if (mints && mints.length > 0) {
-        // For now, we can't get per-mint balances, so we'll just show the total
-        // balance for display purposes in the dropdown
-        for (const mint of mints) {
-          // Show total balance next to each mint until per-mint is supported
-          mintBalances[mint] = totalBalance
-        }
-        
-        this.setState({ 
-          mintBalances,
-          selectedMint: mints[0] || ''
-        })
-      }
+      this.setState({ 
+        walletBalance: totalBalance,
+        mintBalances: mintBalances || {},
+        selectedMint: mints?.[0] || ''
+      })
     } catch (error) {
       console.error('Failed to fetch wallet balance:', error)
       this.setState({ walletBalance: 0, mintBalances: {} })
@@ -192,8 +185,12 @@ export class UserDisplayWithNutzap extends Component<UserDisplayWithNutzapProps,
                     Available Mints
                   </label>
                   <div class="text-xs text-[var(--color-text-tertiary)] space-y-1">
-                    {Object.entries(this.state.mintBalances).map(([mint]) => (
-                      <div key={mint}>• {new URL(mint).hostname}</div>
+                    {Object.entries(this.state.mintBalances).map(([mint, balance]) => (
+                      <div key={mint} class="flex items-center gap-2">
+                        <span>•</span>
+                        <span>{new URL(mint).hostname}</span>
+                        <span class="text-[#f7931a] font-medium">₿{(balance as number).toLocaleString()} sats</span>
+                      </div>
                     ))}
                   </div>
                   <p class="text-xs text-[var(--color-text-tertiary)] mt-2">

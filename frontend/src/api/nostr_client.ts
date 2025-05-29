@@ -370,8 +370,17 @@ export class NostrClient {
 
   // Get all mints from wallet
   async getCashuMints(): Promise<string[]> {
-    // TODO: Add mint management to wallet service
-    return [];
+    if (!this.walletService || !this.walletService.isInitialized()) {
+      return [];
+    }
+    
+    // Get mints from the wallet instance
+    const wallet = (this.walletService as any).wallet;
+    if (!wallet || !wallet.mints) {
+      return [];
+    }
+    
+    return wallet.mints;
   }
 
   // Get wallet proofs for nutzap functionality  
@@ -383,8 +392,17 @@ export class NostrClient {
 
   // Get wallet mints synchronously
   getWalletMints(): string[] {
-    // TODO: Add mint management to wallet service
-    return [];
+    if (!this.walletService || !this.walletService.isInitialized()) {
+      return [];
+    }
+    
+    // Get mints from the wallet instance
+    const wallet = (this.walletService as any).wallet;
+    if (!wallet || !wallet.mints) {
+      return [];
+    }
+    
+    return wallet.mints;
   }
 
   // Check if wallet has any balance for nutzap functionality
@@ -393,15 +411,21 @@ export class NostrClient {
   }
 
   // Add a mint to the wallet and persist to NIP-60
-  async addMint(_mintUrl: string): Promise<void> {
-    // TODO: Add mint management to wallet service
-    // Add mint not yet implemented in wallet service
+  async addMint(mintUrl: string): Promise<void> {
+    if (!this.walletService) throw new Error('Wallet not initialized');
+    
+    // Add mint to wallet
+    await this.walletService.addMint(mintUrl);
+    
+    // Update the kind:10019 event to include the new mint
+    await this.walletService.publishNutzapConfig();
   }
 
   // Remove a mint from the wallet and persist to NIP-60
-  async removeMint(_mintUrl: string): Promise<void> {
-    // TODO: Add mint management to wallet service
-    // Remove mint not yet implemented in wallet service
+  async removeMint(mintUrl: string): Promise<void> {
+    if (!this.walletService) throw new Error('Wallet not initialized');
+    
+    await this.walletService.removeMint(mintUrl);
   }
   
 
@@ -416,11 +440,44 @@ export class NostrClient {
     return this.walletService.getBalance();
   }
 
+  async getCashuMintBalances(): Promise<Record<string, number>> {
+    if (!this.walletService) return {};
+    
+    return this.walletService.getMintBalances();
+  }
 
+  async getAllCashuMintBalances(): Promise<{ authorized: Record<string, number>, unauthorized: Record<string, number> }> {
+    if (!this.walletService) return { authorized: {}, unauthorized: {} };
+    
+    return this.walletService.getAllMintBalances();
+  }
+
+
+
+  // Get cached balance immediately without async call
+  getCachedBalance(): number {
+    // Create wallet service if needed (to access cached balance)
+    if (!this.walletService) {
+      this.walletService = new CashuWalletService(this.ndk);
+    }
+    return this.walletService.getCachedBalance();
+  }
+
+  // Get cached balance for a specific user
+  getCachedBalanceForUser(userPubkey: string): number {
+    // Create wallet service if needed
+    if (!this.walletService) {
+      this.walletService = new CashuWalletService(this.ndk);
+    }
+    return this.walletService.loadCachedBalanceForUser(userPubkey);
+  }
 
   // Subscribe to balance updates
   onBalanceUpdate(callback: (balance: number) => void): () => void {
-    if (!this.walletService) return () => {};
+    // Create wallet service if needed (to enable subscriptions)
+    if (!this.walletService) {
+      this.walletService = new CashuWalletService(this.ndk);
+    }
     return this.walletService.onBalanceUpdate(callback);
   }
 
@@ -445,6 +502,14 @@ export class NostrClient {
     }
     
     return this.walletService.checkAndClaimTokens(mintUrl, quote);
+  }
+
+  async meltToLightning(invoice: string): Promise<{ paid: boolean; preimage?: string; fee?: number; error?: string }> {
+    if (!this.walletService) {
+      throw new Error("Wallet not initialized");
+    }
+    
+    return this.walletService.meltToLightning(invoice);
   }
 
 

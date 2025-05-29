@@ -34,7 +34,13 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
   const [showTransactions, setShowTransactions] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [mintBalances, setMintBalances] = useState<Record<string, number>>({});
+  const [unauthorizedMintBalances, setUnauthorizedMintBalances] = useState<Record<string, number>>({});
   const [checkingPayment, setCheckingPayment] = useState(false);
+  const [showMeltModal, setShowMeltModal] = useState(false);
+  const [meltInvoice, setMeltInvoice] = useState("");
+  const [isMelting, setIsMelting] = useState(false);
+  const [meltError, setMeltError] = useState<string | null>(null);
+  const [meltSuccess, setMeltSuccess] = useState<string | null>(null);
 
   const initializeWallet = async () => {
     setLoading(true);
@@ -50,15 +56,13 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
       
       // Get mints from wallet
       const walletMints = await client.getCashuMints();
+      console.log("🔍 WalletDisplay - initializeWallet - walletMints:", walletMints);
       if (walletMints.length > 0) {
         setMints(walletMints);
-        setSuccess("Wallet initialized successfully!");
       }
       
-      // Only fetch balance if not provided as props
-      if (initialCashuBalance === undefined) {
-        await fetchBalance();
-      }
+      // Always fetch balance to get mint balances
+      await fetchBalance();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to initialize wallet");
       setIsInitialized(false);
@@ -78,10 +82,19 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
     setLoading(true);
     try {
       // Run all balance fetching operations in parallel
-      const [cashuBalance, txHistory] = await Promise.all([
-        // Fetch total Cashu balance
+      const [cashuBalance, allBalances, txHistory] = await Promise.all([
+        // Fetch total Cashu balance (only authorized mints)
         client.getCashuBalance().catch(() => {
           return 0;
+        }),
+        
+        // Fetch all mint balances (authorized and unauthorized)
+        client.getAllCashuMintBalances().then(balances => {
+          console.log("🎯 WalletDisplay - getAllCashuMintBalances result:", balances);
+          return balances;
+        }).catch(() => {
+          console.error("❌ Failed to get mint balances");
+          return { authorized: {}, unauthorized: {} };
         }),
         
         // Load transaction history
@@ -91,9 +104,30 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
       // Update balance
       setCashuBalance(cashuBalance);
       
-      // For now, we don't have per-mint balances with NDKCashuWallet
-      // Could be added later if needed
-      setMintBalances({});
+      // Update mint balances
+      console.log("🎯 WalletDisplay - Setting mint balances:");
+      console.log("  allBalances:", allBalances);
+      console.log("  allBalances.authorized:", allBalances.authorized);
+      console.log("  allBalances.unauthorized:", allBalances.unauthorized);
+      console.log("  Current mintBalances state before update:", mintBalances);
+      
+      // Force a default structure if empty
+      if (Object.keys(allBalances.authorized).length === 0 && cashuBalance > 0) {
+        console.log("⚠️ No mint balances but have total balance, checking mints...");
+        // If we have balance but no mint-specific balances, assume it's all in the first mint
+        const walletMints = await client.getCashuMints();
+        const defaultMint = walletMints[0];
+        if (defaultMint) {
+          console.log(`  Setting default balance to first mint: ${defaultMint}`);
+          setMintBalances({ [defaultMint]: cashuBalance });
+        } else {
+          setMintBalances(allBalances.authorized);
+        }
+      } else {
+        console.log("  Setting mintBalances to:", allBalances.authorized);
+        setMintBalances(allBalances.authorized);
+      }
+      setUnauthorizedMintBalances(allBalances.unauthorized);
       
       // Update transaction history
       setTransactions(txHistory.slice(0, 10)); // Show last 10 transactions
@@ -194,18 +228,23 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
     }
   };
 
-  const addMint = async () => {
-    if (!newMintUrl.trim()) return;
+  const addMint = async (mintUrl?: string) => {
+    const urlToAdd = mintUrl || newMintUrl;
+    if (!urlToAdd.trim()) return;
     
     setLoading(true);
     setError(null);
     try {
       // Use the client's addMint method which handles NIP-60 persistence
-      await client.addMint(newMintUrl);
+      await client.addMint(urlToAdd);
       
-      setMints([...mints, newMintUrl]);
+      setMints([...mints, urlToAdd]);
       setNewMintUrl("");
-      setSuccess("Mint added and saved to wallet!");
+      
+      // Refresh balance to include the new mint
+      await fetchBalance(true);
+      
+      // Don't show success message in modal
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add mint");
@@ -215,14 +254,54 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
   };
 
   const removeMint = async (mintUrl: string) => {
+    setLoading(true);
+    setError(null);
     try {
-      const updatedMints = mints.filter(m => m !== mintUrl);
+      // Use the client's removeMint method which handles everything
+      await client.removeMint(mintUrl);
       
-      // TODO: Add mint management to wallet service
+      // Update local state
+      const updatedMints = mints.filter(m => m !== mintUrl);
       setMints(updatedMints);
-      setSuccess("Mint removed from wallet!");
+      
+      // Refresh balance to reflect the removed mint
+      await fetchBalance(true);
+      
+      // Don't show success message in modal
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to remove mint");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMeltToLightning = async () => {
+    if (!meltInvoice.trim()) {
+      setMeltError("Please paste a Lightning invoice");
+      return;
+    }
+
+    setIsMelting(true);
+    setMeltError(null);
+    setMeltSuccess(null);
+
+    try {
+      const result = await client.meltToLightning(meltInvoice);
+      
+      if (result.paid) {
+        setMeltSuccess(`Payment successful! Preimage: ${result.preimage?.substring(0, 16)}...`);
+        setShowMeltModal(false);
+        setMeltInvoice("");
+        
+        // Refresh balance after melting
+        await fetchBalance(true);
+      } else {
+        setMeltError(result.error || "Payment failed");
+      }
+    } catch (err) {
+      setMeltError(err instanceof Error ? err.message : "Failed to pay invoice");
+    } finally {
+      setIsMelting(false);
     }
   };
 
@@ -263,27 +342,38 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
     }
   }, [success]);
 
-  // Handle ESC key to close modal
+
+  // Handle ESC key to close modals
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && showReceiveModal) {
-        setShowReceiveModal(false);
-        setTokenInput("");
-        setMintAmount("");
-        setMintInvoice("");
-        setSelectedMint("");
-        setQrCodeDataUrl(null);
-        setCurrentQuote(null);
-        setError(null);
-        setSuccess(null);
+      if (e.key === 'Escape') {
+        if (showReceiveModal) {
+          setShowReceiveModal(false);
+          setTokenInput("");
+          setMintAmount("");
+          setMintInvoice("");
+          setSelectedMint("");
+          setQrCodeDataUrl(null);
+          setCurrentQuote(null);
+          setError(null);
+          setSuccess(null);
+        } else if (showMeltModal) {
+          setShowMeltModal(false);
+          setMeltInvoice("");
+          setMeltError(null);
+          setMeltSuccess(null);
+        } else if (isModal && onClose) {
+          // Close the main wallet modal
+          onClose();
+        }
       }
     };
 
-    if (showReceiveModal) {
+    if (showReceiveModal || showMeltModal || isModal) {
       document.addEventListener('keydown', handleKeyDown);
       return () => document.removeEventListener('keydown', handleKeyDown);
     }
-  }, [showReceiveModal]);
+  }, [showReceiveModal, showMeltModal, isModal, onClose]);
 
   // Auto-check payment status when we have an active invoice
   useEffect(() => {
@@ -370,17 +460,10 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
         <div class="flex items-center justify-between mb-3">
           <h3 class="text-lg font-semibold">Wallet</h3>
           <div class="flex items-center gap-2">
-            <button
-              onClick={() => fetchBalance(true)}
-              disabled={loading}
-              class="text-purple-400 hover:text-purple-300 text-sm"
-            >
-              {loading ? "Refreshing..." : "Refresh"}
-            </button>
             {isModal && onClose && (
               <button
                 onClick={onClose}
-                class="text-gray-400 hover:text-white transition-colors ml-2"
+                class="text-gray-400 hover:text-white transition-colors"
               >
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -416,10 +499,25 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
         </button>
         
         <button
-          onClick={() => setShowMintManager(!showMintManager)}
-          class="w-full bg-[var(--color-bg-tertiary)] hover:bg-gray-700 px-4 py-3 rounded-lg text-sm font-medium transition-all border border-[var(--color-border)]"
+          onClick={() => setShowMeltModal(true)}
+          disabled={loading || cashuBalance === 0}
+          class="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 px-4 py-3 rounded-lg text-white font-medium transition-all transform hover:scale-[1.02] active:scale-[0.98]"
         >
-          {showMintManager ? 'Hide' : 'Manage'} Mints ({mints.length})
+          Send to Lightning
+        </button>
+        
+        <button
+          onClick={async () => {
+            if (!showMintManager) {
+              // Fetch fresh mint balances when opening the manager
+              await fetchBalance(true);
+            }
+            setShowMintManager(!showMintManager);
+          }}
+          disabled={loading}
+          class="w-full bg-[var(--color-bg-tertiary)] hover:bg-gray-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-3 rounded-lg text-white font-medium transition-all border border-[var(--color-border)]"
+        >
+          {showMintManager ? 'Hide' : 'Manage'} Mints{Object.keys(mintBalances).length > 0 ? ` (${mints.length})` : ''}
         </button>
         
         <button
@@ -437,7 +535,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
             }
             setShowTransactions(!showTransactions);
           }}
-          class="w-full bg-[var(--color-bg-tertiary)] hover:bg-gray-700 px-4 py-3 rounded-lg text-sm font-medium transition-all border border-[var(--color-border)]"
+          class="w-full bg-[var(--color-bg-tertiary)] hover:bg-gray-700 px-4 py-3 rounded-lg text-white font-medium transition-all border border-[var(--color-border)]"
         >
           {showTransactions ? 'Hide' : 'Show'} Transaction History
         </button>
@@ -447,17 +545,21 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
             <div class="text-xs text-gray-400">Connected Mints:</div>
             {mints.map(mint => {
               const balance = mintBalances[mint] || 0;
+              console.log(`🔍 Mint: ${mint}, Balance from mintBalances:`, balance, "mintBalances object:", mintBalances);
               return (
-                <div key={mint} class="flex items-center justify-between text-xs">
-                  <span class="text-gray-300 truncate flex-1 mr-2">
-                    {new URL(mint).hostname}
-                    {balance > 0 && (
-                      <span class="text-[#f7931a] ml-2">₿{balance} sats</span>
-                    )}
-                  </span>
+                <div key={mint} class="flex items-center justify-between text-xs p-2 bg-[var(--color-bg-primary)] rounded border border-[var(--color-border)]">
+                  <div class="flex items-center gap-2">
+                    <span class="text-gray-300 truncate">
+                      {new URL(mint).hostname}
+                    </span>
+                    <span class="text-[#f7931a] font-medium flex items-center gap-0.5">
+                      ₿{balance.toLocaleString()}
+                      <span class="text-[10px] font-normal">sats</span>
+                    </span>
+                  </div>
                   <button
                     onClick={() => removeMint(mint)}
-                    class="text-red-400 hover:text-red-300"
+                    class="text-red-400 hover:text-red-300 text-xs"
                   >
                     Remove
                   </button>
@@ -474,13 +576,46 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
                 class="flex-1 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs"
               />
               <button
-                onClick={addMint}
+                onClick={() => addMint()}
                 disabled={loading || !newMintUrl}
                 class="px-3 py-1 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 rounded text-xs"
               >
                 Add
               </button>
             </div>
+            
+            {/* Show unauthorized mint balances if any */}
+            {Object.keys(unauthorizedMintBalances).length > 0 && (
+              <div class="mt-3 p-2 bg-yellow-900/20 border border-yellow-700/30 rounded">
+                <div class="text-xs text-yellow-400 mb-1">⚠️ Tokens from unauthorized mints:</div>
+                {Object.entries(unauthorizedMintBalances).map(([mint, balance]) => (
+                  <div key={mint} class="flex items-center justify-between text-xs py-1">
+                    <span class="text-gray-400 truncate">
+                      {new URL(mint).hostname}
+                    </span>
+                    <div class="flex items-center gap-2">
+                      <span class="text-yellow-400 font-medium">
+                        ₿{balance.toLocaleString()} sats
+                      </span>
+                      <button
+                        onClick={async () => {
+                          // Add mint to wallet and update kind:10019
+                          await addMint(mint);
+                          // Refresh to update authorized/unauthorized status
+                          await fetchBalance(true);
+                        }}
+                        class="text-green-400 hover:text-green-300 text-xs"
+                      >
+                        Accept
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <p class="text-xs text-yellow-400/80 mt-1">
+                  These tokens cannot be spent unless you accept the mint
+                </p>
+              </div>
+            )}
           </div>
         )}
         
@@ -616,11 +751,14 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
                              focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent transition-all"
                     >
                       <option value="">Select a mint...</option>
-                      {mints.map(mint => (
-                        <option key={mint} value={mint}>
-                          {new URL(mint).hostname}
-                        </option>
-                      ))}
+                      {mints.map(mint => {
+                        const balance = mintBalances[mint] || 0;
+                        return (
+                          <option key={mint} value={mint}>
+                            {new URL(mint).hostname} (₿{balance} sats)
+                          </option>
+                        );
+                      })}
                     </select>
                     {window.location.hostname === 'localhost' && (
                       <p class="text-xs text-yellow-400 mt-1">
@@ -785,6 +923,102 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
           >
             Close
           </button>
+        </div>
+      </div>
+    )}
+    
+    {/* Melt to Lightning Modal */}
+    {showMeltModal && (
+      <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div class="bg-gray-800 rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+          <h3 class="text-lg font-semibold mb-4">Send to Lightning</h3>
+          
+          <div class="space-y-4">
+            {/* Balance display */}
+            <div class="bg-gray-700 rounded-lg p-3">
+              <div class="text-sm text-gray-400">Available balance</div>
+              <div class="text-xl font-semibold text-[#f7931a] flex items-center gap-1">
+                <span>₿</span>
+                {cashuBalance.toLocaleString()}
+                <span class="text-sm font-normal">sats</span>
+              </div>
+            </div>
+
+            {/* Invoice input */}
+            <div>
+              <label class="block text-sm font-medium text-gray-400 mb-2">
+                Lightning Invoice
+              </label>
+              <textarea
+                value={meltInvoice}
+                onInput={(e) => setMeltInvoice((e.target as HTMLTextAreaElement).value)}
+                placeholder="lnbc..."
+                class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm
+                       placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-purple-500
+                       font-mono"
+                rows={4}
+                disabled={isMelting}
+              />
+            </div>
+
+            {/* Error/Success messages */}
+            {meltError && (
+              <div class="bg-red-900/20 border border-red-700/30 rounded-lg p-3">
+                <p class="text-sm text-red-400">{meltError}</p>
+              </div>
+            )}
+            {meltSuccess && (
+              <div class="bg-green-900/20 border border-green-700/30 rounded-lg p-3">
+                <p class="text-sm text-green-400">{meltSuccess}</p>
+              </div>
+            )}
+
+            {/* Info */}
+            <div class="text-xs text-gray-400">
+              <p>• Paste a Lightning invoice to pay with your Cashu tokens</p>
+              <p>• The tokens will be "melted" (converted) to pay the invoice</p>
+              <p>• The mint will add fees and a reserve for Lightning routing</p>
+              <p>• Any unused reserve will be returned as change</p>
+            </div>
+
+            {/* Action buttons */}
+            <div class="flex gap-2">
+              <button
+                onClick={handleMeltToLightning}
+                disabled={isMelting || !meltInvoice.trim()}
+                class="flex-1 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 
+                       px-4 py-3 rounded-lg text-sm font-medium transition-all
+                       transform hover:scale-[1.02] active:scale-[0.98] disabled:transform-none
+                       flex items-center justify-center gap-2"
+              >
+                {isMelting ? (
+                  <>
+                    <span class="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></span>
+                    Melting...
+                  </>
+                ) : (
+                  <>
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    Pay Invoice
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setShowMeltModal(false);
+                  setMeltInvoice("");
+                  setMeltError(null);
+                  setMeltSuccess(null);
+                }}
+                disabled={isMelting}
+                class="px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     )}

@@ -22,6 +22,7 @@ interface ContentSectionState {
   nutzapError: string | null
   walletBalance: number
   eventNutzaps: Map<string, number> // eventId -> total amount
+  authorizedMints: string[] // User's authorized mints
 }
 
 export class ContentSection extends BaseComponent<ContentSectionProps, ContentSectionState> {
@@ -33,7 +34,8 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
     nutzapLoading: false,
     nutzapError: null,
     walletBalance: 0,
-    eventNutzaps: new Map<string, number>()
+    eventNutzaps: new Map<string, number>(),
+    authorizedMints: []
   }
 
   private nutzapSubscription: any = null
@@ -86,6 +88,35 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         '#e': eventIds // Events that are referenced
       }
 
+      // Get user's authorized mints
+      let authorizedMints: string[] = []
+      try {
+        const user = await this.props.client.ndkInstance.signer?.user()
+        if (user?.pubkey) {
+          // Get mints from user's kind:10019 event
+          const nutzapConfig = await this.props.client.fetchEvents({
+            kinds: [10019],
+            authors: [user.pubkey],
+            limit: 1
+          })
+          
+          const configArray = Array.from(nutzapConfig)
+          if (configArray.length > 0) {
+            const config = configArray[0]
+            config.tags.forEach((tag: string[]) => {
+              if (tag[0] === 'mint' && tag[1]) {
+                authorizedMints.push(tag[1])
+              }
+            })
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to get authorized mints:', err)
+      }
+      
+      // Store authorized mints in state for the event handler
+      this.setState({ authorizedMints })
+
       // Fetch existing nutzaps
       const events = await this.props.client.fetchEvents(filter)
       const nutzapTotals = new Map<string, number>()
@@ -104,9 +135,15 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         const amount = parseInt(amountTag[1])
         if (isNaN(amount)) return
 
-        // Add to total
-        const currentTotal = nutzapTotals.get(eventId) || 0
-        nutzapTotals.set(eventId, currentTotal + amount)
+        // Find the mint tag - nutzaps include the mint in tags
+        const mintTag = event.tags.find((tag: string[]) => tag[0] === 'mint')
+        const mint = mintTag ? mintTag[1] : null
+
+        // Only count if from an authorized mint (or if we have no mint restrictions)
+        if (authorizedMints.length === 0 || (mint && authorizedMints.includes(mint))) {
+          const currentTotal = nutzapTotals.get(eventId) || 0
+          nutzapTotals.set(eventId, currentTotal + amount)
+        }
       })
 
       this.setState({ eventNutzaps: nutzapTotals })
@@ -130,13 +167,20 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         const amount = parseInt(amountTag[1])
         if (isNaN(amount)) return
 
-        // Update state
-        this.setState(prev => {
-          const newTotals = new Map(prev.eventNutzaps)
-          const currentTotal = newTotals.get(eventId) || 0
-          newTotals.set(eventId, currentTotal + amount)
-          return { eventNutzaps: newTotals }
-        })
+        // Find the mint tag
+        const mintTag = event.tags.find((tag: string[]) => tag[0] === 'mint')
+        const mint = mintTag ? mintTag[1] : null
+
+        // Only count if from an authorized mint
+        if (this.state.authorizedMints.length === 0 || (mint && (this.state.authorizedMints as string[]).includes(mint))) {
+          // Update state
+          this.setState(prev => {
+            const newTotals = new Map(prev.eventNutzaps)
+            const currentTotal = newTotals.get(eventId) || 0
+            newTotals.set(eventId, currentTotal + amount)
+            return { eventNutzaps: newTotals }
+          })
+        }
       })
     } catch (error) {
       console.error('Failed to subscribe to nutzaps:', error)
@@ -179,10 +223,12 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
 
   fetchWalletBalance = async () => {
     try {
+      console.log('🔍 [NUTZAP] Fetching current wallet balance...')
       const balance = await this.props.client.getCashuBalance()
+      console.log('🔍 [NUTZAP] Fetched balance:', balance)
       this.setState({ walletBalance: balance })
     } catch (error) {
-      console.error('Failed to fetch wallet balance:', error)
+      console.error('❌ [NUTZAP] Failed to fetch wallet balance:', error)
       this.setState({ walletBalance: 0 })
     }
   }
@@ -193,6 +239,13 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
     const sats = parseInt(nutzapAmount)
     if (!sats || sats <= 0) {
       this.setState({ nutzapError: 'Please enter a valid amount' })
+      return
+    }
+
+    // Check if user has sufficient balance
+    console.log('🔍 [NUTZAP] Balance validation - Attempting to send:', sats, 'Available balance:', walletBalance)
+    if (sats > walletBalance) {
+      this.setState({ nutzapError: `Insufficient balance. You have ${walletBalance} sats but tried to send ${sats} sats.` })
       return
     }
 
@@ -336,9 +389,11 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
                     {/* Event Nutzap Button */}
                     {hasWalletBalance && (
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           this.setState({ showNutzapModal: item.id })
-                          this.fetchWalletBalance()
+                          console.log('🔍 [NUTZAP] Opening modal for event:', item.id, 'Current balance before fetch:', this.state.walletBalance)
+                          await this.fetchWalletBalance()
+                          console.log('🔍 [NUTZAP] Balance after fetch:', this.state.walletBalance)
                         }}
                         class="text-[11px] opacity-0 group-hover:opacity-100 text-[#f7931a]
                                hover:text-[#f68e0a] transition-all duration-150 flex items-center p-1"

@@ -5,7 +5,10 @@ import { type Proof } from "@cashu/cashu-ts";
 // Interfaces following Interface Segregation Principle
 export interface IWalletBalance {
   getBalance(): Promise<number>;
+  getMintBalances(): Promise<Record<string, number>>;
+  getAllMintBalances(): Promise<{ authorized: Record<string, number>, unauthorized: Record<string, number> }>;
   getCachedBalance(): number;
+  loadCachedBalanceForUser(userPubkey: string): number;
   onBalanceUpdate(callback: (balance: number) => void): () => void;
   updateBalanceOptimistically(newBalance: number): void;
 }
@@ -27,6 +30,10 @@ export interface INutzapOperations {
 export interface IMintOperations {
   mintTokens(mintUrl: string, amount: number): Promise<{ invoice: string; quote: any }>;
   checkAndClaimTokens(mintUrl: string, quote: any): Promise<{ proofs: Proof[], claimed: boolean }>;
+  meltToLightning(invoice: string): Promise<{ paid: boolean; preimage?: string; fee?: number; error?: string }>;
+  addMint(mintUrl: string): Promise<void>;
+  removeMint(mintUrl: string): Promise<void>;
+  publishNutzapConfig(): Promise<void>;
 }
 
 export interface IWalletInitialization {
@@ -209,17 +216,160 @@ export class CashuWalletService implements ICashuWalletService {
     if (!this.wallet) return 0;
     
     try {
-      const balance = await this.wallet.balance;
-      this.updateCachedBalance(balance?.amount || 0);
-      return balance?.amount || 0;
+      // Get balances per mint
+      const mintBalances = this.wallet.mintBalances;
+      
+      // Get the mints from the user's kind:10019 event (these are the "authorized" mints)
+      const nutzapConfigMints = await this.getNutzapConfigMints();
+      const authorizedMints = nutzapConfigMints.length > 0 ? nutzapConfigMints : (this.wallet.mints || []);
+      
+      console.log("🔍 Debug getBalance:");
+      console.log("  All mint balances:", mintBalances);
+      console.log("  Authorized mints (from kind:10019):", authorizedMints);
+      
+      // Only count balance from authorized mints
+      let totalBalance = 0;
+      for (const [mint, balance] of Object.entries(mintBalances)) {
+        if (authorizedMints.includes(mint)) {
+          totalBalance += balance;
+          console.log(`  ✅ Including ${balance} sats from authorized mint: ${mint}`);
+        } else {
+          console.warn(`  ⚠️ Ignoring ${balance} sats from unauthorized mint: ${mint}`);
+        }
+      }
+      
+      console.log(`  Total authorized balance: ${totalBalance}`);
+      
+      this.updateCachedBalance(totalBalance);
+      return totalBalance;
     } catch (error) {
       console.error("Failed to get balance:", error);
       return this.cachedBalance;
     }
   }
 
+  /**
+   * Get balance per mint (only authorized mints according to kind:10019)
+   * @returns Map of mint URL to balance in sats
+   */
+  async getMintBalances(): Promise<Record<string, number>> {
+    if (!this.wallet) return {};
+    
+    try {
+      // NDKCashuWallet has a mintBalances getter that returns balances per mint
+      const allMintBalances = this.wallet.mintBalances;
+      
+      // Get the mints from the user's kind:10019 event (these are the "authorized" mints)
+      const nutzapConfigMints = await this.getNutzapConfigMints();
+      const authorizedMints = nutzapConfigMints.length > 0 ? nutzapConfigMints : (this.wallet.mints || []);
+      
+      console.log("🔍 Debug getMintBalances:");
+      console.log("  Raw wallet.mintBalances:", allMintBalances);
+      console.log("  Authorized mints (from kind:10019):", authorizedMints);
+      console.log("  Type of allMintBalances:", typeof allMintBalances);
+      console.log("  Is allMintBalances an object?", allMintBalances && typeof allMintBalances === 'object');
+      console.log("  Object.entries(allMintBalances):", Object.entries(allMintBalances));
+      
+      // Check if mintBalances is actually populated
+      if (!allMintBalances || Object.keys(allMintBalances).length === 0) {
+        console.log("  ⚠️ No mint balances found in wallet.mintBalances");
+        console.log("  Wallet status:", this.wallet.status);
+        // Note: NDKCashuWallet doesn't expose tokens property directly
+        
+        // Try to get balance from wallet's internal state
+        console.log("  Attempting to check wallet internal state...");
+        console.log("  wallet.balance:", (this.wallet as any).balance);
+        console.log("  wallet tokens:", (this.wallet as any).tokens);
+        console.log("  wallet.state:", (this.wallet as any).state);
+        if ((this.wallet as any).state) {
+          console.log("  wallet.state.dump():", (this.wallet as any).state.dump?.());
+        }
+      }
+      
+      // Filter to only show balances from authorized mints
+      const authorizedBalances: Record<string, number> = {};
+      for (const [mint, balance] of Object.entries(allMintBalances)) {
+        if (authorizedMints.includes(mint)) {
+          authorizedBalances[mint] = balance;
+        }
+      }
+      
+      console.log("  Filtered authorized balances:", authorizedBalances);
+      console.log("  Returning to UI:", JSON.stringify(authorizedBalances));
+      
+      return authorizedBalances;
+    } catch (error) {
+      console.error("Failed to get mint balances:", error);
+      console.error("Error stack:", (error as any).stack);
+      return {};
+    }
+  }
+
+  /**
+   * Get ALL mint balances including unauthorized mints
+   * According to NIP-61, authorized mints are those in the user's kind:10019 event
+   * @returns Map of mint URL to balance in sats
+   */
+  async getAllMintBalances(): Promise<{ authorized: Record<string, number>, unauthorized: Record<string, number> }> {
+    if (!this.wallet) return { authorized: {}, unauthorized: {} };
+    
+    try {
+      const allMintBalances = this.wallet.mintBalances;
+      
+      // Get the mints from the user's kind:10019 event (these are the "authorized" mints)
+      const nutzapConfigMints = await this.getNutzapConfigMints();
+      const authorizedMints = nutzapConfigMints.length > 0 ? nutzapConfigMints : (this.wallet.mints || []);
+      
+      console.log("🔍 Debug getAllMintBalances:");
+      console.log("  All mint balances:", allMintBalances);
+      console.log("  Authorized mints (from kind:10019):", authorizedMints);
+      console.log("  Wallet mints:", this.wallet.mints);
+      
+      // If no balances but we have a total balance, try to get state directly
+      if (Object.keys(allMintBalances).length === 0 && this.cachedBalance > 0) {
+        console.log("  ⚠️ No mint balances but have cached balance, checking wallet state...");
+        const state = (this.wallet as any).state;
+        if (state) {
+          console.log("  Wallet state dump:", state.dump?.());
+        }
+      }
+      
+      const authorized: Record<string, number> = {};
+      const unauthorized: Record<string, number> = {};
+      
+      for (const [mint, balance] of Object.entries(allMintBalances)) {
+        if (authorizedMints.includes(mint)) {
+          authorized[mint] = balance;
+        } else {
+          unauthorized[mint] = balance;
+        }
+      }
+      
+      return { authorized, unauthorized };
+    } catch (error) {
+      console.error("Failed to get all mint balances:", error);
+      return { authorized: {}, unauthorized: {} };
+    }
+  }
+
   getCachedBalance(): number {
     return this.cachedBalance;
+  }
+
+  // Load cached balance for a specific user
+  loadCachedBalanceForUser(userPubkey: string): number {
+    const cached = this.storage.getItem(`cashu_balance_${userPubkey}`);
+    if (cached) {
+      try {
+        const { balance, timestamp } = JSON.parse(cached);
+        if (Date.now() - timestamp < this.balanceCacheTimeout) {
+          return balance;
+        }
+      } catch (error) {
+        console.error("Failed to load cached balance:", error);
+      }
+    }
+    return 0;
   }
 
   onBalanceUpdate(callback: (balance: number) => void): () => void {
@@ -232,6 +382,54 @@ export class CashuWalletService implements ICashuWalletService {
   // Optimistically update balance (e.g., after sending nutzap)
   updateBalanceOptimistically(newBalance: number): void {
     this.updateCachedBalance(newBalance);
+  }
+
+  // Mint management
+  async addMint(mintUrl: string): Promise<void> {
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized');
+    }
+    
+    // Add mint to wallet if not already present
+    if (!this.wallet.mints.includes(mintUrl)) {
+      this.wallet.mints.push(mintUrl);
+      
+      // Update wallet metadata with new mint
+      await this.createWalletMetadata(this.wallet.mints);
+      
+      // Update kind:10019 to include new mint as authorized
+      await this.publishNutzapConfig();
+      
+      console.log(`✅ Added mint ${mintUrl} to wallet`);
+    }
+  }
+
+  async removeMint(mintUrl: string): Promise<void> {
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized');
+    }
+    
+    // Don't allow removing the last mint
+    if (this.wallet.mints.length <= 1) {
+      throw new Error('Cannot remove the last mint from wallet');
+    }
+    
+    // Remove mint from wallet
+    const mintIndex = this.wallet.mints.indexOf(mintUrl);
+    if (mintIndex > -1) {
+      this.wallet.mints.splice(mintIndex, 1);
+      
+      // Update wallet metadata without the removed mint
+      await this.createWalletMetadata(this.wallet.mints);
+      
+      // Update kind:10019 to remove mint from authorized list
+      await this.publishNutzapConfig();
+      
+      // Force balance refresh to exclude removed mint
+      await this.updateBalance();
+      
+      console.log(`✅ Removed mint ${mintUrl} from wallet`);
+    }
   }
 
   // Transaction history
@@ -385,6 +583,62 @@ export class CashuWalletService implements ICashuWalletService {
     // Update balance only if payment succeeded
     this.updateCachedBalance(Math.max(0, this.cachedBalance - amount));
     await this.updateBalance();
+  }
+
+  /**
+   * Force refresh wallet proofs and balances
+   */
+  async refreshWalletState(): Promise<void> {
+    if (!this.wallet) return;
+    
+    try {
+      console.log("🔄 Refreshing wallet state...");
+      
+      // The wallet should refresh its state when we access balance
+      const balance = await this.getBalance();
+      console.log("  Total balance after refresh:", balance);
+      
+      // Get mint balances to trigger calculation
+      const mintBalances = await this.getMintBalances();
+      console.log("  Mint balances after refresh:", mintBalances);
+    } catch (error) {
+      console.error("Failed to refresh wallet state:", error);
+    }
+  }
+
+  /**
+   * Get mints from the user's kind:10019 event
+   * These are the "authorized" mints according to NIP-61
+   */
+  private async getNutzapConfigMints(): Promise<string[]> {
+    try {
+      if (!this.userPubkey) return [];
+      
+      // Fetch the user's kind:10019 event
+      const filter = {
+        kinds: [10019],
+        authors: [this.userPubkey],
+        limit: 1
+      };
+      
+      const events = await this.ndk.fetchEvents(filter);
+      if (events.size === 0) return [];
+      
+      const nutzapConfig = Array.from(events)[0];
+      const mints: string[] = [];
+      
+      // Extract mint URLs from tags
+      nutzapConfig.tags.forEach(tag => {
+        if (tag[0] === 'mint' && tag[1]) {
+          mints.push(tag[1]);
+        }
+      });
+      
+      return mints;
+    } catch (error) {
+      console.error("Failed to fetch nutzap config mints:", error);
+      return [];
+    }
   }
 
   // Mint operations
@@ -572,8 +826,9 @@ export class CashuWalletService implements ICashuWalletService {
       // This is CRITICAL - the wallet needs to use userNdk, not this.ndk
       const wallet = new NDKCashuWallet(userNdk);
       
-      // Parse mints from wallet metadata events AND token events before starting
-      const detectedMints = new Set<string>();
+      // Parse mints from wallet metadata events ONLY - don't auto-add from tokens
+      const walletMints = new Set<string>();
+      const tokenMints = new Set<string>(); // Track mints from tokens separately
       let tokenCount = 0;
       
       for (const event of events) {
@@ -601,7 +856,8 @@ export class CashuWalletService implements ICashuWalletService {
           } catch (err) {
             console.warn('⚠️ Could not decrypt wallet metadata:', err);
           }
-          mintTags.forEach(tag => detectedMints.add(tag[1]));
+          // Only add mints from wallet metadata, not from tokens
+          mintTags.forEach(tag => walletMints.add(tag[1]));
         } else if (event.kind === 7375) {
           // Token event
           tokenCount++;
@@ -609,7 +865,7 @@ export class CashuWalletService implements ICashuWalletService {
           // First check for mint in tags
           const mintTag = event.tags.find(tag => tag[0] === "mint" && tag[1]);
           if (mintTag) {
-            detectedMints.add(mintTag[1]);
+            tokenMints.add(mintTag[1]); // Track token mints separately
           } else {
             // No mint tag, need to decrypt content to find mint
             try {
@@ -624,12 +880,12 @@ export class CashuWalletService implements ICashuWalletService {
               
               // Extract mint from token data
               if (tokenData.mint) {
-                detectedMints.add(tokenData.mint);
+                tokenMints.add(tokenData.mint); // Track token mints separately
               } else if (tokenData.token && Array.isArray(tokenData.token)) {
                 // Token format might be nested
                 tokenData.token.forEach((t: any) => {
                   if (t.mint) {
-                    detectedMints.add(t.mint);
+                    tokenMints.add(t.mint); // Track token mints separately
                   }
                 });
               }
@@ -642,19 +898,18 @@ export class CashuWalletService implements ICashuWalletService {
         }
       }
       
-      console.log(`Found ${tokenCount} token events across ${detectedMints.size} mints`);
+      console.log(`Found ${tokenCount} token events across ${tokenMints.size} mints`);
+      console.log(`Wallet metadata contains ${walletMints.size} mints`);
       
-      // Add common mints if we have tokens but missing mint info
-      if (tokenCount > 0 && detectedMints.size < tokenCount / 2) {
-        // Add common mints that might have untagged tokens
-        detectedMints.add('https://mint.minibits.cash');
-        detectedMints.add('https://mint.minibits.cash/Bitcoin');
-        detectedMints.add('https://mint.coinos.io');
-      }
-      
-      // Set all discovered mints before starting the wallet
-      if (detectedMints.size > 0) {
-        wallet.mints = Array.from(detectedMints);
+      // Only set mints from wallet metadata, NOT from tokens
+      // This respects the user's mint preferences
+      if (walletMints.size > 0) {
+        wallet.mints = Array.from(walletMints);
+        console.log('✅ Setting wallet mints from metadata:', wallet.mints);
+      } else if (tokenMints.size > 0) {
+        // If no wallet metadata but we have tokens, warn the user
+        console.warn('⚠️ No mints in wallet metadata but found tokens from:', Array.from(tokenMints));
+        // Don't auto-add mints - user needs to explicitly accept them
       }
       
       // The wallet will process the events when we call start()
@@ -676,16 +931,8 @@ export class CashuWalletService implements ICashuWalletService {
       });
       
       
-      // Update wallet metadata with all discovered mints
-      if (wallet.mints && wallet.mints.length > 0) {
-        // Only update if we discovered new mints
-        const originalMintCount = Array.from(events).filter(e => e.kind === 17375).length > 0 ? 
-          Array.from(events).find(e => e.kind === 17375)?.tags.filter(t => t[0] === "mint").length || 0 : 0;
-        
-        if (wallet.mints.length > originalMintCount) {
-          await this.createWalletMetadata(wallet.mints);
-        }
-      }
+      // Don't auto-update wallet metadata - respect user's mint choices
+      // Metadata should only be updated when user explicitly adds/removes mints
       
       return wallet;
     } catch (error) {
@@ -849,8 +1096,9 @@ export class CashuWalletService implements ICashuWalletService {
 
   /**
    * Publish kind 10019 event to enable nutzap receiving
+   * This should be called whenever mints are added/removed
    */
-  private async publishNutzapConfig(): Promise<void> {
+  async publishNutzapConfig(): Promise<void> {
     if (!this.walletP2PKPubkey) {
       console.warn('⚠️ Cannot publish nutzap config: no P2PK pubkey');
       return;
@@ -868,7 +1116,7 @@ export class CashuWalletService implements ICashuWalletService {
         relays.push('ws://localhost:8080');
       }
       
-      // Get mints from wallet
+      // Get mints from wallet - these become the "authorized" mints
       const mints = this.wallet?.mints || [];
       
       // Create kind 10019 event using NDKCashuMintList
@@ -1239,6 +1487,97 @@ export class CashuWalletService implements ICashuWalletService {
       }
     } catch (error) {
       console.error("Failed to load transaction history from NIP-60:", error);
+    }
+  }
+
+  /**
+   * Melt Cashu tokens to pay a Lightning invoice
+   * This converts ecash tokens back to Lightning
+   * @param invoice Lightning invoice to pay
+   * @returns Payment confirmation with preimage if successful
+   */
+  async meltToLightning(invoice: string): Promise<{ 
+    paid: boolean; 
+    preimage?: string; 
+    fee?: number;
+    error?: string;
+  }> {
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized');
+    }
+
+    try {
+      console.log('🔥 Melting tokens to Lightning invoice...');
+      
+      // NDKCashuWallet has built-in Lightning payment support via lnPay
+      // The wallet will handle melt quote creation and proof selection internally
+      const paymentResult = await this.wallet.lnPay({ pr: invoice });
+      
+      if (paymentResult && paymentResult.preimage) {
+        // Extract amount from invoice or use a default
+        const invoiceAmount = this.parseInvoiceAmount(invoice);
+        
+        // Add transaction record
+        this.addTransaction({
+          id: `melt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+          type: 'melt',
+          amount: invoiceAmount,
+          mint: this.wallet.mints[0],
+          timestamp: Date.now(),
+          status: 'completed',
+          description: `Lightning payment: ${invoice.substring(0, 20)}...`
+        });
+
+        // Update balance
+        await this.updateBalance();
+
+        return {
+          paid: true,
+          preimage: paymentResult.preimage,
+          fee: 0 // NDK doesn't expose fee in the response
+        };
+      }
+
+      return {
+        paid: false,
+        error: 'Payment failed - no preimage received'
+      };
+    } catch (error) {
+      console.error('❌ Melt to Lightning failed:', error);
+      return {
+        paid: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Parse amount from Lightning invoice
+   * Basic implementation - in production use a proper bolt11 decoder
+   */
+  private parseInvoiceAmount(invoice: string): number {
+    try {
+      // Lightning invoices have the amount encoded in them
+      // Format: lnbc<amount><multiplier>...
+      const match = invoice.match(/lnbc(\d+)([munp]?)/i);
+      if (!match) {
+        return 0;
+      }
+
+      const amount = parseInt(match[1]);
+      const multiplier = match[2] || '';
+
+      // Convert to sats based on multiplier
+      switch (multiplier) {
+        case 'm': return amount * 100000; // millisats to sats
+        case 'u': return amount * 100; // microsats to sats
+        case 'n': return amount / 10; // nanosats to sats
+        case 'p': return amount / 10000; // picosats to sats
+        default: return amount; // already in sats
+      }
+    } catch (error) {
+      console.error('Failed to parse invoice amount:', error);
+      return 0;
     }
   }
 
