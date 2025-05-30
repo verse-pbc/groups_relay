@@ -141,91 +141,52 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
 
       // Fetch existing nutzaps from public relays
       const profileNdk = (this.props.client as any).profileNdk
-      console.log('🔍 [NUTZAP] Fetching nutzaps with filter:', filter)
       const eventsSet = await profileNdk.fetchEvents(filter)
       const events = Array.from(eventsSet)
-      console.log(`🔍 [NUTZAP] Found ${events.length} nutzap events`)
       const nutzapTotals = new Map<string, number>()
 
       events.forEach((event: any) => {
-        console.log('🔍 [NUTZAP] Processing nutzap event:', event.id, 'tags:', JSON.stringify(event.tags))
-        
         // Find the event tag
         const eventTag = event.tags.find((tag: string[]) => tag[0] === 'e')
-        if (!eventTag) {
-          console.log('🔍 [NUTZAP] No event tag found')
-          return
-        }
+        if (!eventTag) return
 
         const eventId = eventTag[1]
         
         // Get the author of the target event
         const eventAuthor = eventAuthors.get(eventId)
-        if (!eventAuthor) {
-          console.log('🔍 [NUTZAP] Event author not found for:', eventId)
-          return
-        }
+        if (!eventAuthor) return
         
         // Get the authorized mints for this event's author
         const authorizedMints = authorMints.get(eventAuthor) || []
         
         // Skip if author has no 10019 config
-        if (authorizedMints.length === 0) {
-          console.log('🔍 [NUTZAP] Author has no authorized mints:', eventAuthor)
-          return
-        }
+        if (authorizedMints.length === 0) return
         
         // Find the amount tag
         const amountTag = event.tags.find((tag: string[]) => tag[0] === 'amount')
-        if (!amountTag) {
-          console.log('🔍 [NUTZAP] No amount tag found')
-          return
-        }
+        if (!amountTag) return
 
         const amount = parseInt(amountTag[1])
-        if (isNaN(amount)) {
-          console.log('🔍 [NUTZAP] Invalid amount:', amountTag[1])
-          return
-        }
+        if (isNaN(amount)) return
 
         // Find the mint tag - check 'u' tag as per NIP-61 
         const uTag = event.tags.find((tag: string[]) => tag[0] === 'u')
         const mint = uTag ? uTag[1] : null
-        
-        // Check if there's a proof tag to parse mint from
-        const proofTag = event.tags.find((tag: string[]) => tag[0] === 'proof')
-        if (proofTag && !mint) {
-          try {
-            const proof = JSON.parse(proofTag[1])
-            // Extract mint from proof if possible
-            console.log('🔍 [NUTZAP] Proof data:', proof)
-          } catch (e) {
-            console.log('🔍 [NUTZAP] Failed to parse proof:', e)
-          }
-        }
 
         // According to NIP-61, nutzaps MUST have a 'u' tag with the mint URL
-        // If it's missing, the nutzap is malformed
+        // If it's missing, the nutzap is from an old/non-compliant implementation
         if (!mint) {
-          console.log('🔍 [NUTZAP] WARNING: Nutzap missing required "u" tag - this is not NIP-61 compliant')
-          // For now, count it anyway if the recipient has authorized mints
+          // For backward compatibility, count it anyway if the recipient has authorized mints
           if (authorizedMints.length > 0) {
             const currentTotal = nutzapTotals.get(eventId) || 0
             nutzapTotals.set(eventId, currentTotal + amount)
-            console.log('🔍 [NUTZAP] Counting non-compliant nutzap:', amount, 'sats to event:', eventId, 'total:', currentTotal + amount)
           }
         } else if (authorizedMints.includes(mint)) {
           // Count nutzaps from authorized mints
           const currentTotal = nutzapTotals.get(eventId) || 0
           nutzapTotals.set(eventId, currentTotal + amount)
-          console.log('🔍 [NUTZAP] Added nutzap from authorized mint:', mint, amount, 'sats to event:', eventId, 'total:', currentTotal + amount)
-        } else {
-          console.log('🔍 [NUTZAP] Mint not authorized:', mint, 'authorized:', authorizedMints)
         }
       })
-
-      console.log('🔍 [NUTZAP] Final nutzap totals:', Array.from(nutzapTotals.entries()))
-      console.log('🔍 [NUTZAP] Author 10019 status:', Array.from(authorHas10019.entries()))
       
       this.setState({ 
         eventNutzaps: nutzapTotals,

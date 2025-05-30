@@ -492,13 +492,10 @@ export class CashuWalletService implements ICashuWalletService {
       // Set the cashuPay callback to use our wallet
       zapper.cashuPay = async (payment: any) => {
         try {
-          console.log('🔍 [NUTZAP] CashuPay called with payment:', payment);
           const result = await this.wallet!.cashuPay({
             ...payment,
             mints: mint ? [mint] : undefined
           });
-          
-          console.log('🔍 [NUTZAP] CashuPay result:', result);
           
           // Validate the result - NDK returns null on failure
           if (!result || !result.proofs || result.proofs.length === 0) {
@@ -515,7 +512,7 @@ export class CashuWalletService implements ICashuWalletService {
       // Execute the zap
       const zapResult = await zapper.zap();
       
-      console.log('🔍 [NUTZAP] Profile zap result:', zapResult);
+      console.log('Profile zap result:', zapResult);
       
       if (!zapResult || zapResult.size === 0) {
         throw new Error('Failed to send nutzap: zapper returned no result');
@@ -591,13 +588,10 @@ export class CashuWalletService implements ICashuWalletService {
       // Set the cashuPay callback to use our wallet
       zapper.cashuPay = async (payment: any) => {
         try {
-          console.log('🔍 [NUTZAP EVENT] CashuPay called with payment:', payment);
           const result = await this.wallet!.cashuPay({
             ...payment,
             mints: mint ? [mint] : undefined
           });
-          
-          console.log('🔍 [NUTZAP EVENT] CashuPay result:', result);
           
           // Validate the result - NDK returns null on failure
           if (!result || !result.proofs || result.proofs.length === 0) {
