@@ -105,29 +105,22 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       // Get unique authors to fetch their 10019 events
       const uniqueAuthors = [...new Set(eventAuthors.values())]
       
-      // Fetch 10019 events for all content authors
+      // Fetch 10019 events for all content authors using gossip model
       const authorMints = new Map<string, string[]>()
       const authorHas10019 = new Map<string, boolean>()
       const authorCashuPubkeys = new Map<string, string>() // Map author pubkey -> cashu P2PK pubkey
       
       if (uniqueAuthors.length > 0) {
-        const authorFilter = {
-          kinds: [10019],
-          authors: uniqueAuthors,
-          limit: uniqueAuthors.length
-        }
-        
-        // Use profileNdk to fetch 10019 events from public relays
-        const profileNdk = (this.props.client as any).profileNdk
-        const author10019EventsSet = await profileNdk.fetchEvents(authorFilter)
-        const author10019Events = Array.from(author10019EventsSet)
+        // Use gossip model to fetch from users' write relays
+        const author10019Map = await this.props.client.fetchMultipleUsers10019(uniqueAuthors)
         
         // Initialize all authors as not having 10019
         uniqueAuthors.forEach(author => {
           authorHas10019.set(author, false)
         })
         
-        author10019Events.forEach((event: any) => {
+        // Process fetched events
+        author10019Map.forEach((event: any, pubkey: string) => {
           const mints: string[] = []
           let cashuPubkey: string | null = null
           
@@ -143,9 +136,9 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
           })
           
           if (mints.length > 0 && cashuPubkey) {
-            authorMints.set(event.pubkey, mints)
-            authorHas10019.set(event.pubkey, true)
-            authorCashuPubkeys.set(event.pubkey, cashuPubkey)
+            authorMints.set(pubkey, mints)
+            authorHas10019.set(pubkey, true)
+            authorCashuPubkeys.set(pubkey, cashuPubkey)
           }
         })
       }
@@ -410,8 +403,16 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       this.props.showMessage('Nutzap sent to event successfully!', 'success')
       if (this.props.onNutzapSent) this.props.onNutzapSent()
     } catch (error) {
+      let errorMessage = 'Failed to send nutzap';
+      if (error instanceof Error) {
+        if (error.message.includes('No zap method available') || error.message.includes('NIP-61 fallback is disabled')) {
+          errorMessage = 'This user cannot receive nutzaps. They need to set up their nutzap wallet first.';
+        } else {
+          errorMessage = error.message;
+        }
+      }
       this.setState({ 
-        nutzapError: error instanceof Error ? error.message : 'Failed to send nutzap' 
+        nutzapError: errorMessage
       })
     } finally {
       this.setState({ nutzapLoading: false })

@@ -1,4 +1,4 @@
-import { Component, createElement } from 'preact'
+import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
 import { ContentSection } from './ContentSection'
@@ -72,16 +72,7 @@ export class GroupContent extends Component<GroupContentProps, GroupContentState
       )
     };
 
-    const sections = [
-      // Keep section definitions for mapping, but GroupTabs will use the group prop
-      { id: 'content', label: 'Content', component: ContentSection },
-      { id: 'members', label: 'Members', component: MembersSection },
-      { id: 'invites', label: 'Invites', component: InviteSection },
-      { id: 'requests', label: 'Requests', component: JoinRequestSection },
-      { id: 'info', label: 'Info', component: InfoSection }
-    ] as const; // Use const assertion for type safety
-
-    const ActiveSection = sections.find(s => s.id === activeTab)?.component
+    // Remove unused sections array and ActiveSection variable
 
     return (
       <div class="flex flex-col p-4 lg:p-6">
@@ -93,25 +84,48 @@ export class GroupContent extends Component<GroupContentProps, GroupContentState
           isAdmin={isAdmin}
         />
         <div class="mt-4">
-          {/* Conditionally pass isAdmin only if the component is NOT ContentSection */}
-          {ActiveSection && activeTab === 'content' && (
+          {/* Keep all components mounted but use CSS to show/hide them */}
+          <div style={{ display: activeTab === 'content' ? 'block' : 'none' }}>
             <ContentSection
               group={group}
               client={client}
               showMessage={showMessage}
             />
+          </div>
+          <div style={{ display: activeTab === 'members' ? 'block' : 'none' }}>
+            <MembersSection
+              group={group}
+              client={client}
+              showMessage={showMessage}
+              isAdmin={isAdmin}
+            />
+          </div>
+          {isAdmin && (
+            <>
+              <div style={{ display: activeTab === 'invites' ? 'block' : 'none' }}>
+                <InviteSection
+                  group={group}
+                  client={client}
+                  showMessage={showMessage}
+                  updateGroupsMap={updateGroupsMap}
+                  onInviteDelete={this.handleInviteDelete}
+                />
+              </div>
+              <div style={{ display: activeTab === 'requests' ? 'block' : 'none' }}>
+                <JoinRequestSection
+                  group={group}
+                  client={client}
+                  showMessage={showMessage}
+                />
+              </div>
+            </>
           )}
-          {ActiveSection && activeTab !== 'content' && (
-            createElement(ActiveSection as any, {
-              group: group, // Pass original group or filtered one as needed by section
-              client: client,
-              showMessage: showMessage,
-              updateGroupsMap: updateGroupsMap,
-              isAdmin: isAdmin, // Pass isAdmin to other sections
-              // Pass onInviteDelete specifically to InviteSection if needed
-              ...(activeTab === 'invites' && { onInviteDelete: this.handleInviteDelete })
-            })
-          )}
+          <div style={{ display: activeTab === 'info' ? 'block' : 'none' }}>
+            <InfoSection
+              group={group}
+              showMessage={showMessage}
+            />
+          </div>
         </div>
       </div>
     )

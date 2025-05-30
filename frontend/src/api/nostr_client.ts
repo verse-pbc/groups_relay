@@ -54,6 +54,8 @@ export class NostrClient {
   private profileNdk: NDK;
   readonly config: NostrClientConfig;
   private profileCache: Map<string, any> = new Map();
+  private user10019Cache: Map<string, any> = new Map();
+  private user10019FetchPromises: Map<string, Promise<any>> = new Map(); // Prevent duplicate fetches
   private walletService: ICashuWalletService | null = null;
   private storageInitialized = false;
 
@@ -599,6 +601,161 @@ export class NostrClient {
       const fallbackRelays = ["wss://relay.damus.io", "wss://relay.nos.social"];
       return fallbackRelays;
     }
+  }
+
+  // Fetch user's kind:10019 event from their write relays (gossip model)
+  async fetchUser10019(pubkey: string): Promise<any> {
+    try {
+      // Check cache first
+      if (this.user10019Cache.has(pubkey)) {
+        return this.user10019Cache.get(pubkey);
+      }
+
+      // Check if we're already fetching this user's 10019
+      if (this.user10019FetchPromises.has(pubkey)) {
+        return await this.user10019FetchPromises.get(pubkey);
+      }
+
+      // Create a promise for this fetch to prevent duplicate requests
+      const fetchPromise = (async () => {
+        try {
+          // First get user's relay list to know where to look
+          const userRelays = await this.getUserRelays(pubkey);
+          
+          // Create a temporary NDK instance with user's relays
+          const userNdk = new NDK({
+            explicitRelayUrls: userRelays,
+            signer: this.ndk.signer
+          });
+          
+          // Connect with timeout
+          const connectPromise = userNdk.connect();
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Connection timeout")), 3000)
+          );
+          
+          try {
+            await Promise.race([connectPromise, timeoutPromise]);
+          } catch (err) {
+            // Continue anyway - some relays might be connected
+          }
+
+          // Fetch kind:10019 event
+          const filter = {
+            kinds: [10019],
+            authors: [pubkey],
+            limit: 1
+          };
+
+          // Fetch from user's relays
+          const events = await userNdk.fetchEvents(filter);
+          
+          let result = null;
+          if (events.size > 0) {
+            result = Array.from(events)[0];
+          }
+
+          // Cache the result (even if null, to avoid repeated lookups)
+          this.user10019Cache.set(pubkey, result);
+          
+          return result;
+        } finally {
+          // Clean up the fetch promise
+          this.user10019FetchPromises.delete(pubkey);
+        }
+      })();
+
+      // Store the promise to prevent duplicate fetches
+      this.user10019FetchPromises.set(pubkey, fetchPromise);
+      
+      return await fetchPromise;
+    } catch (error) {
+      console.error("Failed to fetch user 10019:", error);
+      // Still cache the failure to avoid repeated attempts
+      this.user10019Cache.set(pubkey, null);
+      return null;
+    }
+  }
+
+  // Fetch multiple users' kind:10019 events efficiently using gossip model
+  async fetchMultipleUsers10019(pubkeys: string[]): Promise<Map<string, any>> {
+    const result = new Map<string, any>();
+    const pubkeysToFetch: string[] = [];
+    
+    // Check cache first and collect pubkeys that need fetching
+    for (const pubkey of pubkeys) {
+      if (this.user10019Cache.has(pubkey)) {
+        const cached = this.user10019Cache.get(pubkey);
+        if (cached !== null) {
+          result.set(pubkey, cached);
+        }
+      } else {
+        pubkeysToFetch.push(pubkey);
+      }
+    }
+    
+    // If all were cached, return early
+    if (pubkeysToFetch.length === 0) {
+      return result;
+    }
+    
+    try {
+      // First collect all unique relays from all users
+      const allRelays = new Set<string>();
+      const userRelayMap = new Map<string, string[]>();
+      
+      // Fetch relay lists for all users in parallel
+      await Promise.all(pubkeysToFetch.map(async (pubkey) => {
+        const relays = await this.getUserRelays(pubkey);
+        userRelayMap.set(pubkey, relays);
+        relays.forEach(relay => allRelays.add(relay));
+      }));
+      
+      // Create a temporary NDK instance with all discovered relays
+      const gossipNdk = new NDK({
+        explicitRelayUrls: Array.from(allRelays),
+        signer: this.ndk.signer
+      });
+      
+      // Connect with timeout
+      const connectPromise = gossipNdk.connect();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Connection timeout")), 5000)
+      );
+      
+      try {
+        await Promise.race([connectPromise, timeoutPromise]);
+      } catch (err) {
+        // Continue anyway - some relays might be connected
+      }
+
+      // Fetch all kind:10019 events in one query
+      const filter = {
+        kinds: [10019],
+        authors: pubkeysToFetch,
+        limit: pubkeysToFetch.length
+      };
+
+      const events = await gossipNdk.fetchEvents(filter);
+      
+      // Map events back to authors and cache them
+      events.forEach(event => {
+        result.set(event.pubkey, event);
+        this.user10019Cache.set(event.pubkey, event);
+      });
+      
+      // Cache the pubkeys that didn't have events as null
+      pubkeysToFetch.forEach(pubkey => {
+        if (!result.has(pubkey)) {
+          this.user10019Cache.set(pubkey, null);
+        }
+      });
+      
+    } catch (error) {
+      console.error("Failed to fetch multiple users' 10019 events:", error);
+    }
+    
+    return result;
   }
 
   async connect() {

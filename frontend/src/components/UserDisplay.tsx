@@ -116,22 +116,10 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       // Convert npub to hex if needed
       const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
 
-      // Use profile NDK instance which connects to public relays where 10019 events are published
-      const profileNdk = (client as any).profileNdk
+      // Use gossip model to fetch from user's write relays
+      const event10019 = await client.fetchUser10019(hexPubkey)
+      const has10019 = event10019 !== null
       
-      // Fetch kind:10019 event for the target user
-      const filter = {
-        kinds: [10019],
-        authors: [hexPubkey],
-        limit: 1
-      }
-
-      // Use profile NDK to fetch from public relays
-      const events = await profileNdk.fetchEvents(filter)
-      const has10019 = events.size > 0
-      
-      console.log(`10019 check for ${hexPubkey}: found=${has10019}, events.size=${events.size}`)
-
       this.setState({ targetUserHas10019: has10019 })
     } catch (error) {
       console.error('Failed to check target user 10019:', error)
