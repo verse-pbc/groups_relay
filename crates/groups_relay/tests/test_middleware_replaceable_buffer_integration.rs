@@ -29,9 +29,10 @@ async fn test_rapid_metadata_edits_through_subscription_manager() {
 
     // Create a subscription manager
     let (tx, _rx) = mpsc::channel(10);
-    let subscription_manager = SubscriptionManager::new(database.clone(), MessageSender::new(tx, 0))
-        .await
-        .unwrap();
+    let subscription_manager =
+        SubscriptionManager::new(database.clone(), MessageSender::new(tx, 0))
+            .await
+            .unwrap();
 
     // Load groups
     let groups = Arc::new(
@@ -63,7 +64,10 @@ async fn test_rapid_metadata_edits_through_subscription_manager() {
 
     // Send create commands through subscription manager to establish the group
     for command in create_commands {
-        subscription_manager.save_and_broadcast(command).await.unwrap();
+        subscription_manager
+            .save_and_broadcast(command)
+            .await
+            .unwrap();
     }
 
     // Now simulate rapid metadata edits
@@ -102,10 +106,16 @@ async fn test_rapid_metadata_edits_through_subscription_manager() {
     // Send both sets of commands through subscription manager rapidly
     // This should trigger the buffer for the 39000 events
     for command in edit1_commands {
-        subscription_manager.save_and_broadcast(command).await.unwrap();
+        subscription_manager
+            .save_and_broadcast(command)
+            .await
+            .unwrap();
     }
     for command in edit2_commands {
-        subscription_manager.save_and_broadcast(command).await.unwrap();
+        subscription_manager
+            .save_and_broadcast(command)
+            .await
+            .unwrap();
     }
 
     // Wait less than buffer flush time
@@ -161,7 +171,7 @@ async fn test_rapid_metadata_edits_through_subscription_manager() {
     );
 
     let final_event = &metadata_events_after_flush.into_iter().next().unwrap();
-    
+
     // Verify it has the final name
     let name_tag = final_event
         .tags
@@ -169,7 +179,7 @@ async fn test_rapid_metadata_edits_through_subscription_manager() {
         .find(|t| t.kind() == TagKind::Name)
         .and_then(|t| t.content())
         .unwrap();
-    
+
     assert_eq!(
         name_tag, "Final Edit Name",
         "Should have the final edited name, not the intermediate one"
@@ -184,10 +194,7 @@ async fn test_rapid_metadata_edits_through_subscription_manager() {
         }
     });
 
-    assert!(
-        has_final_about,
-        "Should have the final about text"
-    );
+    assert!(has_final_about, "Should have the final about text");
 }
 
 #[tokio::test]
@@ -248,6 +255,6 @@ async fn test_direct_database_save_bypasses_buffer() {
         "Direct save resulted in {} events in database",
         events.len()
     );
-    
+
     // This test demonstrates why we need to use save_and_broadcast instead of save_store_command
 }

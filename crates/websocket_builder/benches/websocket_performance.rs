@@ -5,8 +5,7 @@ use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use websocket_builder::{
-    InboundContext, MessageConverter, Middleware, SendMessage, StateFactory, 
-    WebSocketBuilder,
+    InboundContext, MessageConverter, Middleware, SendMessage, StateFactory, WebSocketBuilder,
 };
 
 // Mock types for benchmarking
@@ -75,18 +74,18 @@ impl Middleware for HeavyMiddleware {
             // Simulate CPU-intensive work
             let start = Instant::now();
             tokio::time::sleep(self.work_duration).await;
-            
+
             ctx.state.message_count += 1;
             ctx.state.processing_time_sum += start.elapsed();
             ctx.state.last_message_time = Some(Instant::now());
-            
+
             // Try to send response message
             let response = MockMessage {
                 id: msg.id + 1000,
                 payload: format!("Response to {}", msg.id),
                 timestamp: Instant::now(),
             };
-            
+
             match ctx.send_message(response) {
                 Ok(_) => {
                     self.response_count.fetch_add(1, Ordering::Relaxed);
@@ -96,7 +95,7 @@ impl Middleware for HeavyMiddleware {
                 }
             }
         }
-        
+
         ctx.next().await
     }
 }
@@ -137,7 +136,12 @@ impl Middleware for LatencyMeasureMiddleware {
 
     async fn process_outbound(
         &self,
-        ctx: &mut websocket_builder::OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
+        ctx: &mut websocket_builder::OutboundContext<
+            '_,
+            Self::State,
+            Self::IncomingMessage,
+            Self::OutgoingMessage,
+        >,
     ) -> Result<(), anyhow::Error> {
         if let Some(ref msg) = ctx.message {
             let latency = msg.timestamp.elapsed();
@@ -149,15 +153,15 @@ impl Middleware for LatencyMeasureMiddleware {
 
 fn benchmark_head_of_line_blocking(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     let mut group = c.benchmark_group("head_of_line_blocking");
     group.measurement_time(Duration::from_secs(5));
     group.sample_size(10);
-    
+
     // Test different processing delays
     for delay_ms in [0, 1, 5, 10, 50].iter() {
         let delay = Duration::from_millis(*delay_ms);
-        
+
         group.bench_with_input(
             BenchmarkId::new("processing_delay_ms", delay_ms),
             &delay,
@@ -165,7 +169,7 @@ fn benchmark_head_of_line_blocking(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| async move {
                     let response_count = Arc::new(AtomicU64::new(0));
                     let latencies = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-                    
+
                     // Create handler with heavy middleware
                     let _handler = WebSocketBuilder::new(MockStateFactory, MockConverter)
                         .with_middleware(LatencyMeasureMiddleware {
@@ -177,27 +181,27 @@ fn benchmark_head_of_line_blocking(c: &mut Criterion) {
                         })
                         .with_channel_size(100)
                         .build();
-                    
+
                     // Simulate message processing
                     // In real benchmark, we'd use actual WebSocket connections
                     let messages_sent = 50;
                     let responses = response_count.load(Ordering::Relaxed);
-                    
+
                     black_box((messages_sent, responses))
                 })
             },
         );
     }
-    
+
     group.finish();
 }
 
 fn benchmark_outbound_latency(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     let mut group = c.benchmark_group("outbound_message_latency");
     group.measurement_time(Duration::from_secs(3));
-    
+
     // Test outbound latency under different load conditions
     for inbound_rate in [0, 10, 100, 1000].iter() {
         group.bench_with_input(
@@ -206,7 +210,7 @@ fn benchmark_outbound_latency(c: &mut Criterion) {
             |b, &rate| {
                 b.to_async(&rt).iter(|| async move {
                     let latencies = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-                    
+
                     // Create handler
                     let _handler = WebSocketBuilder::new(MockStateFactory, MockConverter)
                         .with_middleware(LatencyMeasureMiddleware {
@@ -217,7 +221,7 @@ fn benchmark_outbound_latency(c: &mut Criterion) {
                         })
                         .with_channel_size(50)
                         .build();
-                    
+
                     // Simulate load and measure latencies
                     // In real benchmark, we'd generate actual traffic
                     let avg_latency = if rate > 0 {
@@ -225,63 +229,59 @@ fn benchmark_outbound_latency(c: &mut Criterion) {
                     } else {
                         Duration::from_micros(10)
                     };
-                    
+
                     black_box(avg_latency)
                 })
             },
         );
     }
-    
+
     group.finish();
 }
 
 fn benchmark_backpressure_handling(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     let mut group = c.benchmark_group("backpressure");
     group.measurement_time(Duration::from_secs(3));
-    
+
     // Test different channel sizes
     for size in [10, 50, 100, 500].iter() {
-        group.bench_with_input(
-            BenchmarkId::new("channel_size", size),
-            size,
-            |b, &size| {
-                b.to_async(&rt).iter(|| async move {
-                    let _backpressure_events = Arc::new(AtomicU64::new(0));
-                    
-                    // Create handler with specific channel size
-                    let _handler = WebSocketBuilder::new(MockStateFactory, MockConverter)
-                        .with_middleware(LightMiddleware {
-                            processed_count: Arc::new(AtomicU64::new(0)),
-                        })
-                        .with_channel_size(size)
-                        .build();
-                    
-                    // Simulate burst traffic to trigger backpressure
-                    // In real benchmark, we'd send actual messages
-                    let expected_backpressure = if size < 100 {
-                        5 // Small buffers hit backpressure quickly
-                    } else {
-                        0 // Large buffers rarely hit backpressure
-                    };
-                    
-                    black_box(expected_backpressure)
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("channel_size", size), size, |b, &size| {
+            b.to_async(&rt).iter(|| async move {
+                let _backpressure_events = Arc::new(AtomicU64::new(0));
+
+                // Create handler with specific channel size
+                let _handler = WebSocketBuilder::new(MockStateFactory, MockConverter)
+                    .with_middleware(LightMiddleware {
+                        processed_count: Arc::new(AtomicU64::new(0)),
+                    })
+                    .with_channel_size(size)
+                    .build();
+
+                // Simulate burst traffic to trigger backpressure
+                // In real benchmark, we'd send actual messages
+                let expected_backpressure = if size < 100 {
+                    5 // Small buffers hit backpressure quickly
+                } else {
+                    0 // Large buffers rarely hit backpressure
+                };
+
+                black_box(expected_backpressure)
+            })
+        });
     }
-    
+
     group.finish();
 }
 
 fn benchmark_concurrent_connections(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     let mut group = c.benchmark_group("concurrent_connections");
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(5));
-    
+
     // Test scaling with multiple connections
     for conn_count in [10, 50, 100, 500].iter() {
         group.bench_with_input(
@@ -290,7 +290,7 @@ fn benchmark_concurrent_connections(c: &mut Criterion) {
             |b, &conn_count| {
                 b.to_async(&rt).iter(|| async move {
                     let total_messages = Arc::new(AtomicU64::new(0));
-                    
+
                     // Create multiple handlers to simulate concurrent connections
                     let handlers: Vec<_> = (0..conn_count)
                         .map(|_| {
@@ -302,26 +302,26 @@ fn benchmark_concurrent_connections(c: &mut Criterion) {
                                 .build()
                         })
                         .collect();
-                    
+
                     // Simulate processing
                     let _messages_per_connection = 100;
                     let total_processed = total_messages.load(Ordering::Relaxed);
-                    
+
                     black_box((handlers.len(), total_processed))
                 })
             },
         );
     }
-    
+
     group.finish();
 }
 
 // Additional benchmark for measuring middleware chain overhead
 fn benchmark_middleware_chain_overhead(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     let mut group = c.benchmark_group("middleware_chain_overhead");
-    
+
     // Test different middleware chain lengths
     for chain_length in [1, 5, 10, 20].iter() {
         group.bench_with_input(
@@ -330,22 +330,22 @@ fn benchmark_middleware_chain_overhead(c: &mut Criterion) {
             |b, &length| {
                 b.to_async(&rt).iter(|| async move {
                     let mut builder = WebSocketBuilder::new(MockStateFactory, MockConverter);
-                    
+
                     // Add multiple lightweight middleware
                     for _ in 0..length {
                         builder = builder.with_middleware(LightMiddleware {
                             processed_count: Arc::new(AtomicU64::new(0)),
                         });
                     }
-                    
+
                     let _handler = builder.with_channel_size(100).build();
-                    
+
                     black_box(_handler)
                 })
             },
         );
     }
-    
+
     group.finish();
 }
 

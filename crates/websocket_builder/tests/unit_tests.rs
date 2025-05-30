@@ -73,7 +73,7 @@ fn test_builder_creates_handler() {
         .with_max_connection_time(Duration::from_secs(60))
         .with_max_connections(1000)
         .build();
-    
+
     // Handler should be created successfully
     let _ = handler; // Just ensure it compiles
 }
@@ -82,7 +82,7 @@ fn test_builder_creates_handler() {
 fn test_middleware_order() {
     let middleware1 = Arc::new(AtomicU64::new(0));
     let middleware2 = Arc::new(AtomicU64::new(0));
-    
+
     let _handler = WebSocketBuilder::new(TestStateFactory, TestConverter)
         .with_middleware(CounterMiddleware {
             processed: middleware1.clone(),
@@ -91,7 +91,7 @@ fn test_middleware_order() {
             processed: middleware2.clone(),
         })
         .build();
-    
+
     // Middleware should be added in order
     // Actual execution test would require WebSocket
 }
@@ -99,13 +99,13 @@ fn test_middleware_order() {
 #[test]
 fn test_actor_builder() {
     use websocket_builder::ActorWebSocketBuilder;
-    
+
     let _handler = ActorWebSocketBuilder::new(TestStateFactory, TestConverter)
         .with_middleware(CounterMiddleware {
             processed: Arc::new(AtomicU64::new(0)),
         })
         .with_channel_size(50)
         .build();
-    
+
     // Actor-based handler should be created successfully
 }

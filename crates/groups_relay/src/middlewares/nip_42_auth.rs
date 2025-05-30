@@ -21,9 +21,12 @@ pub struct Nip42Middleware {
 
 impl Nip42Middleware {
     pub fn new(auth_url: String, base_domain_parts: usize) -> Self {
-        Self { auth_url, base_domain_parts }
+        Self {
+            auth_url,
+            base_domain_parts,
+        }
     }
-    
+
     // Extract the host from a URL
     fn extract_host_from_url(&self, url_str: &str) -> Option<String> {
         match Url::parse(url_str) {
@@ -31,45 +34,47 @@ impl Nip42Middleware {
             Err(_) => None,
         }
     }
-    
+
     // Check if the auth event's relay URL is valid for the current connection
     fn validate_relay_url(&self, client_relay_url: &str, connection_scope: &Scope) -> bool {
         debug!(target: "auth", "Validating relay URL - client: {}, auth: {}, connection_scope: {:?}", 
               client_relay_url, self.auth_url, connection_scope);
-        
+
         // For localhost or IP addresses, require exact match
-        if client_relay_url.contains("localhost") || 
-           client_relay_url.contains("127.0.0.1") || 
-           self.auth_url.contains("localhost") || 
-           self.auth_url.contains("127.0.0.1") {
-            let exact_match = client_relay_url.trim_end_matches('/') == self.auth_url.trim_end_matches('/');
+        if client_relay_url.contains("localhost")
+            || client_relay_url.contains("127.0.0.1")
+            || self.auth_url.contains("localhost")
+            || self.auth_url.contains("127.0.0.1")
+        {
+            let exact_match =
+                client_relay_url.trim_end_matches('/') == self.auth_url.trim_end_matches('/');
             debug!(target: "auth", "Localhost/IP match result: {}", exact_match);
             return exact_match;
         }
-        
+
         // Extract hosts from URLs
         let client_host = match self.extract_host_from_url(client_relay_url) {
             Some(host) => host,
             None => {
                 debug!(target: "auth", "Failed to extract host from client URL: {}", client_relay_url);
                 return false;
-            },
+            }
         };
-        
+
         let auth_host = match self.extract_host_from_url(&self.auth_url) {
             Some(host) => host,
             None => {
                 debug!(target: "auth", "Failed to extract host from auth URL: {}", self.auth_url);
                 return false;
-            },
+            }
         };
-        
+
         debug!(target: "auth", "Extracted hosts - client: {}, auth: {}", client_host, auth_host);
-        
+
         // Extract parts from hosts
         let client_parts: Vec<&str> = client_host.split('.').collect();
         let auth_parts: Vec<&str> = auth_host.split('.').collect();
-        
+
         // Extract base domains based on the number of parts configured for base_domain_parts
         // If there aren't enough parts, use the whole host
         let client_base_start = if client_parts.len() > self.base_domain_parts {
@@ -77,32 +82,36 @@ impl Nip42Middleware {
         } else {
             0
         };
-        
+
         let auth_base_start = if auth_parts.len() > self.base_domain_parts {
             auth_parts.len() - self.base_domain_parts
         } else {
             0
         };
-        
+
         let client_base = client_parts[client_base_start..].join(".");
         let auth_base = auth_parts[auth_base_start..].join(".");
-        
+
         debug!(target: "auth", "Base domains - client: {}, auth: {}", client_base, auth_base);
-        
+
         // Base domains must match
         if client_base != auth_base {
             debug!(target: "auth", "Base domain mismatch");
             return false;
         }
-        
+
         // If we have a specific subdomain from the connection, ensure it matches
-        if let Scope::Named { name: conn_subdomain, .. } = connection_scope {
+        if let Scope::Named {
+            name: conn_subdomain,
+            ..
+        } = connection_scope
+        {
             // Extract subdomain from client's relay URL using the same extraction logic used elsewhere
             let client_subdomain = extract_subdomain(&client_host, self.base_domain_parts);
-            
+
             debug!(target: "auth", "Comparing subdomains - connection: {}, client: {:?}", 
                    conn_subdomain, client_subdomain);
-            
+
             // Check subdomain match
             let matches = match client_subdomain {
                 // If client URL has a subdomain, it must match the connection subdomain
@@ -110,11 +119,13 @@ impl Nip42Middleware {
                 // If client URL has no subdomain, connection should also have no subdomain (which would be Scope::Default, not here)
                 None => false,
             };
-            
+
             debug!(target: "auth", "Subdomain match result: {}", matches);
-            
+
             matches
-        } else /* if let Scope::Default = connection_scope, which is the only other case */ {
+        } else
+        /* if let Scope::Default = connection_scope, which is the only other case */
+        {
             // If no specific subdomain in connection (Scope::Default), ensure client URL has no subdomain
             let client_subdomain = extract_subdomain(&client_host, self.base_domain_parts);
             let matches = client_subdomain.is_none();
@@ -245,10 +256,10 @@ impl Middleware for Nip42Middleware {
                 match found_relay_in_tag {
                     Some(tag_relay_url) => {
                         let client_relay_url = tag_relay_url.as_str_without_trailing_slash();
-                        
+
                         // Get the connection's subdomain for validation
                         let connection_scope = ctx.state.subdomain();
-                        
+
                         // Validate the relay URL against the current connection
                         if !self.validate_relay_url(client_relay_url, connection_scope) {
                             let conn_id_err = ctx.connection_id.clone();
@@ -256,13 +267,13 @@ impl Middleware for Nip42Middleware {
                                 Scope::Named { name, .. } => format!(" with subdomain '{}'", name),
                                 Scope::Default => String::new(),
                             };
-                                
+
                             error!(
                                 target: "auth",
                                 "[{}] Relay URL mismatch for AUTH. Expected domain matching '{}'{}. Got '{}'. Event ID: {}.",
                                 conn_id_err, self.auth_url, subdomain_msg, client_relay_url, auth_event_id
                             );
-                            
+
                             ctx.send_message(RelayMessage::ok(
                                 auth_event_id,
                                 false,
@@ -613,25 +624,28 @@ mod tests {
         assert!(middleware.on_connect(&mut ctx).await.is_ok());
         assert!(state.challenge.is_some());
     }
-    
+
     #[tokio::test]
     async fn test_subdomain_auth_matching_subdomain() {
         let keys = Keys::generate();
         // Use WebSocket URL format as required by RelayUrl
         let auth_url = "wss://example.com".to_string();
         let middleware = Nip42Middleware::new(auth_url.clone(), 2);
-        
+
         let mut state = create_test_state(None);
         let challenge = "test_challenge".to_string();
         state.challenge = Some(challenge.clone());
         state.subdomain = Scope::named("test").unwrap(); // Connection is for test.example.com
-        
+
         // Debug connection state before creating context
         let subdomain_str = match &state.subdomain {
             Scope::Named { name, .. } => name.clone(),
             Scope::Default => "Default".to_string(),
         };
-        println!("Test setup - subdomain: {}, auth_url: {}", subdomain_str, auth_url);
+        println!(
+            "Test setup - subdomain: {}, auth_url: {}",
+            subdomain_str, auth_url
+        );
 
         // Auth event with correct subdomain (test.example.com)
         let auth_event = EventBuilder::new(Kind::Authentication, "")
@@ -643,12 +657,14 @@ mod tests {
         let auth_event = keys.sign_event(auth_event).await.unwrap();
 
         // Debug auth event
-        let client_url = auth_event.tags.iter().find_map(|tag| {
-            match tag.as_standardized() {
+        let client_url = auth_event
+            .tags
+            .iter()
+            .find_map(|tag| match tag.as_standardized() {
                 Some(TagStandard::Relay(r)) => Some(r.as_str_without_trailing_slash()),
                 _ => None,
-            }
-        }).unwrap_or("No relay URL found");
+            })
+            .unwrap_or("No relay URL found");
         println!("Auth event relay URL: {}", client_url);
 
         let mut ctx = InboundContext::<
@@ -675,7 +691,7 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(state.authed_pubkey, Some(keys.public_key()));
     }
-    
+
     #[tokio::test]
     async fn test_subdomain_auth_wrong_subdomain() {
         let keys = Keys::generate();
@@ -686,7 +702,10 @@ mod tests {
         state.challenge = Some(challenge.clone());
         state.subdomain = Scope::named("test").unwrap(); // Connection is for test.example.com
 
-        println!("Wrong subdomain test - connection subdomain: test, auth_url: {}", auth_url);
+        println!(
+            "Wrong subdomain test - connection subdomain: test, auth_url: {}",
+            auth_url
+        );
 
         // Auth event with WRONG subdomain (wrong.example.com)
         let auth_event = EventBuilder::new(Kind::Authentication, "")
@@ -714,7 +733,7 @@ mod tests {
         assert!(middleware.process_inbound(&mut ctx).await.is_err());
         assert_eq!(state.authed_pubkey, None);
     }
-    
+
     #[tokio::test]
     async fn test_subdomain_auth_different_base_domain() {
         let keys = Keys::generate();
@@ -725,7 +744,10 @@ mod tests {
         state.challenge = Some(challenge.clone());
         state.subdomain = Scope::named("test").unwrap(); // Connection is for test.example.com
 
-        println!("Different base domain test - connection subdomain: test, auth_url: {}", auth_url);
+        println!(
+            "Different base domain test - connection subdomain: test, auth_url: {}",
+            auth_url
+        );
 
         // Auth event with wrong base domain (test.different.com)
         let auth_event = EventBuilder::new(Kind::Authentication, "")

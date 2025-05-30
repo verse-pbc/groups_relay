@@ -6,6 +6,7 @@ mod nip_29_middleware;
 mod nip_40_expiration;
 mod nip_42_auth;
 mod nip_70_protected_events;
+mod subscription_handler;
 mod validation_middleware;
 
 pub use error_handling_middleware::ErrorHandlingMiddleware;

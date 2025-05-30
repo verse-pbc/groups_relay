@@ -33,12 +33,11 @@ impl Middleware for Nip70Middleware {
         };
 
         if auth_pubkey != event.pubkey {
-            return ctx
-                .send_message(RelayMessage::ok(
-                    event.id,
-                    false,
-                    "rejected: this event may only be published by its author",
-                ));
+            return ctx.send_message(RelayMessage::ok(
+                event.id,
+                false,
+                "rejected: this event may only be published by its author",
+            ));
         }
 
         ctx.next().await

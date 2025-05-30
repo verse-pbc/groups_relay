@@ -253,10 +253,10 @@ pub async fn handle_metrics(State(state): State<Arc<ServerState>>) -> impl IntoR
 
 pub async fn handle_subdomains(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     debug!("Handling subdomains request");
-    
+
     // Get all scopes from the groups
     let scopes = state.http_state.groups.get_all_scopes();
-    
+
     // Convert scopes to subdomain strings
     let mut subdomains = Vec::new();
     for scope in scopes {
@@ -270,18 +270,18 @@ pub async fn handle_subdomains(State(state): State<Arc<ServerState>>) -> impl In
             }
         }
     }
-    
+
     // Sort subdomains alphabetically
     subdomains.sort();
-    
+
     debug!("Found {} subdomains: {:?}", subdomains.len(), subdomains);
-    
+
     Json(SubdomainResponse { subdomains })
 }
 
 pub async fn handle_config(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     debug!("Handling config request");
-    
+
     Json(ConfigResponse {
         base_domain_parts: state.base_domain_parts,
     })

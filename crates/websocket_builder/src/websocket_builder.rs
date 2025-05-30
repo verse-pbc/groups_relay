@@ -137,10 +137,10 @@ pub trait StateFactory<State> {
 ///
 /// #[derive(Debug)]
 /// struct MyState;
-/// 
+///
 /// #[derive(Clone)]
 /// struct MyStateFactory;
-/// 
+///
 /// impl StateFactory<MyState> for MyStateFactory {
 ///     fn create_state(&self, _token: CancellationToken) -> MyState {
 ///         MyState
@@ -149,7 +149,7 @@ pub trait StateFactory<State> {
 ///
 /// #[derive(Clone)]
 /// struct JsonConverter;
-/// 
+///
 /// impl MessageConverter<String, String> for JsonConverter {
 ///     fn inbound_from_string(&self, msg: String) -> Result<Option<String>> {
 ///         Ok(Some(msg))
@@ -161,7 +161,7 @@ pub trait StateFactory<State> {
 ///
 /// #[derive(Debug)]
 /// struct LoggerMiddleware;
-/// 
+///
 /// #[async_trait]
 /// impl Middleware for LoggerMiddleware {
 ///     type State = MyState;

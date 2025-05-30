@@ -98,7 +98,10 @@ impl Nip29Middleware {
         // These groups can later be converted to managed groups by the relay admin
         if event.tags.find(TagKind::h()).is_some()
             && !Group::is_group_management_kind(event.kind)
-            && self.groups.find_group_from_event(&event, &subdomain).is_none()
+            && self
+                .groups
+                .find_group_from_event(&event, &subdomain)
+                .is_none()
         {
             debug!(target: "nip29", "Processing unmanaged group event: kind={}, id={}", event.kind, event.id);
             return Ok(vec![StoreCommand::SaveSignedEvent(event, subdomain)]);
@@ -142,12 +145,14 @@ impl Nip29Middleware {
 
             k if k == KIND_GROUP_DELETE_9008 => {
                 debug!(target: "nip29", "Processing group deletion event: id={}", event.id);
-                self.groups.handle_delete_group(event, authed_pubkey, &subdomain)?
+                self.groups
+                    .handle_delete_group(event, authed_pubkey, &subdomain)?
             }
 
             k if k == KIND_GROUP_DELETE_EVENT_9005 => {
                 debug!(target: "nip29", "Processing group content event deletion: id={}", event.id);
-                self.groups.handle_delete_event(event, authed_pubkey, &subdomain)?
+                self.groups
+                    .handle_delete_event(event, authed_pubkey, &subdomain)?
             }
 
             k if k == KIND_GROUP_CREATE_INVITE_9009 => {
@@ -199,7 +204,8 @@ impl Nip29Middleware {
 
         for tag in self.get_group_tags(filter) {
             if let Some(group_ref) = self.groups.get_group(&scope, &tag) {
-                self.groups.verify_group_access(group_ref.value(), authed_pubkey)?;
+                self.groups
+                    .verify_group_access(group_ref.value(), authed_pubkey)?;
             }
         }
         Ok(())
@@ -218,158 +224,16 @@ impl Nip29Middleware {
             self.verify_filter(authed_pubkey, filter)?;
         }
 
-        let Some(conn) = connection_state else {
-            error!(
-                "No connection_state available for subscription {}",
-                subscription_id
-            );
-            return Ok(());
-        };
-
-        let Some(relay_conn) = &conn.subscription_manager else {
-            error!(
-                "No relay connection available for subscription {}",
-                subscription_id
-            );
-            return Ok(());
-        };
-
-        let subdomain = &conn.subdomain;
-        
-        // Get the sender for sending events to the client
-        let Some(mut sender) = conn.subscription_manager.as_ref()
-            .and_then(|sm| sm.get_outgoing_sender().cloned()) else {
-            error!("No outgoing sender available for subscription {}", subscription_id);
-            return Ok(());
-        };
-
-        // Register the subscription
-        // Note: We call add_subscription directly since each connection is already
-        // scoped to a specific subdomain stored in the connection state
-        relay_conn
-            .add_subscription(subscription_id.clone(), filters.clone())?;
-
-        // Now implement fill-buffer with exponential limit growth
-        use std::collections::HashSet;
-        
-        let mut seen_event_ids = HashSet::new();
-        let mut sent_count = 0;
-        let mut multiplier = 1usize;
-        const MAX_MULTIPLIER: usize = 32;
-        
-        // Use channel capacity as the default limit to match buffer size
-        // This ensures we don't try to send more events than the channel can handle
-        let channel_capacity = sender.capacity();
-        debug!("Fill-buffer: Channel capacity is {}", channel_capacity);
-        
-        // Track original limits for each filter
-        let original_limits: Vec<Option<usize>> = filters.iter().map(|f| f.limit).collect();
-        let target_limit = original_limits.iter()
-            .filter_map(|&l| l)
-            .max()
-            .unwrap_or(channel_capacity); // Use channel capacity as default limit
-        
-        loop {
-            // Adjust filters with exponentially growing limits
-            let mut adjusted_filters = filters.clone();
-            for (i, filter) in adjusted_filters.iter_mut().enumerate() {
-                if let Some(original_limit) = original_limits[i] {
-                    filter.limit = if multiplier <= MAX_MULTIPLIER {
-                        Some(original_limit.saturating_mul(multiplier))
-                    } else {
-                        None // No limit - get all events
-                    };
-                }
-            }
-            
-            // Fetch events from database
-            let events = relay_conn
-                .fetch_historical_events(&adjusted_filters, subdomain)
-                .await?;
-            
-            if events.is_empty() {
-                debug!("Fill-buffer: No more events in database");
-                break;
-            }
-            
-            debug!("Fill-buffer: Fetched {} events with multiplier {}", events.len(), multiplier);
-            
-            // Process events - filter and send immediately
-            for event in events {
-                // Skip duplicates
-                if seen_event_ids.contains(&event.id) {
-                    continue;
-                }
-                seen_event_ids.insert(event.id);
-                
-                // Check if user can see this event
-                if let Some(group) = self.groups.find_group_from_event(&event, subdomain) {
-                    match group.value().can_see_event(&authed_pubkey, &self.relay_pubkey, &event) {
-                        Ok(true) => {
-                            // Send event immediately
-                            if let Err(e) = sender.send(RelayMessage::Event {
-                                subscription_id: std::borrow::Cow::Owned(subscription_id.clone()),
-                                event: std::borrow::Cow::Owned(event),
-                            }) {
-                                error!("Failed to send event: {:?}", e);
-                                return Err(Error::internal("Failed to send event to client"));
-                            }
-                            
-                            sent_count += 1;
-                            if sent_count >= target_limit {
-                                debug!("Fill-buffer: Reached target limit of {}", target_limit);
-                                break;
-                            }
-                        }
-                        _ => {
-                            // Event filtered out by access control
-                            debug!("Fill-buffer: Event filtered out by access control");
-                        }
-                    }
-                } else {
-                    // Not a group event or unmanaged group - allow it through
-                    if let Err(e) = sender.send(RelayMessage::Event {
-                        subscription_id: std::borrow::Cow::Owned(subscription_id.clone()),
-                        event: std::borrow::Cow::Owned(event),
-                    }) {
-                        error!("Failed to send event: {:?}", e);
-                        return Err(Error::internal("Failed to send event to client"));
-                    }
-                    
-                    sent_count += 1;
-                    if sent_count >= target_limit {
-                        debug!("Fill-buffer: Reached target limit of {}", target_limit);
-                        break;
-                    }
-                }
-            }
-            
-            // Check if we've sent enough events
-            if sent_count >= target_limit {
-                break;
-            }
-            
-            // Check if we've hit the multiplier limit
-            if multiplier > MAX_MULTIPLIER {
-                debug!("Fill-buffer: Reached max multiplier, stopping");
-                break;
-            }
-            
-            // Exponentially increase the multiplier
-            multiplier *= 2;
-        }
-        
-        debug!("Fill-buffer: Sent {} events total to subscription {}", sent_count, subscription_id);
-        
-        // Send EOSE
-        if let Err(e) = sender.send(RelayMessage::EndOfStoredEvents(
-            std::borrow::Cow::Owned(subscription_id)
-        )) {
-            error!("Failed to send EOSE: {:?}", e);
-            return Err(Error::internal("Failed to send EOSE to client"));
-        }
-
-        Ok(())
+        // Delegate to the extracted subscription handler
+        super::subscription_handler::handle_subscription(
+            &self.groups,
+            &self.relay_pubkey,
+            subscription_id,
+            filters,
+            authed_pubkey,
+            connection_state,
+        )
+        .await
     }
 }
 
@@ -564,11 +428,17 @@ impl Middleware for Nip29Middleware {
             return ctx.next().await;
         };
 
-        let Some(group) = self.groups.find_group_from_event(event, ctx.state.subdomain()) else {
+        let Some(group) = self
+            .groups
+            .find_group_from_event(event, ctx.state.subdomain())
+        else {
             return ctx.next().await;
         };
 
-        let Ok(can_see) = group.value().can_see_event(&ctx.state.authed_pubkey, &self.relay_pubkey, event)
+        let Ok(can_see) =
+            group
+                .value()
+                .can_see_event(&ctx.state.authed_pubkey, &self.relay_pubkey, event)
         else {
             ctx.message = None;
             return ctx.next().await;
@@ -889,7 +759,9 @@ mod tests {
 
         // Should allow the event through since it's an unmanaged group
         let event_id = event.id;
-        let result = middleware.handle_event(Box::new(event), &None, Scope::Default).await;
+        let result = middleware
+            .handle_event(Box::new(event), &None, Scope::Default)
+            .await;
         assert!(result.is_ok());
         if let Ok(commands) = result {
             assert_eq!(commands.len(), 1);
@@ -922,7 +794,9 @@ mod tests {
         .await;
 
         // Should not return an error because group is not needed here
-        let result = middleware.handle_event(Box::new(event), &None, Scope::Default).await;
+        let result = middleware
+            .handle_event(Box::new(event), &None, Scope::Default)
+            .await;
         assert!(result.is_ok());
     }
 
@@ -960,7 +834,9 @@ mod tests {
             ],
         )
         .await;
-        groups.handle_put_user(Box::new(add_member_event), &Scope::Default).unwrap();
+        groups
+            .handle_put_user(Box::new(add_member_event), &Scope::Default)
+            .unwrap();
 
         // Create a group content event
         let content_event = create_test_event(
@@ -1676,5 +1552,4 @@ mod tests {
             .verify_filter(Some(admin_keys.public_key()), &private_filter) // Authenticated as relay admin
             .is_ok());
     }
-
 }

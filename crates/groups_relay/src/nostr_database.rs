@@ -186,7 +186,7 @@ impl RelayDatabase {
             event.as_json(),
             scope
         );
-        
+
         match env.scoped(scope) {
             Ok(scoped_view) => {
                 if let Err(e) = scoped_view.save_event(event.as_ref()).await {
@@ -194,7 +194,7 @@ impl RelayDatabase {
                 } else if let Err(e) = broadcast_sender.send(event) {
                     debug!("No subscribers available for broadcast: {:?}", e);
                 }
-            },
+            }
             Err(e) => {
                 error!("Error getting scoped view: {:?}", e);
             }
@@ -207,59 +207,61 @@ impl RelayDatabase {
 
     pub async fn save_event(&self, event: &Event, scope: &Scope) -> Result<()> {
         let env = self.get_env(scope).await?;
-        
+
         match env.scoped(scope) {
-            Ok(scoped_view) => {
-                match scoped_view.save_event(event).await {
-                    Ok(_) => {
-                        debug!(
-                            "Event saved successfully: {} for scope: {:?} (in single DB)",
-                            event.as_json(),
-                            scope
-                        );
-                        Ok(())
-                    }
-                    Err(e) => {
-                        error!(
-                            "Error saving event for scope {:?} (in single DB): {:?}",
-                            scope, e
-                        );
-                        Err(e.into())
-                    }
+            Ok(scoped_view) => match scoped_view.save_event(event).await {
+                Ok(_) => {
+                    debug!(
+                        "Event saved successfully: {} for scope: {:?} (in single DB)",
+                        event.as_json(),
+                        scope
+                    );
+                    Ok(())
+                }
+                Err(e) => {
+                    error!(
+                        "Error saving event for scope {:?} (in single DB): {:?}",
+                        scope, e
+                    );
+                    Err(e.into())
                 }
             },
             Err(e) => {
                 error!("Error getting scoped view: {:?}", e);
-                Err(Box::new(Error::internal(format!("Failed to get scoped view: {}", e))))
+                Err(Box::new(Error::internal(format!(
+                    "Failed to get scoped view: {}",
+                    e
+                ))))
             }
         }
     }
 
     pub async fn delete(&self, filter: Filter, scope: &Scope) -> Result<()> {
         let env = self.get_env(scope).await?;
-        
+
         match env.scoped(scope) {
-            Ok(scoped_view) => {
-                match scoped_view.delete(filter).await {
-                    Ok(_) => {
-                        debug!(
-                            "Deleted events successfully for scope: {:?} (from single DB)",
-                            scope
-                        );
-                        Ok(())
-                    }
-                    Err(e) => {
-                        error!(
-                            "Error deleting events for scope {:?} (from single DB): {:?}",
-                            scope, e
-                        );
-                        Err(e.into())
-                    }
+            Ok(scoped_view) => match scoped_view.delete(filter).await {
+                Ok(_) => {
+                    debug!(
+                        "Deleted events successfully for scope: {:?} (from single DB)",
+                        scope
+                    );
+                    Ok(())
+                }
+                Err(e) => {
+                    error!(
+                        "Error deleting events for scope {:?} (from single DB): {:?}",
+                        scope, e
+                    );
+                    Err(e.into())
                 }
             },
             Err(e) => {
                 error!("Error getting scoped view: {:?}", e);
-                Err(Box::new(Error::internal(format!("Failed to get scoped view: {}", e))))
+                Err(Box::new(Error::internal(format!(
+                    "Failed to get scoped view: {}",
+                    e
+                ))))
             }
         }
     }
@@ -344,17 +346,21 @@ impl RelayDatabase {
     async fn get_env(&self, _scope: &Scope) -> Result<Arc<NostrLMDB>, Error> {
         Ok(Arc::clone(&self.env))
     }
-    
+
     /// List all available scopes in the database
     pub async fn list_scopes(&self) -> Result<Vec<Scope>, Error> {
         let env = Arc::clone(&self.env);
         // Run list_scopes on a blocking thread since it's a potentially expensive operation
-        let scopes = tokio::task::spawn_blocking(move || {
-            env.list_scopes()
-        }).await
-        .map_err(|e| Error::internal(format!("Failed to spawn blocking task for list_scopes: {}", e)))?
-        .map_err(|e| Error::internal(format!("Failed to list scopes: {}", e)))?;
-        
+        let scopes = tokio::task::spawn_blocking(move || env.list_scopes())
+            .await
+            .map_err(|e| {
+                Error::internal(format!(
+                    "Failed to spawn blocking task for list_scopes: {}",
+                    e
+                ))
+            })?
+            .map_err(|e| Error::internal(format!("Failed to list scopes: {}", e)))?;
+
         Ok(scopes)
     }
 }
@@ -364,8 +370,8 @@ mod tests {
     use super::*;
     use crate::test_utils::create_test_event;
     use nostr_sdk::{Keys, Kind};
-    use tempfile::tempdir;
     use std::collections::HashSet;
+    use tempfile::tempdir;
 
     #[tokio::test]
     async fn test_subdomain_data_isolation() {
@@ -381,18 +387,26 @@ mod tests {
         let oslo_event = create_test_event(&oslo_event_keys, Kind::TextNote.as_u16(), vec![]).await;
 
         db.save_event(&root_event, &Scope::Default).await.unwrap();
-        db.save_event(&oslo_event, &Scope::named("oslo").unwrap()).await.unwrap();
+        db.save_event(&oslo_event, &Scope::named("oslo").unwrap())
+            .await
+            .unwrap();
 
         // With the new scoped-heed, there's proper isolation between subdomains
         // so we should update our expectations
-        let root_results = db.query(vec![Filter::new()], &Scope::Default).await.unwrap();
+        let root_results = db
+            .query(vec![Filter::new()], &Scope::Default)
+            .await
+            .unwrap();
         assert_eq!(
             root_results.len(),
             1,
             "Root query should only return 1 event (with isolation)"
         );
 
-        let oslo_results = db.query(vec![Filter::new()], &Scope::named("oslo").unwrap()).await.unwrap();
+        let oslo_results = db
+            .query(vec![Filter::new()], &Scope::named("oslo").unwrap())
+            .await
+            .unwrap();
         assert_eq!(
             oslo_results.len(),
             1,
@@ -476,10 +490,7 @@ mod tests {
                 };
                 for _ in 0..num_reads_per_reader {
                     // Query with a broad filter
-                    let _events = db_clone
-                        .query(vec![Filter::new()], &scope)
-                        .await
-                        .unwrap();
+                    let _events = db_clone.query(vec![Filter::new()], &scope).await.unwrap();
                     // In a real scenario with many events, we might check _events.len()
                     // but for this concurrency test, just ensuring no panics is key.
                 }
@@ -498,21 +509,29 @@ mod tests {
 
         // With isolation, we need to check each subdomain separately
         // First, check how many events were actually stored in each subdomain
-        let none_domain_events = db.query(vec![Filter::new()], &Scope::Default).await.unwrap();
-        let sub1_events = db.query(vec![Filter::new()], &Scope::named("sub1").unwrap()).await.unwrap();
-        let sub2_events = db.query(vec![Filter::new()], &Scope::named("sub2").unwrap()).await.unwrap();
-        
+        let none_domain_events = db
+            .query(vec![Filter::new()], &Scope::Default)
+            .await
+            .unwrap();
+        let sub1_events = db
+            .query(vec![Filter::new()], &Scope::named("sub1").unwrap())
+            .await
+            .unwrap();
+        let sub2_events = db
+            .query(vec![Filter::new()], &Scope::named("sub2").unwrap())
+            .await
+            .unwrap();
+
         // Print the actual counts to help debug
         println!("Events in None subdomain: {}", none_domain_events.len());
         println!("Events in sub1 subdomain: {}", sub1_events.len());
         println!("Events in sub2 subdomain: {}", sub2_events.len());
-        
+
         // The total across all subdomains should match the expected total events
         let total_events = none_domain_events.len() + sub1_events.len() + sub2_events.len();
         let expected_total_events = num_writer_tasks * num_events_per_writer;
         assert_eq!(
-            total_events,
-            expected_total_events,
+            total_events, expected_total_events,
             "Total events across all subdomains should match expected count"
         );
     }
@@ -552,8 +571,12 @@ mod tests {
 
         // Save initial events
         db.save_event(&event_a, &Scope::Default).await.unwrap(); // Subdomain: None
-        db.save_event(&event_b, &Scope::named("s1").unwrap()).await.unwrap(); // Subdomain: s1
-        db.save_event(&event_c, &Scope::named("s2").unwrap()).await.unwrap(); // Subdomain: s2
+        db.save_event(&event_b, &Scope::named("s1").unwrap())
+            .await
+            .unwrap(); // Subdomain: s1
+        db.save_event(&event_c, &Scope::named("s2").unwrap())
+            .await
+            .unwrap(); // Subdomain: s2
 
         // --- Test Case 1: Delete event_a (from None) using specific filter & None subdomain ---
         let filter_a = Filter::new().id(event_a.id);
@@ -568,7 +591,10 @@ mod tests {
             "Event A should be deleted from None scope"
         );
         let results_after_delete_a_s1 = db
-            .query(vec![Filter::new().id(event_b.id)], &Scope::named("s1").unwrap())
+            .query(
+                vec![Filter::new().id(event_b.id)],
+                &Scope::named("s1").unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -577,7 +603,10 @@ mod tests {
             "Event B should still exist in s1 scope"
         );
         let results_after_delete_a_s2 = db
-            .query(vec![Filter::new().id(event_c.id)], &Scope::named("s2").unwrap())
+            .query(
+                vec![Filter::new().id(event_c.id)],
+                &Scope::named("s2").unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -588,10 +617,15 @@ mod tests {
 
         // --- Test Case 2: Delete event_b (from s1) using specific filter & s1 subdomain ---
         let filter_b = Filter::new().id(event_b.id);
-        db.delete(filter_b.clone(), &Scope::named("s1").unwrap()).await.unwrap();
+        db.delete(filter_b.clone(), &Scope::named("s1").unwrap())
+            .await
+            .unwrap();
 
         let results_after_delete_b_s1 = db
-            .query(vec![Filter::new().id(event_b.id)], &Scope::named("s1").unwrap())
+            .query(
+                vec![Filter::new().id(event_b.id)],
+                &Scope::named("s1").unwrap(),
+            )
             .await
             .unwrap();
         assert!(
@@ -599,7 +633,10 @@ mod tests {
             "Event B should be deleted from s1 scope"
         );
         let results_after_delete_b_s2 = db
-            .query(vec![Filter::new().id(event_c.id)], &Scope::named("s2").unwrap())
+            .query(
+                vec![Filter::new().id(event_c.id)],
+                &Scope::named("s2").unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -611,13 +648,17 @@ mod tests {
         // --- Test Case 3: Broad filter, different subdomain ---
         // Re-save A and B for this test case
         db.save_event(&event_a, &Scope::Default).await.unwrap();
-        db.save_event(&event_b, &Scope::named("s1").unwrap()).await.unwrap();
+        db.save_event(&event_b, &Scope::named("s1").unwrap())
+            .await
+            .unwrap();
         // Event C is still in s2 from before
 
         // Delete all TextNote events, specifying subdomain "s2" for the delete operation.
         // With isolated operations, this should ONLY delete events in the s2 subdomain
         let broad_filter = Filter::new().kind(Kind::TextNote);
-        db.delete(broad_filter.clone(), &Scope::named("s2").unwrap()).await.unwrap();
+        db.delete(broad_filter.clone(), &Scope::named("s2").unwrap())
+            .await
+            .unwrap();
 
         let remaining_a = db
             .query(vec![Filter::new().id(event_a.id)], &Scope::Default)
@@ -630,7 +671,10 @@ mod tests {
         );
 
         let remaining_b = db
-            .query(vec![Filter::new().id(event_b.id)], &Scope::named("s1").unwrap())
+            .query(
+                vec![Filter::new().id(event_b.id)],
+                &Scope::named("s1").unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -640,7 +684,10 @@ mod tests {
         );
 
         let remaining_c = db
-            .query(vec![Filter::new().id(event_c.id)], &Scope::named("s2").unwrap())
+            .query(
+                vec![Filter::new().id(event_c.id)],
+                &Scope::named("s2").unwrap(),
+            )
             .await
             .unwrap();
         assert!(
@@ -654,42 +701,71 @@ mod tests {
         // Create a temporary database
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("scopes_test_db");
-        
+
         // Open the database
         let lmdb = NostrLMDB::open(&db_path).unwrap();
-        
+
         // Create events in different scopes
         let event_keys = Keys::generate();
-        
+
         // Create and save events to different scopes
         let default_event = create_test_event(&event_keys, Kind::TextNote.as_u16(), vec![]).await;
         let group1_event = create_test_event(&event_keys, Kind::TextNote.as_u16(), vec![]).await;
         let group2_event = create_test_event(&event_keys, Kind::TextNote.as_u16(), vec![]).await;
         let group3_event = create_test_event(&event_keys, Kind::TextNote.as_u16(), vec![]).await;
-        
+
         // Save events to their respective scopes
-        lmdb.scoped(&Scope::Default).unwrap().save_event(&default_event).await.unwrap();
-        lmdb.scoped(&Scope::named("group1").unwrap()).unwrap().save_event(&group1_event).await.unwrap();
-        lmdb.scoped(&Scope::named("group2").unwrap()).unwrap().save_event(&group2_event).await.unwrap();
-        lmdb.scoped(&Scope::named("group3").unwrap()).unwrap().save_event(&group3_event).await.unwrap();
-        
+        lmdb.scoped(&Scope::Default)
+            .unwrap()
+            .save_event(&default_event)
+            .await
+            .unwrap();
+        lmdb.scoped(&Scope::named("group1").unwrap())
+            .unwrap()
+            .save_event(&group1_event)
+            .await
+            .unwrap();
+        lmdb.scoped(&Scope::named("group2").unwrap())
+            .unwrap()
+            .save_event(&group2_event)
+            .await
+            .unwrap();
+        lmdb.scoped(&Scope::named("group3").unwrap())
+            .unwrap()
+            .save_event(&group3_event)
+            .await
+            .unwrap();
+
         // Call list_scopes and verify it returns all scopes
         let scopes = lmdb.list_scopes().unwrap();
-        
+
         // Convert to a HashSet for easier verification
-        let scope_set: HashSet<String> = scopes.into_iter()
+        let scope_set: HashSet<String> = scopes
+            .into_iter()
             .map(|s| match s {
                 Scope::Default => "default".to_string(),
                 Scope::Named { name, .. } => name,
             })
             .collect();
-        
+
         // Verify all expected scopes are included
-        assert!(scope_set.contains("default"), "Default scope should be included");
-        assert!(scope_set.contains("group1"), "group1 scope should be included");
-        assert!(scope_set.contains("group2"), "group2 scope should be included");
-        assert!(scope_set.contains("group3"), "group3 scope should be included");
-        
+        assert!(
+            scope_set.contains("default"),
+            "Default scope should be included"
+        );
+        assert!(
+            scope_set.contains("group1"),
+            "group1 scope should be included"
+        );
+        assert!(
+            scope_set.contains("group2"),
+            "group2 scope should be included"
+        );
+        assert!(
+            scope_set.contains("group3"),
+            "group3 scope should be included"
+        );
+
         // Verify the number of scopes is correct (4 = default + 3 named scopes)
         assert_eq!(scope_set.len(), 4, "Should have exactly 4 scopes");
     }

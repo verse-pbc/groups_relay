@@ -606,9 +606,15 @@ impl Group {
 
         let mut events = vec![StoreCommand::SaveSignedEvent(members_event, Scope::Default)];
         let admins_event = self.generate_admins_event(relay_pubkey);
-        events.push(StoreCommand::SaveUnsignedEvent(admins_event, Scope::Default));
+        events.push(StoreCommand::SaveUnsignedEvent(
+            admins_event,
+            Scope::Default,
+        ));
         let members_event = self.generate_members_event(relay_pubkey);
-        events.push(StoreCommand::SaveUnsignedEvent(members_event, Scope::Default));
+        events.push(StoreCommand::SaveUnsignedEvent(
+            members_event,
+            Scope::Default,
+        ));
 
         Ok(events)
     }
@@ -703,10 +709,16 @@ impl Group {
         let mut events = vec![StoreCommand::SaveSignedEvent(members_event, Scope::Default)];
         if removed_admins {
             let admins_event = self.generate_admins_event(relay_pubkey);
-            events.push(StoreCommand::SaveUnsignedEvent(admins_event, Scope::Default));
+            events.push(StoreCommand::SaveUnsignedEvent(
+                admins_event,
+                Scope::Default,
+            ));
         }
         let members_event = self.generate_members_event(relay_pubkey);
-        events.push(StoreCommand::SaveUnsignedEvent(members_event, Scope::Default));
+        events.push(StoreCommand::SaveUnsignedEvent(
+            members_event,
+            Scope::Default,
+        ));
 
         Ok(events)
     }
@@ -1115,12 +1127,18 @@ impl Group {
             // If the user was an admin, also generate an updated admins event
             if is_admin {
                 let admins_event = self.generate_admins_event(relay_pubkey);
-                commands.push(StoreCommand::SaveUnsignedEvent(admins_event, Scope::Default));
+                commands.push(StoreCommand::SaveUnsignedEvent(
+                    admins_event,
+                    Scope::Default,
+                ));
             }
 
             // Always generate a members event
             let members_event = self.generate_members_event(relay_pubkey);
-            commands.push(StoreCommand::SaveUnsignedEvent(members_event, Scope::Default));
+            commands.push(StoreCommand::SaveUnsignedEvent(
+                members_event,
+                Scope::Default,
+            ));
 
             Ok(commands)
         } else {
@@ -1174,8 +1192,8 @@ impl Group {
                 } else {
                     // New member without roles - default to Member role
                     self.members.insert(
-                        pubkey, 
-                        GroupMember::new(pubkey, HashSet::from([GroupRole::Member]))
+                        pubkey,
+                        GroupMember::new(pubkey, HashSet::from([GroupRole::Member])),
                     );
                 }
             }
@@ -1198,7 +1216,8 @@ impl Group {
                     existing_member.roles.extend(new_roles);
                 } else {
                     // New member, insert with the roles from this event
-                    self.members.insert(pubkey, GroupMember::new(pubkey, new_roles));
+                    self.members
+                        .insert(pubkey, GroupMember::new(pubkey, new_roles));
                 }
             }
         }
@@ -1344,10 +1363,11 @@ impl Group {
             let mut tag_vals: Vec<String> = vec![admin.pubkey.to_string()];
             // Only include admin-related roles (not Member role) in the 39001 event
             tag_vals.extend(
-                admin.roles
+                admin
+                    .roles
                     .iter()
                     .filter(|role| matches!(role, GroupRole::Admin))
-                    .map(|role| format!("{:?}", role))
+                    .map(|role| format!("{:?}", role)),
             );
 
             let tag = Tag::custom(TagKind::p(), tag_vals);

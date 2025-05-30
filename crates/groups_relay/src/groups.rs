@@ -46,16 +46,20 @@ impl Groups {
             Ok(s) => s,
             Err(e) => return Err(Error::internal(format!("Failed to list scopes: {}", e))),
         };
-        
+
         info!("Found {} scopes to load groups from", scopes.len());
         let all_groups = DashMap::new();
         let mut load_failures = Vec::new();
-        
+
         // Load groups from each scope
         for scope in &scopes {
             match Self::load_groups_for_scope(database.clone(), scope, relay_pubkey).await {
                 Ok(scope_groups) => {
-                    info!("Loaded {} groups from scope {:?}", scope_groups.len(), scope);
+                    info!(
+                        "Loaded {} groups from scope {:?}",
+                        scope_groups.len(),
+                        scope
+                    );
                     for (group_id, group) in scope_groups {
                         all_groups.insert((scope.clone(), group_id), group);
                     }
@@ -66,28 +70,32 @@ impl Groups {
                 }
             }
         }
-        
+
         // Log summary of load failures if any
         if !load_failures.is_empty() {
-            warn!("Failed to load groups for {} scopes: {:?}", load_failures.len(), load_failures);
+            warn!(
+                "Failed to load groups for {} scopes: {:?}",
+                load_failures.len(),
+                load_failures
+            );
         }
-        
+
         Ok(Self {
             db: database,
             groups: all_groups,
             relay_pubkey,
         })
     }
-    
+
     /// Helper function to load groups for a single scope
     async fn load_groups_for_scope(
-        database: Arc<RelayDatabase>, 
+        database: Arc<RelayDatabase>,
         scope: &Scope,
-        _relay_pubkey: PublicKey
+        _relay_pubkey: PublicKey,
     ) -> Result<HashMap<String, Group>, Error> {
         info!("Loading groups from scope: {:?}", scope);
         let mut groups = HashMap::new();
-        
+
         // Step 1: Load current state from replaceable events
         let metadata_filter = vec![Filter::new()
             .kinds(vec![
@@ -99,10 +107,19 @@ impl Groups {
 
         let metadata_events = match database.query(metadata_filter, scope).await {
             Ok(events) => events,
-            Err(e) => return Err(Error::notice(format!("Error querying metadata events for scope {:?}: {}", scope, e))),
+            Err(e) => {
+                return Err(Error::notice(format!(
+                    "Error querying metadata events for scope {:?}: {}",
+                    scope, e
+                )))
+            }
         };
-        
-        info!("Found {} metadata events in scope {:?}", metadata_events.len(), scope);
+
+        info!(
+            "Found {} metadata events in scope {:?}",
+            metadata_events.len(),
+            scope
+        );
 
         // Process events in order to build current state
         for event in metadata_events.clone() {
@@ -134,9 +151,12 @@ impl Groups {
         // Step 2: Load historical data for each group
         info!("Processing {} groups in scope {:?}", groups.len(), scope);
         let mut historical_load_errors = Vec::new();
-        
+
         for (group_id, group) in groups.iter_mut() {
-            debug!("[{}] Loading historical data in scope {:?}", group_id, scope);
+            debug!(
+                "[{}] Loading historical data in scope {:?}",
+                group_id, scope
+            );
 
             let historical_filter = vec![Filter::new()
                 .kinds(vec![
@@ -158,22 +178,28 @@ impl Groups {
                         historical_events.len(),
                         scope
                     );
-    
+
                     for event in historical_events {
                         if event.kind == KIND_GROUP_CREATE_9007 {
                             debug!("[{}] Found creation event in scope {:?}", group_id, scope);
                             group.created_at = event.created_at;
                         } else if event.kind == KIND_GROUP_USER_JOIN_REQUEST_9021 {
                             if let Err(e) = group.load_join_request_from_event(&event) {
-                                warn!("Error loading join request for group {} in scope {:?}: {}", group_id, scope, e);
+                                warn!(
+                                    "Error loading join request for group {} in scope {:?}: {}",
+                                    group_id, scope, e
+                                );
                             }
                         } else if event.kind == KIND_GROUP_CREATE_INVITE_9009 {
                             if let Err(e) = group.load_invite_from_event(&event) {
-                                warn!("Error loading invite for group {} in scope {:?}: {}", group_id, scope, e);
+                                warn!(
+                                    "Error loading invite for group {} in scope {:?}: {}",
+                                    group_id, scope, e
+                                );
                             }
                         }
                     }
-    
+
                     // Update timestamps
                     group.updated_at = metadata_events
                         .iter()
@@ -182,18 +208,23 @@ impl Groups {
                         .unwrap_or(group.updated_at);
                 }
                 Err(e) => {
-                    warn!("Error querying historical events for group {} in scope {:?}: {}", group_id, scope, e);
+                    warn!(
+                        "Error querying historical events for group {} in scope {:?}: {}",
+                        group_id, scope, e
+                    );
                     historical_load_errors.push((group_id.clone(), e.to_string()));
                     // Continue with the next group
                 }
             }
         }
-        
+
         // Log summary of historical data loading errors if any
         if !historical_load_errors.is_empty() {
             warn!(
                 "Failed to load historical data for {} groups in scope {:?}: {:?}",
-                historical_load_errors.len(), scope, historical_load_errors
+                historical_load_errors.len(),
+                scope,
+                historical_load_errors
             );
         }
 
@@ -215,10 +246,11 @@ impl Groups {
     }
 
     // Nothing - removing backward compatibility method
-    
+
     // List groups in a specific scope
     pub fn list_groups_in_scope(&self, scope: &Scope) -> Vec<String> {
-        self.groups.iter()
+        self.groups
+            .iter()
             .filter_map(|entry| {
                 let (key_scope, group_id) = entry.key();
                 if key_scope == scope {
@@ -229,10 +261,11 @@ impl Groups {
             })
             .collect()
     }
-    
+
     // Iterator over all groups (returns clones to avoid holding references)
     pub fn list_all_groups(&self) -> Vec<(Scope, String, Group)> {
-        self.groups.iter()
+        self.groups
+            .iter()
             .map(|entry| {
                 let (scope, group_id) = entry.key();
                 let group = entry.value().clone();
@@ -240,7 +273,7 @@ impl Groups {
             })
             .collect()
     }
-    
+
     // Get all scopes currently containing groups
     pub fn get_all_scopes(&self) -> std::collections::HashSet<Scope> {
         let mut scopes = std::collections::HashSet::new();
@@ -249,12 +282,12 @@ impl Groups {
         }
         scopes
     }
-    
+
     // More efficient implementation of find_group_in_any_scope
     pub fn find_group_in_any_scope(&self, group_id: &str) -> Option<(Scope, ScopedGroupRef<'_>)> {
         // First find the matching scope (holding minimal locks)
         let mut found_scope = None;
-        
+
         for entry in self.groups.iter() {
             let (scope, id) = entry.key();
             if id == group_id {
@@ -262,7 +295,7 @@ impl Groups {
                 break;
             }
         }
-        
+
         // Second pass to get the actual group reference
         if let Some(scope) = found_scope {
             let key = (scope.clone(), group_id.to_string());
@@ -270,11 +303,15 @@ impl Groups {
                 return Some((scope, group));
             }
         }
-        
+
         None
     }
 
-    pub fn find_group_from_event<'a>(&'a self, event: &Event, scope: &Scope) -> Option<Ref<'a, (Scope, String), Group>> {
+    pub fn find_group_from_event<'a>(
+        &'a self,
+        event: &Event,
+        scope: &Scope,
+    ) -> Option<Ref<'a, (Scope, String), Group>> {
         let group_id = Group::extract_group_id(event)?;
         self.get_group(scope, group_id)
     }
@@ -282,58 +319,63 @@ impl Groups {
     // Nothing - removing backward compatibility method
 
     pub fn find_group_from_event_mut<'a>(
-        &'a self, 
-        event: &Event, 
-        scope: &Scope
+        &'a self,
+        event: &Event,
+        scope: &Scope,
     ) -> Result<Option<ScopedGroupRefMut<'a>>, Error> {
         let Some(group_id) = Group::extract_group_id(event) else {
             return Ok(None);
         };
-        
+
         let key = (scope.clone(), group_id.to_string());
-        
+
         // Check existence first - this acquires a read lock briefly
         // but avoids creating a RefMut that won't be needed
         if !self.groups.contains_key(&key) {
             return Ok(None);
         }
-        
+
         // Now acquire the write lock for the group
         let mut group_ref_opt = self.groups.get_mut(&key);
-        
+
         if let Some(ref mut group_ref) = group_ref_opt {
-            if event.pubkey != self.relay_pubkey && event.kind != KIND_GROUP_USER_LEAVE_REQUEST_9022 {
+            if event.pubkey != self.relay_pubkey && event.kind != KIND_GROUP_USER_LEAVE_REQUEST_9022
+            {
                 let verification_result = group_ref.verify_member_access(&event.pubkey, event.kind);
                 verification_result?
             }
         }
-        
+
         Ok(group_ref_opt)
     }
-    
+
     // Nothing - removing backward compatibility method
 
     pub fn find_group_from_event_h_tag<'a>(
         &'a self,
         event: &Event,
-        scope: &Scope
+        scope: &Scope,
     ) -> Option<Ref<'a, (Scope, String), Group>> {
         let group_id = Group::extract_group_h_tag(event)?;
         self.get_group(scope, group_id)
     }
-    
+
     // Nothing - removing backward compatibility method
 
     /// Handles group creation events (KIND_GROUP_CREATE_9007).
     /// Creates a group and generates associated metadata and membership events.
-    pub async fn handle_group_create(&self, event: Box<Event>, scope: &Scope) -> Result<Vec<StoreCommand>, Error> {
+    pub async fn handle_group_create(
+        &self,
+        event: Box<Event>,
+        scope: &Scope,
+    ) -> Result<Vec<StoreCommand>, Error> {
         let Some(group_id) = Group::extract_group_id(&event) else {
             return Err(Error::notice("Group ID not found in event"));
         };
 
         // Safety: Query key existence without holding lock
         let key = (scope.clone(), group_id.to_string());
-        
+
         if self.groups.contains_key(&key) {
             return Err(Error::notice("Group already exists"));
         }
@@ -420,44 +462,63 @@ impl Groups {
         Ok(commands)
     }
 
-    pub fn handle_set_roles(&self, event: Box<Event>, scope: &Scope) -> Result<Vec<StoreCommand>, Error> {
+    pub fn handle_set_roles(
+        &self,
+        event: Box<Event>,
+        scope: &Scope,
+    ) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
             .ok_or(Error::notice("[SetRoles] Group not found"))?;
 
         // Use the passed scope for store commands
         let result = group.set_roles(event, &self.relay_pubkey)?;
-        
+
         // Update the scope for each StoreCommand
         Ok(Self::update_scope_in_commands(result, scope))
     }
-    
+
     // Nothing - removing backward compatibility method
 
-    pub fn handle_put_user(&self, event: Box<Event>, scope: &Scope) -> Result<Vec<StoreCommand>, Error> {
+    pub fn handle_put_user(
+        &self,
+        event: Box<Event>,
+        scope: &Scope,
+    ) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
             .ok_or(Error::notice("[PutUser] Group not found"))?;
 
         // Use the passed scope for store commands
         let result = group.add_members_from_event(event, &self.relay_pubkey)?;
-        
+
         // Update the scope for each StoreCommand
         Ok(Self::update_scope_in_commands(result, scope))
     }
-    
+
     // Nothing - removing backward compatibility method
-    
+
     // Helper method to update scopes in StoreCommands
     fn update_scope_in_commands(commands: Vec<StoreCommand>, scope: &Scope) -> Vec<StoreCommand> {
-        commands.into_iter().map(|cmd| match cmd {
-            StoreCommand::SaveSignedEvent(e, _) => StoreCommand::SaveSignedEvent(e, scope.clone()),
-            StoreCommand::SaveUnsignedEvent(e, _) => StoreCommand::SaveUnsignedEvent(e, scope.clone()),
-            StoreCommand::DeleteEvents(f, _) => StoreCommand::DeleteEvents(f, scope.clone()),
-        }).collect()
+        commands
+            .into_iter()
+            .map(|cmd| match cmd {
+                StoreCommand::SaveSignedEvent(e, _) => {
+                    StoreCommand::SaveSignedEvent(e, scope.clone())
+                }
+                StoreCommand::SaveUnsignedEvent(e, _) => {
+                    StoreCommand::SaveUnsignedEvent(e, scope.clone())
+                }
+                StoreCommand::DeleteEvents(f, _) => StoreCommand::DeleteEvents(f, scope.clone()),
+            })
+            .collect()
     }
 
-    pub fn handle_remove_user(&self, event: Box<Event>, scope: &Scope) -> Result<Vec<StoreCommand>, Error> {
+    pub fn handle_remove_user(
+        &self,
+        event: Box<Event>,
+        scope: &Scope,
+    ) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
             .ok_or(Error::notice("[RemoveUser] Group not found"))?;
@@ -465,10 +526,14 @@ impl Groups {
         let result = group.remove_members(event, &self.relay_pubkey)?;
         Ok(Self::update_scope_in_commands(result, scope))
     }
-    
+
     // Nothing - removing backward compatibility method
 
-    pub fn handle_group_content(&self, event: Box<Event>, scope: &Scope) -> Result<Vec<StoreCommand>, Error> {
+    pub fn handle_group_content(
+        &self,
+        event: Box<Event>,
+        scope: &Scope,
+    ) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
             .ok_or(Error::notice("[GroupManagement] Group not found"))?;
@@ -476,10 +541,14 @@ impl Groups {
         let result = group.handle_group_content(event, &self.relay_pubkey)?;
         Ok(Self::update_scope_in_commands(result, scope))
     }
-    
+
     // Nothing - removing backward compatibility method
 
-    pub fn handle_edit_metadata(&self, event: Box<Event>, scope: &Scope) -> Result<Vec<StoreCommand>, Error> {
+    pub fn handle_edit_metadata(
+        &self,
+        event: Box<Event>,
+        scope: &Scope,
+    ) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
             .ok_or(Error::notice("[EditMetadata] Group not found"))?;
@@ -497,10 +566,14 @@ impl Groups {
 
         Ok(commands)
     }
-    
+
     // Nothing - removing backward compatibility method
 
-    pub fn handle_create_invite(&self, event: Box<Event>, scope: &Scope) -> Result<Vec<StoreCommand>, Error> {
+    pub fn handle_create_invite(
+        &self,
+        event: Box<Event>,
+        scope: &Scope,
+    ) -> Result<Vec<StoreCommand>, Error> {
         {
             let mut group = self
                 .find_group_from_event_mut(&event, scope)?
@@ -512,10 +585,14 @@ impl Groups {
         // we save the event that attempted the creation, as per NIP-29.
         Ok(vec![StoreCommand::SaveSignedEvent(event, scope.clone())])
     }
-    
+
     // Nothing - removing backward compatibility method
 
-    pub fn handle_join_request(&self, event: Box<Event>, scope: &Scope) -> Result<Vec<StoreCommand>, Error> {
+    pub fn handle_join_request(
+        &self,
+        event: Box<Event>,
+        scope: &Scope,
+    ) -> Result<Vec<StoreCommand>, Error> {
         let result;
         {
             let mut group = self
@@ -530,10 +607,14 @@ impl Groups {
             Err(e) => Err(e),
         }
     }
-    
+
     // Nothing - removing backward compatibility method
 
-    pub fn handle_leave_request(&self, event: Box<Event>, scope: &Scope) -> Result<Vec<StoreCommand>, Error> {
+    pub fn handle_leave_request(
+        &self,
+        event: Box<Event>,
+        scope: &Scope,
+    ) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
             .ok_or(Error::notice("[LeaveRequest] Group not found"))?;
@@ -541,7 +622,7 @@ impl Groups {
         let result = group.leave_request(event, &self.relay_pubkey)?;
         Ok(Self::update_scope_in_commands(result, scope))
     }
-    
+
     // Nothing - removing backward compatibility method
 
     pub fn handle_delete_event(
@@ -557,7 +638,7 @@ impl Groups {
         let commands = group.delete_event_request(event, &self.relay_pubkey, authed_pubkey)?;
         Ok(Self::update_scope_in_commands(commands, scope))
     }
-    
+
     // Nothing - removing backward compatibility method
 
     pub fn handle_delete_group(
@@ -581,7 +662,7 @@ impl Groups {
 
         Ok(Self::update_scope_in_commands(commands, scope))
     }
-    
+
     // Nothing - removing backward compatibility method
 
     /// Returns counts of groups by their privacy settings for all scopes
@@ -606,7 +687,7 @@ impl Groups {
 
         counts
     }
-    
+
     /// Returns counts of groups by their privacy settings for a specific scope
     pub fn count_groups_by_privacy_in_scope(&self, scope: &Scope) -> [(bool, bool, usize); 4] {
         let mut counts = [
@@ -619,12 +700,12 @@ impl Groups {
         for entry in self.iter() {
             let (key_scope, _) = entry.key();
             let group = entry.value();
-            
+
             // Only count groups in the specified scope
             if key_scope != scope {
                 continue;
             }
-            
+
             let idx = match (group.metadata.private, group.metadata.closed) {
                 (false, false) => 0,
                 (false, true) => 1,
@@ -649,7 +730,7 @@ impl Groups {
         for entry in self.iter() {
             let (scope, _) = entry.key();
             let group = entry.value();
-            
+
             // First check member count
             if group.members.len() < 2 {
                 continue;
@@ -670,7 +751,12 @@ impl Groups {
                 .await
             {
                 Ok(events) => events,
-                Err(e) => return Err(Error::notice(format!("Error querying database for scope {:?}: {}", scope, e))),
+                Err(e) => {
+                    return Err(Error::notice(format!(
+                        "Error querying database for scope {:?}: {}",
+                        scope, e
+                    )))
+                }
             };
 
             // Check if any event is a content event (not a 9xxx management event)
@@ -692,9 +778,12 @@ impl Groups {
 
         Ok(counts)
     }
-    
+
     /// Returns counts of active groups by their privacy settings for a specific scope
-    pub async fn count_active_groups_by_privacy_in_scope(&self, query_scope: &Scope) -> Result<[(bool, bool, usize); 4], Error> {
+    pub async fn count_active_groups_by_privacy_in_scope(
+        &self,
+        query_scope: &Scope,
+    ) -> Result<[(bool, bool, usize); 4], Error> {
         let mut counts = [
             (false, false, 0),
             (false, true, 0),
@@ -705,12 +794,12 @@ impl Groups {
         for entry in self.iter() {
             let (scope, _) = entry.key();
             let group = entry.value();
-            
+
             // Only count groups in the specified scope
             if scope != query_scope {
                 continue;
             }
-            
+
             // First check member count
             if group.members.len() < 2 {
                 continue;
@@ -731,7 +820,12 @@ impl Groups {
                 .await
             {
                 Ok(events) => events,
-                Err(e) => return Err(Error::notice(format!("Error querying database for scope {:?}: {}", scope, e))),
+                Err(e) => {
+                    return Err(Error::notice(format!(
+                        "Error querying database for scope {:?}: {}",
+                        scope, e
+                    )))
+                }
             };
 
             // Check if any event is a content event (not a 9xxx management event)
@@ -759,7 +853,7 @@ impl Groups {
         let counts = self.count_active_groups_by_privacy().await?;
         Ok(counts.iter().map(|(_, _, count)| count).sum())
     }
-    
+
     /// Returns the number of active groups in a specific scope
     pub async fn count_active_groups_in_scope(&self, scope: &Scope) -> Result<usize, Error> {
         let counts = self.count_active_groups_by_privacy_in_scope(scope).await?;
@@ -798,14 +892,14 @@ impl Groups {
         group_id: &str,
         pubkey: Option<PublicKey>,
     ) -> Result<(), GroupError> {
-        let group = self
-            .get_group(scope, group_id)
-            .ok_or_else(|| GroupError::NotFound(format!("Group {} not found in scope {:?}", group_id, scope)))?;
+        let group = self.get_group(scope, group_id).ok_or_else(|| {
+            GroupError::NotFound(format!("Group {} not found in scope {:?}", group_id, scope))
+        })?;
         // Get the value from the Ref, not the reference to Ref
         let group_value = group.value();
         self.verify_group_access(group_value, pubkey)
     }
-    
+
     // Nothing - removing backward compatibility method
 }
 
@@ -919,7 +1013,10 @@ mod tests {
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
-        groups.handle_group_create(create_event, &scope).await.unwrap();
+        groups
+            .handle_group_create(create_event, &scope)
+            .await
+            .unwrap();
 
         let add_event = create_test_event(
             &admin_keys,
@@ -949,7 +1046,8 @@ mod tests {
         groups.handle_set_roles(set_roles_event, &scope).unwrap();
 
         let group = groups.get_group(&scope, TEST_GROUP_ID).unwrap();
-        assert!(group.value()
+        assert!(group
+            .value()
             .members
             .get(&member_keys.public_key())
             .unwrap()
@@ -969,7 +1067,10 @@ mod tests {
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
-        groups.handle_group_create(create_event, &scope).await.unwrap();
+        groups
+            .handle_group_create(create_event, &scope)
+            .await
+            .unwrap();
 
         let add_event = create_test_event(
             &admin_keys,
@@ -1012,7 +1113,10 @@ mod tests {
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
-        groups.handle_group_create(create_event, &scope).await.unwrap();
+        groups
+            .handle_group_create(create_event, &scope)
+            .await
+            .unwrap();
 
         // Add member
         let add_event = create_test_event(
@@ -1029,7 +1133,10 @@ mod tests {
         assert!(!result.is_empty());
 
         let group = groups.get_group(&scope, TEST_GROUP_ID).unwrap();
-        assert!(group.value().members.contains_key(&member_keys.public_key()));
+        assert!(group
+            .value()
+            .members
+            .contains_key(&member_keys.public_key()));
     }
 
     #[tokio::test]
@@ -1045,7 +1152,10 @@ mod tests {
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
-        groups.handle_group_create(create_event, &scope).await.unwrap();
+        groups
+            .handle_group_create(create_event, &scope)
+            .await
+            .unwrap();
 
         // Attempt to add member as non-admin
         let add_event = create_test_event(
@@ -1074,7 +1184,10 @@ mod tests {
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
-        groups.handle_group_create(create_event, &scope).await.unwrap();
+        groups
+            .handle_group_create(create_event, &scope)
+            .await
+            .unwrap();
 
         let add_event = create_test_event(
             &admin_keys,
@@ -1102,7 +1215,10 @@ mod tests {
         assert!(!result.unwrap().is_empty());
 
         let group = groups.get_group(&scope, TEST_GROUP_ID).unwrap();
-        assert!(!group.value().members.contains_key(&member_keys.public_key()));
+        assert!(!group
+            .value()
+            .members
+            .contains_key(&member_keys.public_key()));
     }
 
     #[tokio::test]
@@ -1118,7 +1234,10 @@ mod tests {
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
         .await;
-        groups.handle_group_create(create_event, &scope).await.unwrap();
+        groups
+            .handle_group_create(create_event, &scope)
+            .await
+            .unwrap();
 
         let add_event = create_test_event(
             &admin_keys,
@@ -1187,7 +1306,10 @@ mod tests {
         assert!(groups.handle_edit_metadata(event, &scope).is_ok());
 
         let group = groups.get_group(&scope, &group_id).unwrap();
-        assert_eq!(group.value().metadata.picture, Some("picture_url".to_string()));
+        assert_eq!(
+            group.value().metadata.picture,
+            Some("picture_url".to_string())
+        );
     }
 
     #[tokio::test]
@@ -1222,7 +1344,10 @@ mod tests {
         let group = groups.get_group(&scope, &group_id).unwrap();
         assert_eq!(group.value().metadata.name, "New Group Name");
         assert_eq!(group.value().metadata.about, Some("About text".to_string()));
-        assert_eq!(group.value().metadata.picture, Some("picture_url".to_string()));
+        assert_eq!(
+            group.value().metadata.picture,
+            Some("picture_url".to_string())
+        );
         assert!(!group.value().metadata.private);
     }
 
@@ -1266,7 +1391,10 @@ mod tests {
         ];
         let join_event =
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
-        assert!(!groups.handle_join_request(join_event, &scope).unwrap().is_empty());
+        assert!(!groups
+            .handle_join_request(join_event, &scope)
+            .unwrap()
+            .is_empty());
 
         // Verify member was added
         let group = groups.get_group(&scope, &group_id).unwrap();
@@ -1318,7 +1446,10 @@ mod tests {
         ];
         let join_event =
             create_test_event(&member_keys, KIND_GROUP_USER_JOIN_REQUEST_9021, join_tags).await;
-        assert!(!groups.handle_join_request(join_event, &scope).unwrap().is_empty());
+        assert!(!groups
+            .handle_join_request(join_event, &scope)
+            .unwrap()
+            .is_empty());
 
         let group = groups.get_group(&scope, &group_id).unwrap();
         assert!(group.value().is_member(&member_keys.public_key()));
@@ -1373,7 +1504,10 @@ mod tests {
 
         let group = groups.get_group(&scope, &group_id).unwrap();
         // The join request should be added to the join_requests set
-        assert!(group.value().join_requests.contains(&member_keys.public_key()));
+        assert!(group
+            .value()
+            .join_requests
+            .contains(&member_keys.public_key()));
     }
 
     #[tokio::test]
@@ -1437,7 +1571,10 @@ mod tests {
             leave_tags,
         )
         .await;
-        assert!(groups.handle_leave_request(leave_event, &scope).unwrap().is_empty());
+        assert!(groups
+            .handle_leave_request(leave_event, &scope)
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
@@ -1471,7 +1608,10 @@ mod tests {
         let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event =
             create_test_event(&admin_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
-        assert!(!groups.handle_leave_request(leave_event, &scope).unwrap().is_empty());
+        assert!(!groups
+            .handle_leave_request(leave_event, &scope)
+            .unwrap()
+            .is_empty());
 
         let group = groups.get_group(&scope, &group_id).unwrap();
         assert!(!group.value().is_member(&admin_keys.public_key()));
@@ -1512,10 +1652,16 @@ mod tests {
         let leave_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let leave_event =
             create_test_event(&member_keys, KIND_GROUP_USER_LEAVE_REQUEST_9022, leave_tags).await;
-        assert!(groups.handle_leave_request(leave_event, &scope).unwrap().is_empty());
+        assert!(groups
+            .handle_leave_request(leave_event, &scope)
+            .unwrap()
+            .is_empty());
 
         let group = groups.get_group(&scope, &group_id).unwrap();
-        assert!(!group.value().join_requests.contains(&member_keys.public_key()));
+        assert!(!group
+            .value()
+            .join_requests
+            .contains(&member_keys.public_key()));
     }
 
     #[tokio::test]
@@ -1590,7 +1736,10 @@ mod tests {
         // Verify other fields are preserved
         let group = groups.get_group(&scope, &group_id).unwrap();
         assert_eq!(group.value().metadata.name, "Updated Name");
-        assert_eq!(group.value().metadata.about, Some("Initial About".to_string()));
+        assert_eq!(
+            group.value().metadata.about,
+            Some("Initial About".to_string())
+        );
         assert_eq!(
             group.value().metadata.picture,
             Some("initial_picture_url".to_string())
@@ -1649,7 +1798,9 @@ mod tests {
         // Try to create invite with same code
         let duplicate_event =
             create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags).await;
-        assert!(groups.handle_create_invite(duplicate_event, &scope).is_err());
+        assert!(groups
+            .handle_create_invite(duplicate_event, &scope)
+            .is_err());
     }
 
     #[tokio::test]
@@ -1714,7 +1865,10 @@ mod tests {
         // With single-use invites, second user should be added to join_requests instead of members
         let group = groups.get_group(&scope, &group_id).unwrap();
         assert!(!group.value().is_member(&non_member_keys.public_key()));
-        assert!(group.value().join_requests.contains(&non_member_keys.public_key()));
+        assert!(group
+            .value()
+            .join_requests
+            .contains(&non_member_keys.public_key()));
     }
 
     #[tokio::test]
@@ -1732,7 +1886,9 @@ mod tests {
         ];
         let create_invite_event =
             create_test_event(&admin_keys, KIND_GROUP_CREATE_INVITE_9009, tags).await;
-        groups.handle_create_invite(create_invite_event, &scope).unwrap();
+        groups
+            .handle_create_invite(create_invite_event, &scope)
+            .unwrap();
 
         // Verify the invite exists and is reusable - IN A SCOPE
         {

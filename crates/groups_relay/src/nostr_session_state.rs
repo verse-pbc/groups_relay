@@ -121,16 +121,16 @@ impl NostrConnectionState {
         // ... existing code ...
     }
 
-    /// Convert the Scope to an Option<&str> for backward compatibility with code that 
+    /// Convert the Scope to an Option<&str> for backward compatibility with code that
     /// expects Option<&str> representing a subdomain.
     /// This is NOT used for database operations, only for logging and compatibility.
     pub fn subdomain_str(&self) -> Option<&str> {
         match &self.subdomain {
             Scope::Named { name, .. } => Some(name),
-            Scope::Default => None
+            Scope::Default => None,
         }
     }
-    
+
     pub fn subdomain(&self) -> &Scope {
         &self.subdomain
     }
@@ -179,7 +179,7 @@ impl StateFactory<NostrConnectionState> for NostrConnectionFactory {
 
         let subdomain_str =
             host_opt.and_then(|host_str| extract_subdomain(&host_str, self.base_domain_parts));
-            
+
         // Convert subdomain string to scope
         let subdomain_scope = subdomain_str
             .and_then(|s| {
@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(connection_state.subdomain_str(), Some("test"));
         match connection_state.subdomain {
             Scope::Named { name, .. } => assert_eq!(name, "test"),
-            _ => panic!("Expected a named scope")
+            _ => panic!("Expected a named scope"),
         }
     }
 
@@ -280,11 +280,11 @@ mod tests {
                 factory.create_state(cancellation_token.clone())
             })
             .await;
-        
+
         assert_eq!(connection_state.subdomain_str(), None);
         match connection_state.subdomain {
             Scope::Default => {} // This is expected
-            _ => panic!("Expected the Default scope")
+            _ => panic!("Expected the Default scope"),
         }
     }
 
@@ -298,7 +298,7 @@ mod tests {
         assert_eq!(connection_state.subdomain_str(), None);
         match connection_state.subdomain {
             Scope::Default => {} // This is expected
-            _ => panic!("Expected the Default scope")
+            _ => panic!("Expected the Default scope"),
         }
     }
 
@@ -313,11 +313,11 @@ mod tests {
                 factory.create_state(cancellation_token)
             })
             .await;
-            
+
         assert_eq!(connection_state.subdomain_str(), Some("sub.test"));
         match connection_state.subdomain {
             Scope::Named { name, .. } => assert_eq!(name, "sub.test"),
-            _ => panic!("Expected a named scope")
+            _ => panic!("Expected a named scope"),
         }
     }
 }

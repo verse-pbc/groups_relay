@@ -89,9 +89,13 @@ async fn test_replaceable_events_buffer_deduplicates_same_second_events() {
         .unwrap();
 
     while metadata_events.is_empty() && retries < max_retries {
-        println!("Retry {}/{}: No events found yet, waiting...", retries + 1, max_retries);
+        println!(
+            "Retry {}/{}: No events found yet, waiting...",
+            retries + 1,
+            max_retries
+        );
         sleep(Duration::from_millis(500)).await;
-        
+
         metadata_events = database
             .query(
                 vec![Filter::new()
@@ -101,7 +105,7 @@ async fn test_replaceable_events_buffer_deduplicates_same_second_events() {
             )
             .await
             .unwrap();
-            
+
         retries += 1;
     }
 
@@ -284,7 +288,7 @@ async fn test_different_scopes_are_separate_in_buffer() {
     let max_retries = 10;
     let mut default_events;
     let mut named_events;
-    
+
     loop {
         default_events = database
             .query(
@@ -305,13 +309,18 @@ async fn test_different_scopes_are_separate_in_buffer() {
             )
             .await
             .unwrap();
-            
+
         if (!default_events.is_empty() && !named_events.is_empty()) || retries >= max_retries {
             break;
         }
-        
-        println!("Retry {}/{}: Default: {}, Named: {} events found", 
-            retries + 1, max_retries, default_events.len(), named_events.len());
+
+        println!(
+            "Retry {}/{}: Default: {}, Named: {} events found",
+            retries + 1,
+            max_retries,
+            default_events.len(),
+            named_events.len()
+        );
         sleep(Duration::from_millis(500)).await;
         retries += 1;
     }

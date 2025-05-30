@@ -13,8 +13,7 @@ pub async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let db_path = tmp_dir.path().join("test.db");
     let keys = Keys::generate();
-    let database =
-        Arc::new(RelayDatabase::new(db_path.to_str().unwrap(), keys.clone()).unwrap());
+    let database = Arc::new(RelayDatabase::new(db_path.to_str().unwrap(), keys.clone()).unwrap());
     (tmp_dir, database, keys)
 }
 

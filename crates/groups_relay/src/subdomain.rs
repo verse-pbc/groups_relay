@@ -1,12 +1,12 @@
 pub fn extract_subdomain(host: &str, base_domain_parts: usize) -> Option<String> {
     // Remove port if present (host:port format)
     let host_without_port = host.split(':').next().unwrap_or(host);
-    
+
     // Skip subdomain extraction for localhost and IP addresses
     if host_without_port == "localhost" || host_without_port.parse::<std::net::IpAddr>().is_ok() {
         return None;
     }
-    
+
     let parts: Vec<&str> = host_without_port.split('.').collect();
     if parts.len() <= base_domain_parts {
         return None; // No subdomain
@@ -71,8 +71,14 @@ mod tests {
 
     #[test]
     fn test_extract_subdomain_with_port() {
-        assert_eq!(extract_subdomain("oslo.hol.is:8080", 2), Some("oslo".to_string())); // With port
-        assert_eq!(extract_subdomain("sub.example.com:3000", 2), Some("sub".to_string())); // With port
+        assert_eq!(
+            extract_subdomain("oslo.hol.is:8080", 2),
+            Some("oslo".to_string())
+        ); // With port
+        assert_eq!(
+            extract_subdomain("sub.example.com:3000", 2),
+            Some("sub".to_string())
+        ); // With port
         assert_eq!(extract_subdomain("localhost:3000", 2), None); // localhost with port
         assert_eq!(extract_subdomain("127.0.0.1:8000", 2), None); // IP with port
     }

@@ -92,10 +92,8 @@ impl Nip09Middleware {
                             event_id
                         );
 
-                        let delete_command = StoreCommand::DeleteEvents(
-                            filter,
-                            state.subdomain().clone(),
-                        );
+                        let delete_command =
+                            StoreCommand::DeleteEvents(filter, state.subdomain().clone());
                         self.database.save_store_command(delete_command).await?;
                     } else {
                         debug!(
@@ -139,10 +137,8 @@ impl Nip09Middleware {
                             .author(pubkey)
                             .custom_tag(SingleLetterTag::lowercase(Alphabet::D), d_tag);
 
-                        let delete_command = StoreCommand::DeleteEvents(
-                            filter,
-                            state.subdomain().clone(),
-                        );
+                        let delete_command =
+                            StoreCommand::DeleteEvents(filter, state.subdomain().clone());
                         self.database.save_store_command(delete_command).await?;
                     } else {
                         debug!(
@@ -183,20 +179,18 @@ impl Middleware for Nip09Middleware {
                     event_cow.id,
                     e
                 );
-                return ctx
-                    .send_message(RelayMessage::ok(
-                        event_cow.id,
-                        false,
-                        format!("Failed to process deletion request: {}", e),
-                    ));
+                return ctx.send_message(RelayMessage::ok(
+                    event_cow.id,
+                    false,
+                    format!("Failed to process deletion request: {}", e),
+                ));
             }
 
-            return ctx
-                .send_message(RelayMessage::ok(
-                    event_cow.id,
-                    true,
-                    "Deletion request processed successfully",
-                ));
+            return ctx.send_message(RelayMessage::ok(
+                event_cow.id,
+                true,
+                "Deletion request processed successfully",
+            ));
         }
 
         ctx.next().await

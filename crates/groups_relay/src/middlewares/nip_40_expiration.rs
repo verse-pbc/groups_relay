@@ -59,10 +59,8 @@ impl Middleware for Nip40ExpirationMiddleware {
                     );
 
                     let filter = Filter::new().id(event_ref.id);
-                    let delete_command = StoreCommand::DeleteEvents(
-                        filter,
-                        ctx.state.subdomain().clone(),
-                    );
+                    let delete_command =
+                        StoreCommand::DeleteEvents(filter, ctx.state.subdomain().clone());
 
                     if let Err(e) = self.database.save_store_command(delete_command).await {
                         tracing::error!(
@@ -203,7 +201,10 @@ mod tests {
 
         sleep(Duration::from_millis(100)).await;
         let events = database
-            .query(vec![Filter::new().id(non_expired_event.id)], &Scope::Default)
+            .query(
+                vec![Filter::new().id(non_expired_event.id)],
+                &Scope::Default,
+            )
             .await
             .unwrap();
         assert_eq!(events.len(), 1, "Non-expired event should not be deleted");
@@ -255,7 +256,10 @@ mod tests {
 
         sleep(Duration::from_millis(100)).await;
         let events = database
-            .query(vec![Filter::new().id(no_expiration_event.id)], &Scope::Default)
+            .query(
+                vec![Filter::new().id(no_expiration_event.id)],
+                &Scope::Default,
+            )
             .await
             .unwrap();
         assert_eq!(

@@ -54,8 +54,14 @@ pub async fn run_server(
     );
     info!("Frontend URL: {}", settings.local_addr);
     info!("Relay URL: {}", settings.relay_url);
-    info!("Auth requests must match: {} (with matching subdomain if present)", settings.auth_url);
-    info!("Subdomain extraction: Using {} parts for base domain", settings.base_domain_parts);
+    info!(
+        "Auth requests must match: {} (with matching subdomain if present)",
+        settings.auth_url
+    );
+    info!(
+        "Subdomain extraction: Using {} parts for base domain",
+        settings.base_domain_parts
+    );
 
     let relay_url_parsed = RelayUrl::parse(&settings.relay_url)?;
 

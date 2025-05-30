@@ -299,7 +299,7 @@ impl SubscriptionManager {
     pub fn set_outgoing_sender(&mut self, sender: MessageSender<RelayMessage<'static>>) {
         self.outgoing_sender = Some(sender);
     }
-    
+
     pub fn get_outgoing_sender(&self) -> Option<&MessageSender<RelayMessage<'static>>> {
         self.outgoing_sender.as_ref()
     }
@@ -381,7 +381,6 @@ impl SubscriptionManager {
         debug!("Handling unsubscribe {}", subscription_id);
         self.remove_subscription(subscription_id)
     }
-
 
     pub fn cancel_subscription_task(&self) {
         self.task_token.cancel();
@@ -476,7 +475,7 @@ mod tests {
     // These tests are disabled because they test the old behavior where
     // the subscription manager sends events directly. With the new architecture,
     // the middleware handles filtering and sending events.
-    
+
     #[ignore]
     #[tokio::test]
     async fn test_subscription_receives_historical_events() {
@@ -543,7 +542,6 @@ mod tests {
         connection.cleanup();
     }
 
-    
     #[ignore]
     #[tokio::test]
     async fn test_subscription_receives_new_events() {
@@ -611,7 +609,6 @@ mod tests {
         connection.cleanup();
     }
 
-    
     #[ignore]
     #[tokio::test]
     async fn test_subscription_receives_both_historical_and_new_events() {
@@ -709,7 +706,6 @@ mod tests {
         connection.cleanup();
     }
 
-    
     #[ignore]
     #[tokio::test]
     async fn test_limit_filter_returns_events_in_reverse_chronological_order() {
@@ -821,7 +817,6 @@ mod tests {
         assert_eq!(connection.subscription_count(), 0);
     }
 
-    
     #[ignore]
     #[tokio::test]
     async fn test_empty_filter_returns_text_note_events() {
@@ -888,7 +883,6 @@ mod tests {
         connection.cleanup();
     }
 
-    
     #[ignore]
     #[tokio::test]
     async fn test_empty_filter_returns_metadata_events() {
@@ -957,7 +951,6 @@ mod tests {
         connection.cleanup();
     }
 
-    
     #[ignore]
     #[tokio::test]
     async fn test_empty_filter_returns_contact_list_events() {
@@ -1028,7 +1021,6 @@ mod tests {
         connection.cleanup();
     }
 
-    
     #[ignore]
     #[tokio::test]
     async fn test_empty_filter_returns_events_from_multiple_authors() {
@@ -1124,7 +1116,6 @@ mod tests {
         connection.cleanup();
     }
 
-    
     #[ignore]
     #[tokio::test]
     async fn test_empty_filter_returns_all_event_kinds() {
