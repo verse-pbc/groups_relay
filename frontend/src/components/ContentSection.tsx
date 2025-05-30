@@ -122,8 +122,6 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         const author10019EventsSet = await profileNdk.fetchEvents(authorFilter)
         const author10019Events = Array.from(author10019EventsSet)
         
-        console.log(`Fetched ${author10019Events.length} kind:10019 events for ${uniqueAuthors.length} authors`)
-        
         // Initialize all authors as not having 10019
         uniqueAuthors.forEach(author => {
           authorHas10019.set(author, false)
@@ -221,6 +219,8 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
           if (normalizedCashuPubkey !== normalizedLockedPubkey) return
           
           // All verifications passed - count this nutzap
+          // Note: DLEQ proof verification is not implemented as it would require
+          // fetching and caching mint keysets, which is complex for the frontend
           const currentTotal = nutzapTotals.get(eventId) || 0
           nutzapTotals.set(eventId, currentTotal + amount)
         } catch (e) {
@@ -306,6 +306,7 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
           if (normalizedCashuPubkey !== normalizedLockedPubkey) return
           
           // All verifications passed - count this nutzap
+          // Note: DLEQ proof verification is not implemented
           this.setState(prev => {
             const newTotals = new Map(prev.eventNutzaps)
             const currentTotal = newTotals.get(eventId) || 0
