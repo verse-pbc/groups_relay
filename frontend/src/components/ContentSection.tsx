@@ -88,6 +88,8 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       if (eventIds.length === 0) return
 
       // Subscribe to nutzaps for these events
+      // Note: Nutzaps are tagged with the regular nostr pubkey in the 'p' tag,
+      // not the cashu P2PK pubkey. The cashu pubkey is only used in the proof.
       const filter = {
         kinds: [9321], // NIP-61 nutzap kind
         '#e': eventIds // Events that are referenced
@@ -105,6 +107,7 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       // Fetch 10019 events for all content authors
       const authorMints = new Map<string, string[]>()
       const authorHas10019 = new Map<string, boolean>()
+      const authorCashuPubkeys = new Map<string, string>() // Map author pubkey -> cashu P2PK pubkey
       
       if (uniqueAuthors.length > 0) {
         const authorFilter = {
@@ -127,14 +130,21 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         
         author10019Events.forEach((event: any) => {
           const mints: string[] = []
+          let cashuPubkey: string | null = null
+          
           event.tags.forEach((tag: string[]) => {
             if (tag[0] === 'mint' && tag[1]) {
               mints.push(tag[1])
+            } else if (tag[0] === 'pubkey' && tag[1]) {
+              // This is the P2PK pubkey for receiving nutzaps
+              cashuPubkey = tag[1]
             }
           })
-          if (mints.length > 0) {
+          
+          if (mints.length > 0 && cashuPubkey) {
             authorMints.set(event.pubkey, mints)
             authorHas10019.set(event.pubkey, true)
+            authorCashuPubkeys.set(event.pubkey, cashuPubkey)
           }
         })
       }
@@ -174,15 +184,8 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         const mint = uTag ? uTag[1] : null
 
         // According to NIP-61, nutzaps MUST have a 'u' tag with the mint URL
-        // If it's missing, the nutzap is from an old/non-compliant implementation
-        if (!mint) {
-          // For backward compatibility, count it anyway if the recipient has authorized mints
-          if (authorizedMints.length > 0) {
-            const currentTotal = nutzapTotals.get(eventId) || 0
-            nutzapTotals.set(eventId, currentTotal + amount)
-          }
-        } else if (authorizedMints.includes(mint)) {
-          // Count nutzaps from authorized mints
+        // Only count properly formatted nutzaps
+        if (mint && authorizedMints.includes(mint)) {
           const currentTotal = nutzapTotals.get(eventId) || 0
           nutzapTotals.set(eventId, currentTotal + amount)
         }
@@ -231,8 +234,8 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         const uTag = event.tags.find((tag: string[]) => tag[0] === 'u')
         const mint = uTag ? uTag[1] : null
 
-        // Count if no mint (non-compliant but count anyway) or from authorized mint
-        if ((!mint && authorizedMints.length > 0) || (mint && authorizedMints.includes(mint))) {
+        // Only count properly formatted nutzaps from authorized mints
+        if (mint && authorizedMints.includes(mint)) {
           // Update state
           this.setState(prev => {
             const newTotals = new Map(prev.eventNutzaps)
