@@ -52,6 +52,8 @@ export class NostrGroupError extends Error {
 export class NostrClient {
   private ndk: NDK;
   private profileNdk: NDK;
+  private groupWriteNdk: NDK | null = null;
+  private groupWriteRelays: Set<string> = new Set();
   readonly config: NostrClientConfig;
   private profileCache: Map<string, any> = new Map();
   private user10019Cache: Map<string, any> = new Map();
@@ -638,7 +640,80 @@ export class NostrClient {
     return relays;
   }
 
-  // Fetch user's kind:10019 event from their write relays (gossip model)
+  // Initialize group write relay pool from member pubkeys
+  async initializeGroupWriteRelays(memberPubkeys: string[]): Promise<void> {
+    try {
+      // Collect all unique write relays from all members
+      const allRelays = new Set<string>();
+      
+      // Fetch relay lists for all members in parallel
+      await Promise.all(memberPubkeys.map(async (pubkey) => {
+        try {
+          const relays = await this.getUserRelays(pubkey);
+          relays.forEach(relay => allRelays.add(relay));
+        } catch (err) {
+          // Skip failed relay fetches
+        }
+      }));
+      
+      // Add some fallback relays to ensure we have coverage
+      allRelays.add("wss://relay.damus.io");
+      allRelays.add("wss://relay.nos.social");
+      allRelays.add("wss://relay.primal.net");
+      
+      // Limit total relays to prevent connection exhaustion (max 10)
+      const limitedRelays = Array.from(allRelays).slice(0, 10);
+      
+      // Only recreate if the relay set has changed significantly
+      const newRelaySet = new Set(limitedRelays);
+      const hasChanged = newRelaySet.size !== this.groupWriteRelays.size || 
+                        !Array.from(newRelaySet).every(relay => this.groupWriteRelays.has(relay));
+      
+      if (!hasChanged && this.groupWriteNdk) {
+        return; // No change needed
+      }
+      
+      // Close existing group write NDK if it exists
+      if (this.groupWriteNdk) {
+        try {
+          Array.from(this.groupWriteNdk.pool.relays.values()).forEach(relay => {
+            try {
+              relay.disconnect();
+            } catch (err) {
+              // Ignore disconnection errors
+            }
+          });
+        } catch (err) {
+          // Ignore cleanup errors
+        }
+      }
+      
+      // Create new group write NDK instance
+      this.groupWriteNdk = new NDK({
+        explicitRelayUrls: limitedRelays,
+        signer: this.ndk.signer
+      });
+      
+      this.groupWriteRelays = newRelaySet;
+      
+      // Connect with timeout
+      const connectPromise = this.groupWriteNdk.connect();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Group write relay connection timeout")), 5000)
+      );
+      
+      try {
+        await Promise.race([connectPromise, timeoutPromise]);
+      } catch (err) {
+        console.warn("Some group write relays failed to connect:", err);
+        // Continue with partial connections
+      }
+    } catch (error) {
+      console.error("Failed to initialize group write relays:", error);
+    }
+  }
+
+  // Fetch user's kind:10019 event using group write relay pool
   async fetchUser10019(pubkey: string): Promise<any> {
     try {
       // Check cache first
@@ -654,26 +729,8 @@ export class NostrClient {
       // Create a promise for this fetch to prevent duplicate requests
       const fetchPromise = (async () => {
         try {
-          // First get user's relay list to know where to look
-          const userRelays = await this.getUserRelays(pubkey);
-          
-          // Create a temporary NDK instance with user's relays
-          const userNdk = new NDK({
-            explicitRelayUrls: userRelays,
-            signer: this.ndk.signer
-          });
-          
-          // Connect with timeout
-          const connectPromise = userNdk.connect();
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("Connection timeout")), 3000)
-          );
-          
-          try {
-            await Promise.race([connectPromise, timeoutPromise]);
-          } catch (err) {
-            // Continue anyway - some relays might be connected
-          }
+          // Use group write NDK if available, otherwise fall back to profile NDK
+          const ndkToUse = this.groupWriteNdk || this.profileNdk;
 
           // Fetch kind:10019 event
           const filter = {
@@ -682,8 +739,8 @@ export class NostrClient {
             limit: 1
           };
 
-          // Fetch from user's relays
-          const events = await userNdk.fetchEvents(filter);
+          // Fetch from group write relays or profile relays
+          const events = await ndkToUse.fetchEvents(filter);
           
           let result = null;
           if (events.size > 0) {
@@ -712,7 +769,7 @@ export class NostrClient {
     }
   }
 
-  // Fetch multiple users' kind:10019 events efficiently using gossip model
+  // Fetch multiple users' kind:10019 events efficiently using group write relay pool
   async fetchMultipleUsers10019(pubkeys: string[]): Promise<Map<string, any>> {
     const result = new Map<string, any>();
     const pubkeysToFetch: string[] = [];
@@ -735,34 +792,8 @@ export class NostrClient {
     }
     
     try {
-      // First collect all unique relays from all users
-      const allRelays = new Set<string>();
-      const userRelayMap = new Map<string, string[]>();
-      
-      // Fetch relay lists for all users in parallel
-      await Promise.all(pubkeysToFetch.map(async (pubkey) => {
-        const relays = await this.getUserRelays(pubkey);
-        userRelayMap.set(pubkey, relays);
-        relays.forEach(relay => allRelays.add(relay));
-      }));
-      
-      // Create a temporary NDK instance with all discovered relays
-      const gossipNdk = new NDK({
-        explicitRelayUrls: Array.from(allRelays),
-        signer: this.ndk.signer
-      });
-      
-      // Connect with timeout
-      const connectPromise = gossipNdk.connect();
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Connection timeout")), 5000)
-      );
-      
-      try {
-        await Promise.race([connectPromise, timeoutPromise]);
-      } catch (err) {
-        // Continue anyway - some relays might be connected
-      }
+      // Use group write NDK if available, otherwise fall back to profile NDK
+      const ndkToUse = this.groupWriteNdk || this.profileNdk;
 
       // Fetch all kind:10019 events in one query
       const filter = {
@@ -771,7 +802,7 @@ export class NostrClient {
         limit: pubkeysToFetch.length
       };
 
-      const events = await gossipNdk.fetchEvents(filter);
+      const events = await ndkToUse.fetchEvents(filter);
       
       // Map events back to authors and cache them
       events.forEach(event => {
@@ -873,18 +904,27 @@ export class NostrClient {
 
   async disconnect() {
     try {
-      // Close all relay connections from both NDK instances
+      // Close all relay connections from all NDK instances
       const groupRelays = Array.from(this.ndk.pool.relays.values());
       const profileRelays = Array.from(this.profileNdk.pool.relays.values());
+      const groupWriteRelays = this.groupWriteNdk ? Array.from(this.groupWriteNdk.pool.relays.values()) : [];
 
       await Promise.all([
         ...groupRelays.map((relay) => relay.disconnect()),
         ...profileRelays.map((relay) => relay.disconnect()),
+        ...groupWriteRelays.map((relay) => relay.disconnect()),
       ]);
 
       // Clear any subscriptions
       this.ndk.pool.removeAllListeners();
       this.profileNdk.pool.removeAllListeners();
+      if (this.groupWriteNdk) {
+        this.groupWriteNdk.pool.removeAllListeners();
+        this.groupWriteNdk = null;
+      }
+      
+      // Clear group write relay cache
+      this.groupWriteRelays.clear();
 
     } catch (error) {
       console.error("Error during disconnect:", error);
