@@ -128,19 +128,47 @@ export class NostrClient {
 
       // Add error tracking for main NDK instances
       this.ndk.pool.on('relay:disconnect', (relay: NDKRelay) => {
-        this.markRelayAsDead(relay.url);
+        // Normal disconnections should trigger reconnection, not be counted as failures
+        this.markRelayAsDead(relay.url, false);
       });
 
       this.profileNdk.pool.on('relay:disconnect', (relay: NDKRelay) => {
-        this.markRelayAsDead(relay.url);
+        // Normal disconnections should trigger reconnection, not be counted as failures
+        this.markRelayAsDead(relay.url, false);
+      });
+      
+      // Track connection failures - use existing auth failure handlers
+      // Note: We'll rely on the existing auth event handlers below to catch auth failures
+      
+      // Track flapping relays (frequently connecting/disconnecting)
+      this.ndk.pool.on('flapping', (relay: NDKRelay) => {
+        this.markRelayAsDead(relay.url, true, new Error('Relay is flapping'));
+      });
+      
+      this.profileNdk.pool.on('flapping', (relay: NDKRelay) => {
+        this.markRelayAsDead(relay.url, true, new Error('Relay is flapping'));
       });
 
-      this.ndk.pool.on('relay:auth', (_relay: NDKRelay, _challenge: string) => {
-        // Auth challenge - not necessarily a failure
+      this.ndk.pool.on('relay:auth', (relay: NDKRelay, _challenge: string) => {
+        // Auth challenge received - set up auth failure detection
+        const authTimeout = setTimeout(() => {
+          this.markRelayAsDead(relay.url, true, new Error('Auth timeout'));
+        }, 10000); // 10 second auth timeout
+        
+        // Clear timeout if auth succeeds
+        relay.once('authed', () => clearTimeout(authTimeout));
+        relay.once('disconnect', () => clearTimeout(authTimeout));
       });
 
-      this.profileNdk.pool.on('relay:auth', (_relay: NDKRelay, _challenge: string) => {
-        // Auth challenge - not necessarily a failure  
+      this.profileNdk.pool.on('relay:auth', (relay: NDKRelay, _challenge: string) => {
+        // Auth challenge received - set up auth failure detection
+        const authTimeout = setTimeout(() => {
+          this.markRelayAsDead(relay.url, true, new Error('Auth timeout'));
+        }, 10000); // 10 second auth timeout
+        
+        // Clear timeout if auth succeeds
+        relay.once('authed', () => clearTimeout(authTimeout));
+        relay.once('disconnect', () => clearTimeout(authTimeout));
       });
 
       // Load temporarily dead relays from localStorage
@@ -441,7 +469,14 @@ export class NostrClient {
 
   // Check if wallet has any balance for nutzap functionality
   hasWalletBalance(): boolean {
-    return this.walletService !== null;
+    if (!this.walletService) {
+      console.log('🔍 hasWalletBalance: no wallet service');
+      return false;
+    }
+    
+    const cachedBalance = this.walletService.getCachedBalance();
+    console.log('🔍 hasWalletBalance: cached balance is', cachedBalance);
+    return cachedBalance > 0;
   }
 
   // Add a mint to the wallet and persist to NIP-60
@@ -465,19 +500,56 @@ export class NostrClient {
 
   // Get balance for a specific mint
   async getCashuBalance(mintUrl?: string): Promise<number> {
-    if (!this.walletService) return 0;
+    console.log('🔍 NostrClient.getCashuBalance() called')
+    console.log('  mintUrl:', mintUrl)
+    console.log('  walletService exists:', !!this.walletService)
     
-    if (mintUrl) {
+    if (!this.walletService) {
+      console.log('  ❌ No wallet service, returning 0')
       return 0;
     }
     
-    return this.walletService.getBalance();
+    if (mintUrl) {
+      console.log('  ❌ mintUrl specified, returning 0 (not implemented)')
+      return 0;
+    }
+    
+    console.log('  ✅ Calling walletService.getBalance()...')
+    const balance = await this.walletService.getBalance();
+    console.log('  walletService.getBalance() returned:', balance)
+    return balance;
+  }
+
+  // Get balance available for sending to a specific recipient
+  async getCashuBalanceForRecipient(recipientPubkey: string): Promise<number> {
+    console.log('🔍 NostrClient.getCashuBalanceForRecipient() called')
+    console.log('  recipientPubkey:', recipientPubkey)
+    console.log('  walletService exists:', !!this.walletService)
+    
+    if (!this.walletService) {
+      console.log('  ❌ No wallet service, returning 0')
+      return 0;
+    }
+    
+    console.log('  ✅ Calling walletService.getBalanceForRecipient()...')
+    const balance = await this.walletService.getBalanceForRecipient(recipientPubkey);
+    console.log('  walletService.getBalanceForRecipient() returned:', balance)
+    return balance;
   }
 
   async getCashuMintBalances(): Promise<Record<string, number>> {
-    if (!this.walletService) return {};
+    console.log('🔍 NostrClient.getCashuMintBalances() called')
+    console.log('  walletService exists:', !!this.walletService)
     
-    return this.walletService.getMintBalances();
+    if (!this.walletService) {
+      console.log('  ❌ No wallet service, returning {}')
+      return {};
+    }
+    
+    console.log('  ✅ Calling walletService.getMintBalances()...')
+    const balances = await this.walletService.getMintBalances();
+    console.log('  walletService.getMintBalances() returned:', balances)
+    return balances;
   }
 
   async getAllCashuMintBalances(): Promise<{ authorized: Record<string, number>, unauthorized: Record<string, number> }> {
@@ -657,8 +729,111 @@ export class NostrClient {
     }
   }
 
+  // Check if a disconnection is a normal server-side disconnection
+  private isNormalDisconnection(error?: Error): boolean {
+    if (!error?.message) return false;
+    
+    const normalDisconnectionPatterns = [
+      /max connection time.*exceeded.*initiating graceful shutdown/i,
+      /connection timeout/i,
+      /server is shutting down/i,
+      /graceful shutdown/i,
+      /connection closed by server/i
+    ];
+    
+    return normalDisconnectionPatterns.some(pattern => pattern.test(error.message));
+  }
+
+  // Attempt to reconnect to a relay immediately
+  private async attemptReconnection(relayUrl: string): Promise<void> {
+    console.log(`🔄 Attempting to reconnect to ${relayUrl}`);
+    
+    try {
+      // Find the relay in our pools and attempt reconnection
+      const mainRelay = this.ndk.pool.relays.get(relayUrl);
+      const profileRelay = this.profileNdk.pool.relays.get(relayUrl);
+      const groupWriteRelay = this.groupWriteNdk?.pool.relays.get(relayUrl);
+      
+      const reconnectPromises = [];
+      
+      if (mainRelay && mainRelay.status !== 1) { // Not connected
+        reconnectPromises.push(this.connectToRelay(mainRelay));
+      }
+      
+      if (profileRelay && profileRelay.status !== 1) {
+        reconnectPromises.push(this.connectToRelay(profileRelay));
+      }
+      
+      if (groupWriteRelay && groupWriteRelay.status !== 1) {
+        reconnectPromises.push(this.connectToRelay(groupWriteRelay));
+      }
+      
+      if (reconnectPromises.length > 0) {
+        await Promise.allSettled(reconnectPromises);
+        console.log(`✅ Reconnection attempt completed for ${relayUrl}`);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Failed to reconnect to ${relayUrl}:`, error);
+    }
+  }
+
+  // Connect to a specific relay with timeout
+  private async connectToRelay(relay: NDKRelay): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Connection timeout'));
+      }, 5000);
+      
+      const onConnect = () => {
+        clearTimeout(timeout);
+        relay.removeListener('connect', onConnect);
+        relay.removeListener('disconnect', onDisconnect);
+        resolve();
+      };
+      
+      const onDisconnect = (error?: Error) => {
+        clearTimeout(timeout);
+        relay.removeListener('connect', onConnect);
+        relay.removeListener('disconnect', onDisconnect);
+        reject(error || new Error('Disconnected during connection attempt'));
+      };
+      
+      relay.on('connect', onConnect);
+      relay.on('disconnect', onDisconnect);
+      
+      // If already connected, resolve immediately
+      if (relay.status === 1) {
+        clearTimeout(timeout);
+        resolve();
+        return;
+      }
+      
+      // Attempt connection
+      relay.connect().catch(reject);
+    });
+  }
+
   // Add a relay to the temporary dead list if it fails repeatedly
-  private markRelayAsDead(relayUrl: string, error?: Error): void {
+  private markRelayAsDead(relayUrl: string, isActualFailure: boolean = true, error?: Error): void {
+    // Handle normal disconnections differently
+    if (!isActualFailure && this.isNormalDisconnection(error)) {
+      console.log(`🔄 Normal server disconnection from ${relayUrl}, attempting reconnection`);
+      // Attempt immediate reconnection for normal disconnections
+      this.attemptReconnection(relayUrl).catch(err => {
+        console.warn(`⚠️ Reconnection failed for ${relayUrl}:`, err);
+        // If reconnection fails, treat as actual failure
+        this.markRelayAsDead(relayUrl, true, err instanceof Error ? err : new Error(String(err)));
+      });
+      return;
+    }
+    
+    // Only count actual failures toward dead relay threshold
+    if (!isActualFailure) {
+      console.log(`🔄 Non-failure disconnection from ${relayUrl}, attempting reconnection`);
+      this.attemptReconnection(relayUrl);
+      return;
+    }
+    
     const now = Date.now();
     const existing = this.relayFailures.get(relayUrl) || { count: 0, lastFailed: 0 };
     
@@ -671,11 +846,13 @@ export class NostrClient {
     existing.lastFailed = now;
     this.relayFailures.set(relayUrl, existing);
     
-    // Mark as temporarily dead after 3 failures (persists for 2 hours)
-    if (existing.count >= 3) {
+    // Mark as temporarily dead after 6 failures (persists for 2 hours)
+    if (existing.count >= 6) {
       this.temporarilyDeadRelays.add(relayUrl);
       this.saveTemporarilyDeadRelays(); // Persist to localStorage
       console.warn(`🚫 Temporarily marked relay as dead after ${existing.count} failures: ${relayUrl}`, error?.message);
+    } else {
+      console.warn(`⚠️ Relay failure ${existing.count}/6 for ${relayUrl}:`, error?.message);
     }
   }
 
@@ -816,11 +993,26 @@ export class NostrClient {
       
       this.groupWriteNdk.pool.on('relay:disconnect', (relay: NDKRelay) => {
         console.warn(`⚠️ Group write relay disconnected: ${relay.url}`);
-        this.markRelayAsDead(relay.url);
+        // Normal disconnections should trigger reconnection, not be counted as failures
+        this.markRelayAsDead(relay.url, false);
       });
       
-      this.groupWriteNdk.pool.on('relay:auth', (_relay: NDKRelay, _challenge: string) => {
-        // Auth challenge received - not necessarily a failure
+      // Group write relay auth failures will be handled by individual relay listeners
+      
+      this.groupWriteNdk.pool.on('flapping', (relay: NDKRelay) => {
+        console.warn(`❌ Group write relay flapping: ${relay.url}`);
+        this.markRelayAsDead(relay.url, true, new Error('Relay is flapping'));
+      });
+      
+      this.groupWriteNdk.pool.on('relay:auth', (relay: NDKRelay, _challenge: string) => {
+        // Auth challenge received - set up auth failure detection
+        const authTimeout = setTimeout(() => {
+          this.markRelayAsDead(relay.url, true, new Error('Auth timeout'));
+        }, 10000); // 10 second auth timeout
+        
+        // Clear timeout if auth succeeds
+        relay.once('authed', () => clearTimeout(authTimeout));
+        relay.once('disconnect', () => clearTimeout(authTimeout));
       });
       
       // Connect with timeout
@@ -833,11 +1025,11 @@ export class NostrClient {
         await Promise.race([connectPromise, timeoutPromise]);
       } catch (err) {
         console.warn("Some group write relays failed to connect:", err);
-        // Mark relays that failed to connect as potentially dead
+        // Mark relays that failed to connect as actual failures
         limitedRelays.forEach(relayUrl => {
           const relay = this.groupWriteNdk?.pool.relays.get(relayUrl);
           if (!relay || relay.status !== 1) { // Not connected
-            this.markRelayAsDead(relayUrl, err instanceof Error ? err : new Error(String(err)));
+            this.markRelayAsDead(relayUrl, true, err instanceof Error ? err : new Error(String(err)));
           }
         });
       }

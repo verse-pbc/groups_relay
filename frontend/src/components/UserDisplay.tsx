@@ -39,6 +39,7 @@ interface UserDisplayState {
 
 export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
   private copyTimeout: number | null = null;
+  private unsubscribeBalance: (() => void) | null = null;
 
   state = {
     showNutzapModal: false,
@@ -61,8 +62,22 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
     // Add ESC key listener
     document.addEventListener('keydown', this.handleKeyDown);
     
+    // Subscribe to balance updates to trigger re-renders when wallet balance changes
+    const { client } = this.props;
+    if (client) {
+      console.log('🔍 UserDisplay subscribing to balance updates');
+      this.unsubscribeBalance = client.onBalanceUpdate((balance) => {
+        console.log('🔍 UserDisplay balance update received:', balance, '- forcing re-render');
+        // Force re-render by updating state (even if we don't use this state directly)  
+        this.setState({ walletBalance: balance });
+      });
+      console.log('🔍 UserDisplay subscription complete');
+    } else {
+      console.warn('🔍 UserDisplay: No client available for balance subscription');
+    }
+    
     // Fetch user profile
-    const { pubkey, client, profileData } = this.props
+    const { pubkey, profileData } = this.props
     
     // Convert to npub if it's a hex pubkey
     const displayId = pubkey.startsWith('npub') ? pubkey : client?.pubkeyToNpub(pubkey) || pubkey
@@ -113,6 +128,10 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
   componentWillUnmount() {
     // Remove ESC key listener
     document.removeEventListener('keydown', this.handleKeyDown);
+    // Unsubscribe from balance updates
+    if (this.unsubscribeBalance) {
+      this.unsubscribeBalance();
+    }
     // Clear copy timeout
     if (this.copyTimeout) {
       window.clearTimeout(this.copyTimeout)
@@ -151,13 +170,26 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
   // Fetch wallet balance and mint balances when modal opens
   fetchWalletBalance = async () => {
     try {
-      const { mints } = this.props
+      const { mints, pubkey, client } = this.props
 
-      // Get total balance and per-mint balances
-      const [totalBalance, mintBalances] = await Promise.all([
-        this.props.client.getCashuBalance(),
-        this.props.client.getCashuMintBalances()
-      ])
+      console.log('🔍 UserDisplay.fetchWalletBalance() called from nutzap modal')
+      console.log('  Props mints:', mints)
+      console.log('  Target pubkey:', pubkey)
+      console.log('  Client instance:', client)
+
+      // Get total balance and per-mint balances (reverting to working approach)
+      console.log('  Calling client.getCashuBalance()...')
+      const totalBalance = await client.getCashuBalance()
+      console.log('  client.getCashuBalance() returned:', totalBalance)
+      
+      console.log('  Calling client.getCashuMintBalances()...')
+      const mintBalances = await client.getCashuMintBalances()
+      console.log('  client.getCashuMintBalances() returned:', mintBalances)
+
+      console.log('  Setting state with:')
+      console.log('    walletBalance:', totalBalance)
+      console.log('    mintBalances:', mintBalances)
+      console.log('    selectedMint:', mints?.[0] || '')
 
       this.setState({
         walletBalance: totalBalance,
@@ -183,7 +215,19 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
     // Check against total balance
     const totalBalance = this.state.walletBalance
     if (sats > totalBalance) {
-      this.setState({ error: `Insufficient balance (${totalBalance} sats available)` })
+      if (totalBalance === 0) {
+        // Check if we might have tokens in unauthorized mints
+        const allMintBalances = Object.values(this.state.mintBalances as Record<string, number>).reduce((sum, balance) => sum + balance, 0);
+        if (allMintBalances > 0) {
+          this.setState({ 
+            error: `No balance available in recipient's accepted mints. You have ${allMintBalances} sats in other mints, but the recipient only accepts specific mints. Check console for details.` 
+          })
+        } else {
+          this.setState({ error: `Insufficient balance. You have ${totalBalance} sats but tried to send ${sats} sats.` })
+        }
+      } else {
+        this.setState({ error: `Insufficient balance. You have ${totalBalance} sats but tried to send ${sats} sats.` })
+      }
       return
     }
 
@@ -283,6 +327,7 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
 
     // Check if wallet has balance (NDKCashuWallet doesn't expose proofs directly)
     const hasWalletBalance = client.hasWalletBalance()
+    console.log('🔍 UserDisplay render - hasWalletBalance:', hasWalletBalance, 'targetUserHas10019:', this.state.targetUserHas10019)
 
     return (
       <div class="flex items-center gap-2">
@@ -342,6 +387,7 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
         {!hideNutzap && hasWalletBalance && this.state.targetUserHas10019 && (
           <button
             onClick={() => {
+              console.log('🔥 NUTZAP BUTTON CLICKED - Opening modal and fetching balance')
               this.setState({ showNutzapModal: true })
               this.fetchWalletBalance()
             }}
@@ -356,6 +402,16 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
 
         {showNutzapModal && (
           <>
+            {/* Debug logging when modal renders */}
+            {(() => {
+              console.log('🔥 NUTZAP MODAL RENDERING - Current state:')
+              console.log('  walletBalance:', this.state.walletBalance)
+              console.log('  mintBalances:', this.state.mintBalances)
+              console.log('  Object.keys(mintBalances):', Object.keys(this.state.mintBalances))
+              console.log('  Object.values(mintBalances):', Object.values(this.state.mintBalances))
+              return null;
+            })()}
+            
             {/* Modal backdrop */}
             <div
               class="fixed inset-0 bg-black/50 z-50"
@@ -399,6 +455,10 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
                   />
                   <p class="text-xs text-[var(--color-text-tertiary)] mt-1 flex items-center gap-1">
                     Total balance: <span class="text-[#f7931a] font-medium">₿{this.state.walletBalance.toLocaleString()} sats</span>
+                    {/* Debug output */}
+                    {this.state.walletBalance === 0 && (
+                      <span class="text-red-400 text-xs ml-2">(DEBUG: Balance is 0 in modal)</span>
+                    )}
                   </p>
                 </div>
 

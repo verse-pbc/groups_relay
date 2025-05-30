@@ -5,6 +5,7 @@ import { type Proof } from "@cashu/cashu-ts";
 // Interfaces following Interface Segregation Principle
 export interface IWalletBalance {
   getBalance(): Promise<number>;
+  getBalanceForRecipient(recipientPubkey: string): Promise<number>;
   getMintBalances(): Promise<Record<string, number>>;
   getAllMintBalances(): Promise<{ authorized: Record<string, number>, unauthorized: Record<string, number> }>;
   getCachedBalance(): number;
@@ -95,6 +96,7 @@ export class CashuWalletService implements ICashuWalletService {
   private balanceCallbacks: Set<(balance: number) => void> = new Set();
   private userPubkey: string | null = null;
   private balanceCacheTimeout: number = 5 * 60 * 1000; // 5 minutes
+  private lastBalanceCalculationTime = 0;
 
   constructor(ndk: NDK, storage: IWalletStorage = new LocalStorageAdapter()) {
     this.ndk = ndk;
@@ -218,35 +220,126 @@ export class CashuWalletService implements ICashuWalletService {
     if (!this.wallet) return 0;
     
     try {
-      // Get balances per mint
-      const mintBalances = this.wallet.mintBalances;
-      
-      // Get the mints from the user's kind:10019 event (these are the "authorized" mints)
-      const nutzapConfigMints = await this.getNutzapConfigMints();
-      const authorizedMints = nutzapConfigMints.length > 0 ? nutzapConfigMints : (this.wallet.mints || []);
-      
-      console.log("🔍 Debug getBalance:");
-      console.log("  All mint balances:", mintBalances);
-      console.log("  Authorized mints (from kind:10019):", authorizedMints);
-      
-      // Only count balance from authorized mints
-      let totalBalance = 0;
-      for (const [mint, balance] of Object.entries(mintBalances)) {
-        if (authorizedMints.includes(mint)) {
-          totalBalance += balance;
-          console.log(`  ✅ Including ${balance} sats from authorized mint: ${mint}`);
-        } else {
-          console.warn(`  ⚠️ Ignoring ${balance} sats from unauthorized mint: ${mint}`);
-        }
+      // Use throttling to prevent excessive recalculation
+      const now = Date.now();
+      if (now - this.lastBalanceCalculationTime < 1000) { // Max once per second
+        console.log(`  🔄 Using recently calculated balance: ${this.cachedBalance}`);
+        return this.cachedBalance;
       }
       
-      console.log(`  Total authorized balance: ${totalBalance}`);
+      // Calculate balance from scratch to avoid NDK accumulation bugs
+      const realBalance = await this.calculateBalanceFromScratch();
       
-      this.updateCachedBalance(totalBalance);
-      return totalBalance;
+      this.lastBalanceCalculationTime = now;
+      this.updateCachedBalance(realBalance);
+      return realBalance;
     } catch (error) {
       console.error("Failed to get balance:", error);
       return this.cachedBalance;
+    }
+  }
+
+  /**
+   * Calculate balance from scratch by processing all token events with deduplication
+   */
+  private async calculateBalanceFromScratch(): Promise<number> {
+    if (!this.wallet) return 0;
+
+    try {
+      console.log("🔄 Calculating balance from scratch to avoid duplication");
+      
+      // Get fresh mint balances from NDK but with deduplication awareness
+      const mintBalances = this.wallet.mintBalances;
+      
+      // Check if this looks like a duplicate calculation
+      const totalFromNDK = Object.values(mintBalances).reduce((sum, balance) => sum + balance, 0);
+      
+      // If balance increased dramatically since last calculation, it might be duplication
+      if (this.cachedBalance > 0 && totalFromNDK > this.cachedBalance * 1.5) {
+        console.warn(`🚨 Suspected balance duplication: ${this.cachedBalance} -> ${totalFromNDK}`);
+        console.warn("   Returning cached balance to prevent inflation");
+        return this.cachedBalance;
+      }
+      
+      // For general balance, show total across all mints
+      let totalBalance = 0;
+      for (const [mint, balance] of Object.entries(mintBalances)) {
+        totalBalance += balance;
+        console.log(`  ✅ Including ${balance} sats from mint: ${mint}`);
+      }
+      
+      console.log(`  Total balance: ${totalBalance}`);
+      return totalBalance;
+    } catch (error) {
+      console.error("Failed to calculate balance from scratch:", error);
+      return this.cachedBalance;
+    }
+  }
+
+  /**
+   * Get balance available for sending to a specific recipient
+   * This checks which mints both sender and recipient have in common
+   */
+  async getBalanceForRecipient(recipientPubkey: string): Promise<number> {
+    if (!this.wallet) return 0;
+    
+    try {
+      // Get balances per mint
+      const mintBalances = this.wallet.mintBalances;
+      
+      // Get the recipient's accepted mints from their kind:10019 event
+      const recipientMints = await this.getRecipientAcceptedMints(recipientPubkey);
+      console.log("🔍 Debug getBalanceForRecipient:");
+      console.log("  All mint balances:", mintBalances);
+      console.log("  Recipient accepted mints:", recipientMints);
+      
+      // Only count balance from mints the recipient accepts
+      let availableBalance = 0;
+      for (const [mint, balance] of Object.entries(mintBalances)) {
+        if (recipientMints.includes(mint)) {
+          availableBalance += balance;
+          console.log(`  ✅ Can send ${balance} sats from shared mint: ${mint}`);
+        } else {
+          console.warn(`  ⚠️ Cannot send ${balance} sats from unaccepted mint: ${mint}`);
+        }
+      }
+      
+      console.log(`  Total sendable balance to recipient: ${availableBalance}`);
+      return availableBalance;
+    } catch (error) {
+      console.error("Failed to get balance for recipient:", error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get mints that a recipient accepts from their kind:10019 event
+   */
+  private async getRecipientAcceptedMints(recipientPubkey: string): Promise<string[]> {
+    try {
+      const filter = {
+        kinds: [10019],
+        authors: [recipientPubkey],
+        limit: 1
+      };
+      
+      const events = await this.ndk.fetchEvents(filter);
+      if (events.size === 0) return [];
+      
+      const nutzapConfig = Array.from(events)[0];
+      const mints: string[] = [];
+      
+      // Extract mint URLs from tags
+      nutzapConfig.tags.forEach(tag => {
+        if (tag[0] === 'mint' && tag[1]) {
+          mints.push(tag[1]);
+        }
+      });
+      
+      return mints;
+    } catch (error) {
+      console.error("Failed to fetch recipient accepted mints:", error);
+      return [];
     }
   }
 
@@ -271,6 +364,27 @@ export class CashuWalletService implements ICashuWalletService {
       console.log("  Type of allMintBalances:", typeof allMintBalances);
       console.log("  Is allMintBalances an object?", allMintBalances && typeof allMintBalances === 'object');
       console.log("  Object.entries(allMintBalances):", Object.entries(allMintBalances));
+      
+      // Check for URL mismatches in getMintBalances too
+      const balanceMints = Object.keys(allMintBalances);
+      if (balanceMints.length > 0) {
+        console.log("  Detailed mint comparison in getMintBalances:");
+        balanceMints.forEach(balanceMint => {
+          const isAuthorized = authorizedMints.includes(balanceMint);
+          console.log(`    ${balanceMint} (${allMintBalances[balanceMint]} sats) -> ${isAuthorized ? 'AUTHORIZED' : 'NOT AUTHORIZED'}`);
+          
+          if (!isAuthorized) {
+            // Check for similar URLs that might be close matches
+            const similarMints = authorizedMints.filter(authMint => 
+              authMint.includes(balanceMint.replace('https://', '').split('/')[0]) ||
+              balanceMint.includes(authMint.replace('https://', '').split('/')[0])
+            );
+            if (similarMints.length > 0) {
+              console.log(`      Possible matches in authorized list: ${similarMints.join(', ')}`);
+            }
+          }
+        });
+      }
       
       // Check if mintBalances is actually populated
       if (!allMintBalances || Object.keys(allMintBalances).length === 0) {

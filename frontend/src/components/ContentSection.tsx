@@ -26,6 +26,7 @@ interface ContentSectionState {
 }
 
 export class ContentSection extends BaseComponent<ContentSectionProps, ContentSectionState> {
+  private unsubscribeBalance: (() => void) | null = null;
   state = {
     deletingEvents: new Set<string>(),
     showConfirmDelete: null,
@@ -47,11 +48,25 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
     this.subscribeToNutzaps()
     // Add ESC key listener
     document.addEventListener('keydown', this.handleKeyDown)
+    
+    // Subscribe to balance updates to trigger re-renders when wallet balance changes
+    const { client } = this.props;
+    if (client) {
+      this.unsubscribeBalance = client.onBalanceUpdate((balance) => {
+        console.log('🔍 ContentSection balance update received:', balance, '- forcing re-render');
+        // Force re-render by updating state
+        this.setState({ walletBalance: balance });
+      });
+    }
   }
 
   componentWillUnmount() {
     if (this.nutzapSubscription) {
       this.nutzapSubscription.stop()
+    }
+    // Unsubscribe from balance updates
+    if (this.unsubscribeBalance) {
+      this.unsubscribeBalance();
     }
     // Remove ESC key listener
     document.removeEventListener('keydown', this.handleKeyDown)
