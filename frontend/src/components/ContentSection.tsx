@@ -155,8 +155,14 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       const eventsSet = await profileNdk.fetchEvents(filter)
       const events = Array.from(eventsSet)
       const nutzapTotals = new Map<string, number>()
+      const seenEventIds = new Set<string>() // Track event IDs just for this initial fetch
 
       events.forEach((event: any) => {
+        // Check if we've already processed this event ID in this batch
+        if (seenEventIds.has(event.id)) {
+          return
+        }
+        seenEventIds.add(event.id)
         // Find the event tag
         const eventTag = event.tags.find((tag: string[]) => tag[0] === 'e')
         if (!eventTag) return
@@ -240,12 +246,18 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       this.authorCashuPubkeys = authorCashuPubkeys
 
       // Subscribe to new nutzaps from public relays
+      // Add 'since' timestamp to only get events created after this moment
+      const subscriptionFilter = {
+        ...filter,
+        since: Math.floor(Date.now() / 1000) // Current timestamp in seconds
+      }
       const profileNdkForSub = (this.props.client as any).profileNdk
-      this.nutzapSubscription = await profileNdkForSub.subscribe(filter, {
+      this.nutzapSubscription = await profileNdkForSub.subscribe(subscriptionFilter, {
         closeOnEose: false
       })
 
       this.nutzapSubscription.on('event', (event: any) => {
+        
         // Find the event tag
         const eventTag = event.tags.find((tag: string[]) => tag[0] === 'e')
         if (!eventTag) return
@@ -359,12 +371,10 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
 
   fetchWalletBalance = async () => {
     try {
-      console.log('🔍 [NUTZAP] Fetching current wallet balance...')
       const balance = await this.props.client.getCashuBalance()
-      console.log('🔍 [NUTZAP] Fetched balance:', balance)
       this.setState({ walletBalance: balance })
     } catch (error) {
-      console.error('❌ [NUTZAP] Failed to fetch wallet balance:', error)
+      console.error('Failed to fetch wallet balance:', error)
       this.setState({ walletBalance: 0 })
     }
   }
@@ -379,7 +389,6 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
     }
 
     // Check if user has sufficient balance
-    console.log('🔍 [NUTZAP] Balance validation - Attempting to send:', sats, 'Available balance:', walletBalance)
     if (sats > walletBalance) {
       this.setState({ nutzapError: `Insufficient balance. You have ${walletBalance} sats but tried to send ${sats} sats.` })
       return
@@ -390,33 +399,17 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
     try {
       await this.props.client.sendNutzapToEvent(eventId, sats)
       
-      // SUCCESS - Update balance optimistically (without re-fetching from mints)
-      const newBalance = Math.max(0, walletBalance - sats)
-      console.log('💸 [NUTZAP] Success! Optimistic balance update - Old:', walletBalance, 'New:', newBalance, 'Sent:', sats)
-      
-      // Notify other components immediately
-      this.props.client.notifyBalanceUpdate(newBalance)
-      
-      // Update local state with new balance and nutzap totals
-      this.setState(prev => {
-        const newTotals = new Map(prev.eventNutzaps)
-        const currentTotal = newTotals.get(eventId) || 0
-        newTotals.set(eventId, currentTotal + sats)
-        
-        return {
-          eventNutzaps: newTotals,
-          showNutzapModal: null, 
-          nutzapAmount: '', 
-          nutzapError: null,
-          walletBalance: newBalance
-        }
+      // SUCCESS - Just close the modal and show success message
+      // The nutzap total will update when the event arrives via subscription
+      this.setState({ 
+        showNutzapModal: null, 
+        nutzapAmount: '', 
+        nutzapError: null
       })
       
       this.props.showMessage('Nutzap sent to event successfully!', 'success')
       if (this.props.onNutzapSent) this.props.onNutzapSent()
     } catch (error) {
-      // Error - just show the error, no balance changes needed
-      console.log('🔴 [NUTZAP] Error:', error)
       this.setState({ 
         nutzapError: error instanceof Error ? error.message : 'Failed to send nutzap' 
       })
@@ -503,18 +496,6 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
                       <span>
                         {this.formatTimestamp(item.created_at)}
                       </span>
-                      {/* Nutzap total */}
-                      {this.state.eventNutzaps.get(item.id) && (
-                        <>
-                          <span>·</span>
-                          <span class="text-[#f7931a] flex items-center gap-0.5 font-medium">
-                            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="currentColor"/>
-                            </svg>
-                            ₿{this.state.eventNutzaps.get(item.id)?.toLocaleString() || 0} sats
-                          </span>
-                        </>
-                      )}
                     </div>
                     <p class="text-sm text-[var(--color-text-primary)] break-all whitespace-pre-wrap leading-relaxed mt-0.5">
                       {item.content}

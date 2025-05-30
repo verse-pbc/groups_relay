@@ -140,7 +140,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
     }
   };
 
-  const receiveToken = () => {
+  const receiveToken = async () => {
     setShowReceiveModal(true);
     setError(null);
     setSuccess(null);
@@ -148,6 +148,8 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
     if (mints.length === 1) {
       setSelectedMint(mints[0]);
     }
+    // Fetch mint balances to show in dropdown
+    await fetchBalance(true);
   };
 
   const handlePasteToken = async () => {
