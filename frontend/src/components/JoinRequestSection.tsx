@@ -2,7 +2,7 @@ import { Component } from 'preact'
 import { NostrClient, NostrGroupError } from '../api/nostr_client'
 import type { Group } from '../types'
 import { JoinRequestForm } from './JoinRequestForm'
-import { UserDisplayWithNutzap } from './UserDisplayWithNutzap'
+import { UserDisplay } from './UserDisplay'
 import type { Proof } from '@cashu/cashu-ts'
 
 interface JoinRequestSectionProps {
@@ -106,7 +106,7 @@ export class JoinRequestSection extends Component<JoinRequestSectionProps, JoinR
                        transition-colors"
               >
                 <div class="flex items-center gap-2">
-                  <UserDisplayWithNutzap
+                  <UserDisplay
                     pubkey={this.props.client.pubkeyToNpub(pubkey)}
                     client={client}
                     showCopy={false}

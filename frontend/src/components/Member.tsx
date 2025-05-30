@@ -2,7 +2,6 @@ import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
 import { UserDisplay } from './UserDisplay'
-import { UserDisplayWithNutzap } from './UserDisplayWithNutzap'
 import type { Proof } from '@cashu/cashu-ts'
 
 interface MemberProps {
@@ -136,27 +135,19 @@ export class Member extends Component<MemberProps, MemberState> {
       >
         <div class="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
           <div class="flex items-center gap-2">
-            {this.props.cashuProofs && this.props.mints && this.props.mints.length > 0 ? (
-              <UserDisplayWithNutzap
-                pubkey={npub}
-                client={client}
-                cashuProofs={this.props.cashuProofs}
-                mints={this.props.mints}
-                onSendNutzap={() => {
-                  showMessage('Nutzap sent successfully!', 'success');
-                  if (this.props.onNutzapSent) this.props.onNutzapSent();
-                }}
-                showCopy={true}
-                hideNutzap={this.state.isCurrentUser && !window.location.search.includes('selfnutzap')}
-              />
-            ) : (
-              <UserDisplay
-                pubkey={npub}
-                client={client}
-                showCopy={true}
-                onCopy={() => showMessage('Npub copied to clipboard', 'success')}
-              />
-            )}
+            <UserDisplay
+              pubkey={npub}
+              client={client}
+              cashuProofs={this.props.cashuProofs}
+              mints={this.props.mints}
+              onSendNutzap={() => {
+                showMessage('Nutzap sent successfully!', 'success');
+                if (this.props.onNutzapSent) this.props.onNutzapSent();
+              }}
+              showCopy={true}
+              onCopy={() => showMessage('Npub copied to clipboard', 'success')}
+              hideNutzap={this.state.isCurrentUser && !window.location.search.includes('selfnutzap')}
+            />
           </div>
           {member.roles.map(role => (
             <span

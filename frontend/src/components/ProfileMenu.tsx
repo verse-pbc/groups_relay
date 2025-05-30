@@ -1,6 +1,6 @@
 import { Component } from 'preact';
 import { NostrClient } from '../api/nostr_client';
-import { UserDisplayWithNutzap } from './UserDisplayWithNutzap';
+import { UserDisplay } from './UserDisplay';
 import { WalletDisplay } from './WalletDisplay';
 import type { Proof } from '@cashu/cashu-ts';
 
@@ -170,7 +170,7 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
           aria-haspopup="true"
           aria-label="Profile menu"
         >
-          <UserDisplayWithNutzap
+          <UserDisplay
             pubkey={client.pubkeyToNpub(userPubkey)}
             client={client}
             showCopy={false}

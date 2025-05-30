@@ -1,6 +1,6 @@
 import { NostrClient } from '../api/nostr_client'
 import type { Group } from '../types'
-import { UserDisplayWithNutzap } from './UserDisplayWithNutzap'
+import { UserDisplay } from './UserDisplay'
 import { BaseComponent } from './BaseComponent'
 import type { Proof } from '@cashu/cashu-ts'
 
@@ -22,6 +22,7 @@ interface ContentSectionState {
   nutzapError: string | null
   walletBalance: number
   eventNutzaps: Map<string, number> // eventId -> total amount
+  authorHas10019: Map<string, boolean> // pubkey -> has 10019 event
 }
 
 export class ContentSection extends BaseComponent<ContentSectionProps, ContentSectionState> {
@@ -33,7 +34,8 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
     nutzapLoading: false,
     nutzapError: null,
     walletBalance: 0,
-    eventNutzaps: new Map<string, number>()
+    eventNutzaps: new Map<string, number>(),
+    authorHas10019: new Map<string, boolean>()
   }
 
   private nutzapSubscription: any = null
@@ -71,7 +73,10 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       if (this.nutzapSubscription) {
         this.nutzapSubscription.stop()
       }
-      this.setState({ eventNutzaps: new Map() })
+      this.setState({ 
+        eventNutzaps: new Map(),
+        authorHas10019: new Map()
+      })
       this.subscribeToNutzaps()
     }
   }
@@ -99,6 +104,8 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       
       // Fetch 10019 events for all content authors
       const authorMints = new Map<string, string[]>()
+      const authorHas10019 = new Map<string, boolean>()
+      
       if (uniqueAuthors.length > 0) {
         const authorFilter = {
           kinds: [10019],
@@ -106,7 +113,18 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
           limit: uniqueAuthors.length
         }
         
-        const author10019Events = await this.props.client.fetchEvents(authorFilter)
+        // Use profileNdk to fetch 10019 events from public relays
+        const profileNdk = (this.props.client as any).profileNdk
+        const author10019EventsSet = await profileNdk.fetchEvents(authorFilter)
+        const author10019Events = Array.from(author10019EventsSet)
+        
+        console.log(`Fetched ${author10019Events.length} kind:10019 events for ${uniqueAuthors.length} authors`)
+        
+        // Initialize all authors as not having 10019
+        uniqueAuthors.forEach(author => {
+          authorHas10019.set(author, false)
+        })
+        
         author10019Events.forEach((event: any) => {
           const mints: string[] = []
           event.tags.forEach((tag: string[]) => {
@@ -116,12 +134,15 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
           })
           if (mints.length > 0) {
             authorMints.set(event.pubkey, mints)
+            authorHas10019.set(event.pubkey, true)
           }
         })
       }
 
-      // Fetch existing nutzaps
-      const events = await this.props.client.fetchEvents(filter)
+      // Fetch existing nutzaps from public relays
+      const profileNdk = (this.props.client as any).profileNdk
+      const eventsSet = await profileNdk.fetchEvents(filter)
+      const events = Array.from(eventsSet)
       const nutzapTotals = new Map<string, number>()
 
       events.forEach((event: any) => {
@@ -159,14 +180,18 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         }
       })
 
-      this.setState({ eventNutzaps: nutzapTotals })
+      this.setState({ 
+        eventNutzaps: nutzapTotals,
+        authorHas10019: authorHas10019
+      })
 
       // Store the maps for the subscription handler
       this.authorMints = authorMints
       this.eventAuthors = eventAuthors
 
-      // Subscribe to new nutzaps
-      this.nutzapSubscription = await this.props.client.subscribe(filter, {
+      // Subscribe to new nutzaps from public relays
+      const profileNdkForSub = (this.props.client as any).profileNdk
+      this.nutzapSubscription = await profileNdkForSub.subscribe(filter, {
         closeOnEose: false
       })
 
@@ -376,7 +401,7 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
                 <div class="flex items-start gap-1.5">
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center text-[11px] gap-1.5 text-[var(--color-text-tertiary)]">
-                      <UserDisplayWithNutzap
+                      <UserDisplay
                         pubkey={this.props.client.pubkeyToNpub(item.pubkey)}
                         client={this.props.client}
                         showCopy={true}
@@ -413,21 +438,35 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
                   </div>
 
                   <div class="flex items-center gap-1">
-                    {/* Event Nutzap Button - hide for own messages */}
-                    {hasWalletBalance && item.pubkey !== this.getCurrentUserPubkey() && (
-                      <button
-                        onClick={async () => {
-                          this.setState({ showNutzapModal: item.id })
-                          await this.fetchWalletBalance()
-                        }}
-                        class="text-[11px] opacity-0 group-hover:opacity-100 text-[#f7931a]
-                               hover:text-[#f68e0a] transition-all duration-150 flex items-center p-1"
-                        title="Nutzap this message"
-                      >
-                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                      </button>
+                    {/* Event Nutzap Button and Total */}
+                    {((hasWalletBalance && 
+                      item.pubkey !== this.getCurrentUserPubkey() && 
+                      this.state.authorHas10019.get(item.pubkey)) || 
+                      this.state.eventNutzaps.get(item.id)) && (
+                      <div class="flex items-center gap-1">
+                        {hasWalletBalance && 
+                         item.pubkey !== this.getCurrentUserPubkey() && 
+                         this.state.authorHas10019.get(item.pubkey) && (
+                          <button
+                            onClick={async () => {
+                              this.setState({ showNutzapModal: item.id })
+                              await this.fetchWalletBalance()
+                            }}
+                            class="text-[11px] opacity-0 group-hover:opacity-100 text-[#f7931a]
+                                   hover:text-[#f68e0a] transition-all duration-150 flex items-center p-1"
+                            title="Nutzap this message"
+                          >
+                            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                          </button>
+                        )}
+                        {this.state.eventNutzaps.get(item.id) ? (
+                          <span class="text-[10px] text-[#f7931a] font-medium">
+                            ₿ {this.state.eventNutzaps.get(item.id)?.toLocaleString()} sats
+                          </span>
+                        ) : null}
+                      </div>
                     )}
 
                     {/* Delete Button */}
