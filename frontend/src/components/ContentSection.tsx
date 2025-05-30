@@ -41,6 +41,7 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
   private nutzapSubscription: any = null
   private authorMints: Map<string, string[]> | undefined
   private eventAuthors: Map<string, string> | undefined
+  private authorCashuPubkeys: Map<string, string> | undefined
 
   componentDidMount() {
     this.subscribeToNutzaps()
@@ -134,7 +135,9 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
           
           event.tags.forEach((tag: string[]) => {
             if (tag[0] === 'mint' && tag[1]) {
-              mints.push(tag[1])
+              // Normalize mint URL (remove trailing slash)
+              const normalizedMint = tag[1].replace(/\/$/, '')
+              mints.push(normalizedMint)
             } else if (tag[0] === 'pubkey' && tag[1]) {
               // This is the P2PK pubkey for receiving nutzaps
               cashuPubkey = tag[1]
@@ -168,9 +171,10 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         
         // Get the authorized mints for this event's author
         const authorizedMints = authorMints.get(eventAuthor) || []
+        const cashuPubkey = authorCashuPubkeys.get(eventAuthor)
         
         // Skip if author has no 10019 config
-        if (authorizedMints.length === 0) return
+        if (authorizedMints.length === 0 || !cashuPubkey) return
         
         // Find the amount tag
         const amountTag = event.tags.find((tag: string[]) => tag[0] === 'amount')
@@ -184,10 +188,44 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         const mint = uTag ? uTag[1] : null
 
         // According to NIP-61, nutzaps MUST have a 'u' tag with the mint URL
-        // Only count properly formatted nutzaps
-        if (mint && authorizedMints.includes(mint)) {
+        if (!mint) return
+        
+        // Normalize mint URL for comparison (remove trailing slash)
+        const normalizedMint = mint.replace(/\/$/, '')
+        const normalizedAuthorizedMints = authorizedMints.map(m => m.replace(/\/$/, ''))
+        
+        // Verify mint is authorized
+        if (!normalizedAuthorizedMints.includes(normalizedMint)) return
+        
+        // Find the proof tag and verify P2PK lock
+        const proofTag = event.tags.find((tag: string[]) => tag[0] === 'proof')
+        if (!proofTag) return
+        
+        try {
+          const proof = JSON.parse(proofTag[1])
+          // Parse the secret to check P2PK lock
+          const secret = JSON.parse(proof.secret)
+          
+          // Verify it's P2PK locked
+          if (!Array.isArray(secret) || secret[0] !== 'P2PK') return
+          
+          // Extract the locked pubkey (should have "02" prefix for Cashu)
+          const lockedPubkey = secret[1]?.data
+          if (!lockedPubkey) return
+          
+          // Verify it matches the cashu pubkey from kind:10019
+          // The cashuPubkey from kind:10019 might not have the "02" prefix
+          const normalizedCashuPubkey = cashuPubkey.startsWith('02') ? cashuPubkey : '02' + cashuPubkey
+          const normalizedLockedPubkey = lockedPubkey.startsWith('02') ? lockedPubkey : '02' + lockedPubkey
+          
+          if (normalizedCashuPubkey !== normalizedLockedPubkey) return
+          
+          // All verifications passed - count this nutzap
           const currentTotal = nutzapTotals.get(eventId) || 0
           nutzapTotals.set(eventId, currentTotal + amount)
+        } catch (e) {
+          // Invalid proof format, skip
+          return
         }
       })
       
@@ -199,6 +237,7 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       // Store the maps for the subscription handler
       this.authorMints = authorMints
       this.eventAuthors = eventAuthors
+      this.authorCashuPubkeys = authorCashuPubkeys
 
       // Subscribe to new nutzaps from public relays
       const profileNdkForSub = (this.props.client as any).profileNdk
@@ -219,9 +258,10 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         
         // Get the authorized mints for this event's author
         const authorizedMints = this.authorMints?.get(eventAuthor) || []
+        const cashuPubkey = this.authorCashuPubkeys?.get(eventAuthor)
         
         // Skip if author has no 10019 config
-        if (authorizedMints.length === 0) return
+        if (authorizedMints.length === 0 || !cashuPubkey) return
         
         // Find the amount tag
         const amountTag = event.tags.find((tag: string[]) => tag[0] === 'amount')
@@ -234,15 +274,47 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         const uTag = event.tags.find((tag: string[]) => tag[0] === 'u')
         const mint = uTag ? uTag[1] : null
 
-        // Only count properly formatted nutzaps from authorized mints
-        if (mint && authorizedMints.includes(mint)) {
-          // Update state
+        // According to NIP-61, nutzaps MUST have a 'u' tag
+        if (!mint) return
+        
+        // Normalize mint URL for comparison (remove trailing slash)
+        const normalizedMint = mint.replace(/\/$/, '')
+        
+        // Verify mint is authorized (authorizedMints are already normalized)
+        if (!authorizedMints.includes(normalizedMint)) return
+        
+        // Find the proof tag and verify P2PK lock
+        const proofTag = event.tags.find((tag: string[]) => tag[0] === 'proof')
+        if (!proofTag) return
+        
+        try {
+          const proof = JSON.parse(proofTag[1])
+          // Parse the secret to check P2PK lock
+          const secret = JSON.parse(proof.secret)
+          
+          // Verify it's P2PK locked
+          if (!Array.isArray(secret) || secret[0] !== 'P2PK') return
+          
+          // Extract the locked pubkey (should have "02" prefix for Cashu)
+          const lockedPubkey = secret[1]?.data
+          if (!lockedPubkey) return
+          
+          // Verify it matches the cashu pubkey from kind:10019
+          const normalizedCashuPubkey = cashuPubkey.startsWith('02') ? cashuPubkey : '02' + cashuPubkey
+          const normalizedLockedPubkey = lockedPubkey.startsWith('02') ? lockedPubkey : '02' + lockedPubkey
+          
+          if (normalizedCashuPubkey !== normalizedLockedPubkey) return
+          
+          // All verifications passed - count this nutzap
           this.setState(prev => {
             const newTotals = new Map(prev.eventNutzaps)
             const currentTotal = newTotals.get(eventId) || 0
             newTotals.set(eventId, currentTotal + amount)
             return { eventNutzaps: newTotals }
           })
+        } catch (e) {
+          // Invalid proof format, skip
+          return
         }
       })
     } catch (error) {
