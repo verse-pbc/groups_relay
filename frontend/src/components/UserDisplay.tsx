@@ -13,6 +13,11 @@ interface UserDisplayProps {
   isRelayAdmin?: boolean
   onCopy?: () => void
   hideNutzap?: boolean
+  // Optional: pre-fetched profile data from centralized state
+  profileData?: {
+    profile?: any
+    has10019?: boolean
+  }
 }
 
 interface UserDisplayState {
@@ -57,15 +62,31 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
     document.addEventListener('keydown', this.handleKeyDown);
     
     // Fetch user profile
-    const { pubkey, client } = this.props
+    const { pubkey, client, profileData } = this.props
     
     // Convert to npub if it's a hex pubkey
     const displayId = pubkey.startsWith('npub') ? pubkey : client?.pubkeyToNpub(pubkey) || pubkey
     this.setState({ displayId })
     
-    // Fetch profile if client is provided
-    if (client) {
-      // If input is npub, convert to hex for profile fetch
+    // Check if we have pre-fetched profile data
+    if (profileData?.profile) {
+      const profile = profileData.profile;
+      if (profile.image) {
+        this.setState({ profilePicture: profile.image })
+      }
+      // Set display name in order of preference: NIP-05 > Name > null
+      const displayName = profile.nip05 || profile.name || profile.display_name || null
+      this.setState({ displayName })
+      
+      // Also use pre-fetched 10019 status if available
+      if (profileData.has10019 !== undefined) {
+        this.setState({ targetUserHas10019: profileData.has10019 })
+      } else {
+        // Check 10019 if not pre-fetched
+        setTimeout(() => this.checkTargetUser10019(), 100);
+      }
+    } else if (client) {
+      // Fallback to fetching profile if not pre-fetched
       const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
       const profile = await client.fetchProfile(hexPubkey)
       if (profile) {
@@ -76,10 +97,10 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
         const displayName = profile.nip05 || profile.name || profile.display_name || null
         this.setState({ displayName })
       }
+      
+      // Check if target user has 10019 event with a small delay to ensure relay is ready
+      setTimeout(() => this.checkTargetUser10019(), 100);
     }
-    
-    // Check if target user has 10019 event with a small delay to ensure relay is ready
-    setTimeout(() => this.checkTargetUser10019(), 100);
   }
 
   componentDidUpdate(prevProps: UserDisplayProps) {

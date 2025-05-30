@@ -492,6 +492,14 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
                           if (this.props.onNutzapSent) this.props.onNutzapSent();
                         }}
                         hideNutzap={item.pubkey === this.getCurrentUserPubkey() && !window.location.search.includes('selfnutzap')}
+                        profileData={
+                          this.props.group.memberProfiles?.has(item.pubkey) 
+                            ? {
+                                profile: this.props.group.memberProfiles.get(item.pubkey)?.profile,
+                                has10019: this.props.group.memberProfiles.get(item.pubkey)?.has10019
+                              }
+                            : undefined
+                        }
                       />
                       <span>·</span>
                       <span>

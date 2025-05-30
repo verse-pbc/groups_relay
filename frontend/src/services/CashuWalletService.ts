@@ -23,8 +23,8 @@ export interface ITokenOperations {
 }
 
 export interface INutzapOperations {
-  sendNutzap(pubkey: string, amount: number, mint?: string): Promise<void>;
-  sendNutzapToEvent(eventId: string, amount: number, mint?: string): Promise<void>;
+  sendNutzap(pubkey: string, amount: number, mint?: string, nutzapRelays?: string[] | null): Promise<void>;
+  sendNutzapToEvent(eventId: string, amount: number, mint?: string, nutzapRelays?: string[] | null): Promise<void>;
 }
 
 export interface IMintOperations {
@@ -473,7 +473,7 @@ export class CashuWalletService implements ICashuWalletService {
 
 
   // Nutzap operations
-  async sendNutzap(pubkey: string, amount: number, mint?: string): Promise<void> {
+  async sendNutzap(pubkey: string, amount: number, mint?: string, nutzapRelays?: string[] | null): Promise<void> {
     if (!this.wallet) {
       throw new Error('Wallet not initialized');
     }
@@ -483,9 +483,28 @@ export class CashuWalletService implements ICashuWalletService {
 
     // Use NDKZapper for consistent handling
     const { NDKZapper } = await import('@nostr-dev-kit/ndk');
+    
+    // Create NDK instance with nutzap relays if provided
+    let zapperNdk = this.ndk;
+    if (nutzapRelays && nutzapRelays.length > 0) {
+      // Create a temporary NDK instance with the recipient's nutzap relays
+      zapperNdk = new NDK({
+        explicitRelayUrls: nutzapRelays,
+        signer: this.ndk.signer
+      });
+      
+      // Connect to the nutzap relays
+      try {
+        await zapperNdk.connect();
+      } catch (error) {
+        console.warn('Failed to connect to some nutzap relays:', error);
+        // Continue anyway - some relays might be connected
+      }
+    }
+    
     const zapper = new NDKZapper(user, amount, 'sat', {
       comment: '',
-      ndk: this.ndk
+      ndk: zapperNdk  // Use the NDK with nutzap relays
     });
 
     try {
@@ -561,7 +580,7 @@ export class CashuWalletService implements ICashuWalletService {
     }
   }
 
-  async sendNutzapToEvent(eventId: string, amount: number, mint?: string): Promise<void> {
+  async sendNutzapToEvent(eventId: string, amount: number, mint?: string, nutzapRelays?: string[] | null): Promise<void> {
     if (!this.wallet) {
       throw new Error('Wallet not initialized');
     }
@@ -578,9 +597,28 @@ export class CashuWalletService implements ICashuWalletService {
 
     // Use NDKZapper to properly create and publish nutzap
     const { NDKZapper } = await import('@nostr-dev-kit/ndk');
+    
+    // Create NDK instance with nutzap relays if provided
+    let zapperNdk = this.ndk;
+    if (nutzapRelays && nutzapRelays.length > 0) {
+      // Create a temporary NDK instance with the recipient's nutzap relays
+      zapperNdk = new NDK({
+        explicitRelayUrls: nutzapRelays,
+        signer: this.ndk.signer
+      });
+      
+      // Connect to the nutzap relays
+      try {
+        await zapperNdk.connect();
+      } catch (error) {
+        console.warn('Failed to connect to some nutzap relays:', error);
+        // Continue anyway - some relays might be connected
+      }
+    }
+    
     const zapper = new NDKZapper(event, amount, 'sat', {
       comment: '',
-      ndk: this.ndk
+      ndk: zapperNdk  // Use the NDK with nutzap relays
     });
 
     

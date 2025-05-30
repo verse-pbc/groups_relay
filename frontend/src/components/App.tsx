@@ -615,6 +615,85 @@ export class App extends Component<AppProps, AppState> {
     this.liveSubscriptionCleanup?.();
   }
 
+  // Pre-fetch all member data when a group is selected
+  async prefetchGroupMemberData(group: Group) {
+    if (!group.memberProfiles) {
+      group.memberProfiles = new Map();
+    }
+
+    // Get all unique pubkeys from members and content authors
+    const allPubkeys = new Set<string>();
+    group.members.forEach(m => allPubkeys.add(m.pubkey));
+    group.content?.forEach(c => allPubkeys.add(c.pubkey));
+
+    // Fetch profiles for all members
+    const profilePromises = Array.from(allPubkeys).map(async (pubkey) => {
+      const profile = await this.props.client.fetchProfile(pubkey);
+      return { pubkey, profile };
+    });
+
+    const profiles = await Promise.all(profilePromises);
+    profiles.forEach(({ pubkey, profile }) => {
+      if (!group.memberProfiles!.has(pubkey)) {
+        group.memberProfiles!.set(pubkey, {
+          pubkey,
+          profile,
+          has10019: false
+        });
+      } else {
+        group.memberProfiles!.get(pubkey)!.profile = profile;
+      }
+    });
+
+    // Fetch 10019 events for all members using gossip model
+    const pubkeysArray = Array.from(allPubkeys);
+    const user10019Map = await this.props.client.fetchMultipleUsers10019(pubkeysArray);
+    
+    user10019Map.forEach((event, pubkey) => {
+      const memberProfile = group.memberProfiles!.get(pubkey);
+      if (memberProfile) {
+        memberProfile.has10019 = true;
+        memberProfile.lastChecked10019 = Date.now();
+        
+        // Parse the 10019 event data
+        const mints: string[] = [];
+        let cashuPubkey: string | null = null;
+        
+        event.tags.forEach((tag: string[]) => {
+          if (tag[0] === 'mint' && tag[1]) {
+            mints.push(tag[1].replace(/\/$/, '')); // Normalize
+          } else if (tag[0] === 'pubkey' && tag[1]) {
+            cashuPubkey = tag[1];
+          }
+        });
+        
+        if (cashuPubkey) {
+          memberProfile.cashuPubkey = cashuPubkey;
+          memberProfile.authorizedMints = mints;
+        }
+      }
+    });
+
+    // Mark pubkeys that don't have 10019 events
+    pubkeysArray.forEach(pubkey => {
+      if (!user10019Map.has(pubkey)) {
+        const memberProfile = group.memberProfiles!.get(pubkey);
+        if (memberProfile) {
+          memberProfile.has10019 = false;
+          memberProfile.lastChecked10019 = Date.now();
+        }
+      }
+    });
+
+    // Update the group in state
+    this.updateGroupsMap((map) => {
+      const updatedGroup = map.get(group.id);
+      if (updatedGroup) {
+        updatedGroup.memberProfiles = group.memberProfiles;
+      }
+    });
+  }
+
    updateGroupsMap = (updater: (map: Map<string, Group>) => void) => {
        this.setState((prevState) => {
            // Create a deep enough copy to safely pass to the updater
@@ -680,7 +759,7 @@ export class App extends Component<AppProps, AppState> {
     this.setState((state) => ({ isMobileMenuOpen: !state.isMobileMenuOpen }));
   };
 
-   handleGroupSelect = (group: Group | string) => {
+   handleGroupSelect = async (group: Group | string) => {
        const groupId = typeof group === 'string' ? group : group.id;
        const existingGroup = this.state.groupsMap.get(groupId);
 
@@ -690,6 +769,9 @@ export class App extends Component<AppProps, AppState> {
                isMobileMenuOpen: false, // Close menu on selection
                pendingGroupSelection: null // Clear pending
            });
+           
+           // Prefetch member data in the background
+           this.prefetchGroupMemberData(existingGroup);
        } else {
            // Group data hasn't arrived yet, queue it
            console.log(`Group ${groupId} not found in map yet, queuing selection.`);
@@ -723,6 +805,8 @@ export class App extends Component<AppProps, AppState> {
           const group = groupsMap.get(pendingGroupSelection);
           if (group) {
                console.log(`Pending selection ${pendingGroupSelection} fulfilled.`);
+              // Prefetch member data for the pending group
+              this.prefetchGroupMemberData(group);
               return {
                   selectedGroup: group,
                   pendingGroupSelection: null // Clear the pending flag

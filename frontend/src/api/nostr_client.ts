@@ -541,7 +541,25 @@ export class NostrClient {
       throw new Error('Wallet not initialized')
     }
 
-    await this.walletService.sendNutzapToEvent(eventId, amount, mint);
+    // First, we need to find the event author's pubkey
+    const filter = {
+      ids: [eventId],
+      limit: 1
+    };
+    
+    const events = await this.ndk.fetchEvents(filter);
+    if (events.size === 0) {
+      throw new Error('Event not found');
+    }
+    
+    const event = Array.from(events)[0];
+    const authorPubkey = event.pubkey;
+    
+    // Fetch the author's 10019 event to get their nutzap relays
+    const event10019 = await this.fetchUser10019(authorPubkey);
+    const nutzapRelays = event10019 ? this.parseNutzapRelays(event10019) : null;
+
+    await this.walletService.sendNutzapToEvent(eventId, amount, mint, nutzapRelays);
   }
 
 
@@ -551,7 +569,11 @@ export class NostrClient {
       throw new Error('Wallet not initialized')
     }
 
-    await this.walletService.sendNutzap(pubkey, amount, mint);
+    // Fetch the user's 10019 event to get their nutzap relays
+    const event10019 = await this.fetchUser10019(pubkey);
+    const nutzapRelays = event10019 ? this.parseNutzapRelays(event10019) : null;
+
+    await this.walletService.sendNutzap(pubkey, amount, mint, nutzapRelays);
   }
 
   // Public methods for fetching events and subscribing
@@ -601,6 +623,19 @@ export class NostrClient {
       const fallbackRelays = ["wss://relay.damus.io", "wss://relay.nos.social"];
       return fallbackRelays;
     }
+  }
+
+  // Parse nutzap relays from kind:10019 event
+  parseNutzapRelays(event10019: any): string[] {
+    const relays: string[] = [];
+    if (event10019?.tags) {
+      event10019.tags.forEach((tag: string[]) => {
+        if (tag[0] === 'relay' && tag[1]) {
+          relays.push(tag[1]);
+        }
+      });
+    }
+    return relays;
   }
 
   // Fetch user's kind:10019 event from their write relays (gossip model)

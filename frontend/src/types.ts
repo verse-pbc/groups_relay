@@ -12,11 +12,23 @@ export interface Group {
   content?: GroupContent[];
   created_at: number;
   updated_at: number;
+  // Enhanced state - populated as needed
+  memberProfiles?: Map<string, MemberProfile>;
+  eventNutzaps?: Map<string, number>; // eventId -> total sats
 }
 
 export interface GroupMember {
   pubkey: string;
   roles: string[];
+}
+
+export interface MemberProfile {
+  pubkey: string;
+  profile?: any; // NDK profile data
+  has10019: boolean;
+  cashuPubkey?: string;
+  authorizedMints?: string[];
+  lastChecked10019?: number; // timestamp
 }
 
 export interface GroupInvite {
