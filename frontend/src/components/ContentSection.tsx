@@ -390,7 +390,14 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
     this.setState({ nutzapLoading: true, nutzapError: null })
 
     try {
-      await this.props.client.sendNutzapToEvent(eventId, sats)
+      // Add timeout to prevent hanging on dead relays
+      const sendPromise = this.props.client.sendNutzapToEvent(eventId, sats);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Nutzap timeout - relay connection failed")), 15000)
+      );
+
+      // Race between send and timeout
+      await Promise.race([sendPromise, timeoutPromise]);
       
       // SUCCESS - Just close the modal and show success message
       // The nutzap total will update when the event arrives via subscription

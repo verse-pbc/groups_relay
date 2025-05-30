@@ -169,6 +169,8 @@ export class CashuWalletService implements ICashuWalletService {
 
     await walletNdk.connect();
     this.wallet = new NDKCashuWallet(walletNdk);
+    
+    // Note: walletNdk is now owned by the wallet and will be cleaned up when wallet is disposed
 
     if (mints && mints.length > 0) {
       for (const mint of mints) {
@@ -486,12 +488,15 @@ export class CashuWalletService implements ICashuWalletService {
     
     // Create NDK instance with nutzap relays if provided
     let zapperNdk = this.ndk;
+    let tempNdk: NDK | null = null;
+    
     if (nutzapRelays && nutzapRelays.length > 0) {
       // Create a temporary NDK instance with the recipient's nutzap relays
-      zapperNdk = new NDK({
+      tempNdk = new NDK({
         explicitRelayUrls: nutzapRelays,
         signer: this.ndk.signer
       });
+      zapperNdk = tempNdk;
       
       // Connect to the nutzap relays
       try {
@@ -570,6 +575,22 @@ export class CashuWalletService implements ICashuWalletService {
     } catch (error) {
       console.error("Profile nutzap failed:", error);
       throw error;
+    } finally {
+      // Clean up temporary NDK instance to prevent connection leaks
+      if (tempNdk) {
+        try {
+          Array.from(tempNdk.pool.relays.values()).forEach(relay => {
+            try {
+              relay.disconnect();
+            } catch (err) {
+              // Ignore disconnection errors
+            }
+          });
+          tempNdk.pool.removeAllListeners();
+        } catch (err) {
+          console.warn('Error cleaning up temporary NDK in sendNutzap:', err);
+        }
+      }
     }
   }
   
@@ -600,12 +621,15 @@ export class CashuWalletService implements ICashuWalletService {
     
     // Create NDK instance with nutzap relays if provided
     let zapperNdk = this.ndk;
+    let tempNdk: NDK | null = null;
+    
     if (nutzapRelays && nutzapRelays.length > 0) {
       // Create a temporary NDK instance with the recipient's nutzap relays
-      zapperNdk = new NDK({
+      tempNdk = new NDK({
         explicitRelayUrls: nutzapRelays,
         signer: this.ndk.signer
       });
+      zapperNdk = tempNdk;
       
       // Connect to the nutzap relays
       try {
@@ -692,6 +716,22 @@ export class CashuWalletService implements ICashuWalletService {
     } catch (error) {
       console.error("Nutzap failed:", error);
       throw error;
+    } finally {
+      // Clean up temporary NDK instance to prevent connection leaks
+      if (tempNdk) {
+        try {
+          Array.from(tempNdk.pool.relays.values()).forEach(relay => {
+            try {
+              relay.disconnect();
+            } catch (err) {
+              // Ignore disconnection errors
+            }
+          });
+          tempNdk.pool.removeAllListeners();
+        } catch (err) {
+          console.warn('Error cleaning up temporary NDK in sendNutzapToEvent:', err);
+        }
+      }
     }
   }
 
@@ -1052,6 +1092,8 @@ export class CashuWalletService implements ICashuWalletService {
   }
 
   private async createWalletMetadata(mints: string[]): Promise<void> {
+    let tempNdkCleanup: (() => void) | null = null;
+    
     try {
       const user = await this.ndk.signer?.user();
       if (!user) return;
@@ -1069,6 +1111,21 @@ export class CashuWalletService implements ICashuWalletService {
       // Connect with timeout
       try {
         await allNdk.connect();
+        // Set up cleanup function
+        tempNdkCleanup = () => {
+          try {
+            Array.from(allNdk.pool.relays.values()).forEach(relay => {
+              try {
+                relay.disconnect();
+              } catch (err) {
+                // Ignore disconnection errors
+              }
+            });
+            allNdk.pool.removeAllListeners();
+          } catch (err) {
+            console.warn('Error cleaning up temp NDK in createWalletMetadata:', err);
+          }
+        };
       } catch (err) {
         console.warn("⚠️ Create wallet metadata: Some relays may not have connected:", err);
       }
@@ -1119,6 +1176,11 @@ export class CashuWalletService implements ICashuWalletService {
       }
     } catch (error) {
       console.error("Failed to create wallet metadata:", error);
+    } finally {
+      // Clean up temporary NDK instance
+      if (tempNdkCleanup) {
+        tempNdkCleanup();
+      }
     }
   }
 
@@ -1126,6 +1188,8 @@ export class CashuWalletService implements ICashuWalletService {
    * Add P2PK key to existing wallet that doesn't have one
    */
   private async addP2PKKeyToExistingWallet(): Promise<void> {
+    let tempNdkCleanup: (() => void) | null = null;
+    
     try {
       const user = await this.ndk.signer?.user();
       if (!user || !this.wallet) return;
@@ -1157,6 +1221,21 @@ export class CashuWalletService implements ICashuWalletService {
       // Connect with timeout
       try {
         await allNdk.connect();
+        // Set up cleanup function
+        tempNdkCleanup = () => {
+          try {
+            Array.from(allNdk.pool.relays.values()).forEach(relay => {
+              try {
+                relay.disconnect();
+              } catch (err) {
+                // Ignore disconnection errors
+              }
+            });
+            allNdk.pool.removeAllListeners();
+          } catch (err) {
+            console.warn('Error cleaning up temp NDK in addP2PKKeyToExistingWallet:', err);
+          }
+        };
       } catch (err) {
         console.warn("⚠️ Update wallet metadata: Some relays may not have connected:", err);
       }
@@ -1201,6 +1280,11 @@ export class CashuWalletService implements ICashuWalletService {
       }
     } catch (error) {
       console.error("❌ Failed to add P2PK key to existing wallet:", error);
+    } finally {
+      // Clean up temporary NDK instance
+      if (tempNdkCleanup) {
+        tempNdkCleanup();
+      }
     }
   }
 
@@ -1431,6 +1515,8 @@ export class CashuWalletService implements ICashuWalletService {
   }
 
   private async createSpendingHistoryEvent(transaction: Transaction): Promise<void> {
+    let tempNdkCleanup: (() => void) | null = null;
+    
     try {
       if (!this.userPubkey) return;
       
@@ -1447,6 +1533,21 @@ export class CashuWalletService implements ICashuWalletService {
       // Connect with timeout
       try {
         await allNdk.connect();
+        // Set up cleanup function
+        tempNdkCleanup = () => {
+          try {
+            Array.from(allNdk.pool.relays.values()).forEach(relay => {
+              try {
+                relay.disconnect();
+              } catch (err) {
+                // Ignore disconnection errors
+              }
+            });
+            allNdk.pool.removeAllListeners();
+          } catch (err) {
+            console.warn('Error cleaning up temp NDK in createSpendingHistoryEvent:', err);
+          }
+        };
       } catch (err) {
         console.warn("⚠️ Create spending history: Some relays may not have connected:", err);
       }
@@ -1472,10 +1573,17 @@ export class CashuWalletService implements ICashuWalletService {
       console.log("📝 Created NIP-60 spending history event");
     } catch (error) {
       console.error("Failed to create spending history event:", error);
+    } finally {
+      // Clean up temporary NDK instance
+      if (tempNdkCleanup) {
+        tempNdkCleanup();
+      }
     }
   }
 
   private async loadTransactionHistory(): Promise<void> {
+    let tempNdkCleanup: (() => void) | null = null;
+    
     try {
       
       if (!this.userPubkey) return;
@@ -1493,6 +1601,21 @@ export class CashuWalletService implements ICashuWalletService {
           setTimeout(() => reject(new Error("Connection timeout")), 3000)
         );
         await Promise.race([connectPromise, timeoutPromise]);
+        // Set up cleanup function
+        tempNdkCleanup = () => {
+          try {
+            Array.from(userNdk.pool.relays.values()).forEach(relay => {
+              try {
+                relay.disconnect();
+              } catch (err) {
+                // Ignore disconnection errors
+              }
+            });
+            userNdk.pool.removeAllListeners();
+          } catch (err) {
+            console.warn('Error cleaning up temp NDK in loadTransactionHistory:', err);
+          }
+        };
       } catch (err) {
         console.debug("Some relays may not have connected:", err);
       }
@@ -1597,6 +1720,11 @@ export class CashuWalletService implements ICashuWalletService {
       }
     } catch (error) {
       console.error("Failed to load transaction history from NIP-60:", error);
+    } finally {
+      // Clean up temporary NDK instance
+      if (tempNdkCleanup) {
+        tempNdkCleanup();
+      }
     }
   }
 

@@ -193,8 +193,14 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       // Convert npub to hex if needed
       const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
 
-      // Let NDK choose the best mint
-      await client.sendNutzap(hexPubkey, sats)
+      // Add timeout to prevent hanging on dead relays
+      const sendPromise = client.sendNutzap(hexPubkey, sats);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Nutzap timeout - relay connection failed")), 15000)
+      );
+
+      // Race between send and timeout
+      await Promise.race([sendPromise, timeoutPromise]);
 
       // SUCCESS - Update balance optimistically (without re-fetching from mints)
       const currentBalance = this.state.walletBalance

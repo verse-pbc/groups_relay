@@ -126,6 +126,26 @@ export class NostrClient {
         relay.authPolicy = NDKRelayAuthPolicies.signIn({ ndk: this.profileNdk });
       });
 
+      // Add error tracking for main NDK instances
+      this.ndk.pool.on('relay:disconnect', (relay: NDKRelay) => {
+        this.markRelayAsDead(relay.url);
+      });
+
+      this.profileNdk.pool.on('relay:disconnect', (relay: NDKRelay) => {
+        this.markRelayAsDead(relay.url);
+      });
+
+      this.ndk.pool.on('relay:auth', (_relay: NDKRelay, _challenge: string) => {
+        // Auth challenge - not necessarily a failure
+      });
+
+      this.profileNdk.pool.on('relay:auth', (_relay: NDKRelay, _challenge: string) => {
+        // Auth challenge - not necessarily a failure  
+      });
+
+      // Load temporarily dead relays from localStorage
+      this.loadTemporarilyDeadRelays();
+
       // Initialize LocalForage
       this.initializeStorage();
     } catch (error) {
@@ -588,6 +608,97 @@ export class NostrClient {
     return this.ndk.subscribe(filter, options)
   }
 
+  // Minimal list of relays that are persistently problematic (DNS failures, etc)
+  // Most dead relay detection should be dynamic and temporary
+  private persistentlyDeadRelays = new Set([
+    'wss://relay.nostr.bg',  // DNS: no such host
+    'wss://relay.current.fyi',  // DNS: no such host  
+    'wss://relay.causes.com'  // DNS: no such host
+  ]);
+
+  // Dynamic dead relay list (persists across reloads with expiration)
+  private temporarilyDeadRelays = new Set<string>();
+
+  // Track failed connection attempts with timestamps
+  private relayFailures = new Map<string, { count: number, lastFailed: number }>();
+
+  // Load temporarily dead relays from localStorage with expiration
+  private loadTemporarilyDeadRelays(): void {
+    try {
+      const stored = localStorage.getItem('temporarilyDeadRelays');
+      if (stored) {
+        const data = JSON.parse(stored);
+        const now = Date.now();
+        const expiredTime = 2 * 60 * 60 * 1000; // 2 hours
+        
+        // Only keep relays that haven't expired
+        Object.entries(data).forEach(([relay, timestamp]) => {
+          if (now - (timestamp as number) < expiredTime) {
+            this.temporarilyDeadRelays.add(relay);
+          }
+        });
+      }
+    } catch (error) {
+      console.warn('Failed to load temporarily dead relays:', error);
+    }
+  }
+
+  // Save temporarily dead relays to localStorage
+  private saveTemporarilyDeadRelays(): void {
+    try {
+      const now = Date.now();
+      const data: Record<string, number> = {};
+      this.temporarilyDeadRelays.forEach(relay => {
+        data[relay] = now;
+      });
+      localStorage.setItem('temporarilyDeadRelays', JSON.stringify(data));
+    } catch (error) {
+      console.warn('Failed to save temporarily dead relays:', error);
+    }
+  }
+
+  // Add a relay to the temporary dead list if it fails repeatedly
+  private markRelayAsDead(relayUrl: string, error?: Error): void {
+    const now = Date.now();
+    const existing = this.relayFailures.get(relayUrl) || { count: 0, lastFailed: 0 };
+    
+    // Reset count if it's been more than 1 hour since last failure
+    if (now - existing.lastFailed > 3600000) {
+      existing.count = 0;
+    }
+    
+    existing.count++;
+    existing.lastFailed = now;
+    this.relayFailures.set(relayUrl, existing);
+    
+    // Mark as temporarily dead after 3 failures (persists for 2 hours)
+    if (existing.count >= 3) {
+      this.temporarilyDeadRelays.add(relayUrl);
+      this.saveTemporarilyDeadRelays(); // Persist to localStorage
+      console.warn(`🚫 Temporarily marked relay as dead after ${existing.count} failures: ${relayUrl}`, error?.message);
+    }
+  }
+
+  // Filter out dead relays and limit count for general use
+  private filterHealthyRelays(relays: string[]): string[] {
+    return relays
+      .filter(relay => 
+        !this.persistentlyDeadRelays.has(relay) && 
+        !this.temporarilyDeadRelays.has(relay)
+      )
+      .slice(0, 3); // Conservative limit to prevent WebSocket exhaustion
+  }
+
+  // More permissive filtering for nutzaps specifically (redundancy is important)
+  private filterNutzapRelays(relays: string[]): string[] {
+    return relays
+      .filter(relay => 
+        !this.persistentlyDeadRelays.has(relay) && 
+        !this.temporarilyDeadRelays.has(relay)
+      )
+      .slice(0, 5); // Allow more relays for nutzaps since they're temporary connections
+  }
+
   // Get user's preferred relays from NIP-65
   async getUserRelays(pubkey: string): Promise<string[]> {
     try {
@@ -601,7 +712,7 @@ export class NostrClient {
       const events = await this.profileNdk.fetchEvents(filter);
       if (events.size === 0) {
         const fallbackRelays = ["wss://relay.damus.io", "wss://relay.nos.social", "wss://relay.primal.net"];
-        return fallbackRelays;
+        return this.filterHealthyRelays(fallbackRelays);
       }
       
       const relayListEvent = Array.from(events)[0];
@@ -616,18 +727,18 @@ export class NostrClient {
       
       if (relays.length === 0) {
         const fallbackRelays = ["wss://relay.damus.io", "wss://relay.nos.social"];
-        return fallbackRelays;
+        return this.filterHealthyRelays(fallbackRelays);
       }
       
-      return relays;
+      return this.filterHealthyRelays(relays);
     } catch (error) {
       console.error("Failed to fetch user relays:", error);
       const fallbackRelays = ["wss://relay.damus.io", "wss://relay.nos.social"];
-      return fallbackRelays;
+      return this.filterHealthyRelays(fallbackRelays);
     }
   }
 
-  // Parse nutzap relays from kind:10019 event
+  // Parse nutzap relays from kind:10019 event  
   parseNutzapRelays(event10019: any): string[] {
     const relays: string[] = [];
     if (event10019?.tags) {
@@ -637,7 +748,9 @@ export class NostrClient {
         }
       });
     }
-    return relays;
+    
+    // Use specialized filtering for nutzaps (more permissive but still bounded)
+    return this.filterNutzapRelays(relays);
   }
 
   // Initialize group write relay pool from member pubkeys
@@ -661,8 +774,8 @@ export class NostrClient {
       allRelays.add("wss://relay.nos.social");
       allRelays.add("wss://relay.primal.net");
       
-      // Limit total relays to prevent connection exhaustion (max 10)
-      const limitedRelays = Array.from(allRelays).slice(0, 10);
+      // Filter out dead relays and limit total connections
+      const limitedRelays = this.filterHealthyRelays(Array.from(allRelays));
       
       // Only recreate if the relay set has changed significantly
       const newRelaySet = new Set(limitedRelays);
@@ -696,6 +809,20 @@ export class NostrClient {
       
       this.groupWriteRelays = newRelaySet;
       
+      // Add error listeners to track failed relays
+      this.groupWriteNdk.pool.on('relay:connect', (relay: NDKRelay) => {
+        console.log(`✅ Group write relay connected: ${relay.url}`);
+      });
+      
+      this.groupWriteNdk.pool.on('relay:disconnect', (relay: NDKRelay) => {
+        console.warn(`⚠️ Group write relay disconnected: ${relay.url}`);
+        this.markRelayAsDead(relay.url);
+      });
+      
+      this.groupWriteNdk.pool.on('relay:auth', (_relay: NDKRelay, _challenge: string) => {
+        // Auth challenge received - not necessarily a failure
+      });
+      
       // Connect with timeout
       const connectPromise = this.groupWriteNdk.connect();
       const timeoutPromise = new Promise((_, reject) => 
@@ -706,7 +833,13 @@ export class NostrClient {
         await Promise.race([connectPromise, timeoutPromise]);
       } catch (err) {
         console.warn("Some group write relays failed to connect:", err);
-        // Continue with partial connections
+        // Mark relays that failed to connect as potentially dead
+        limitedRelays.forEach(relayUrl => {
+          const relay = this.groupWriteNdk?.pool.relays.get(relayUrl);
+          if (!relay || relay.status !== 1) { // Not connected
+            this.markRelayAsDead(relayUrl, err instanceof Error ? err : new Error(String(err)));
+          }
+        });
       }
     } catch (error) {
       console.error("Failed to initialize group write relays:", error);

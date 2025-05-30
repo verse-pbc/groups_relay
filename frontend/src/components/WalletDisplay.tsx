@@ -64,18 +64,25 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
       // Always fetch balance to get mint balances
       await fetchBalance();
     } catch (err) {
+      // Don't completely fail initialization due to balance fetch errors
+      console.warn("⚠️ Wallet initialization had errors:", err);
       setError(err instanceof Error ? err.message : "Failed to initialize wallet");
-      setIsInitialized(false);
+      // Keep initialized=true if we got this far - balance fetch can fail due to relay issues
+      // setIsInitialized(false); // Remove this - let wallet remain "initialized"
     } finally {
       setLoading(false);
     }
   };
 
   const fetchBalance = async (forceRefresh: boolean = false) => {
-    if (!client.walletInstance) return;
-    
     // Skip if we have initial balance and not forcing refresh
     if (!forceRefresh && initialCashuBalance !== undefined) {
+      return;
+    }
+    
+    // Don't block on wallet instance - try to fetch balance anyway
+    if (!client.walletInstance) {
+      console.warn("⚠️ Wallet instance not available, skipping balance fetch");
       return;
     }
     
