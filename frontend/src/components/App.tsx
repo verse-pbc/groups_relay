@@ -626,9 +626,8 @@ export class App extends Component<AppProps, AppState> {
     group.members.forEach(m => allPubkeys.add(m.pubkey));
     group.content?.forEach(c => allPubkeys.add(c.pubkey));
 
-    // Initialize group write relay pool for efficient 10019 fetching
+    // Note: Group write relay initialization removed - NDK outbox model handles this automatically
     const pubkeysArray = Array.from(allPubkeys);
-    await this.props.client.initializeGroupWriteRelays(pubkeysArray);
 
     // Fetch profiles for all members
     const profilePromises = Array.from(allPubkeys).map(async (pubkey) => {

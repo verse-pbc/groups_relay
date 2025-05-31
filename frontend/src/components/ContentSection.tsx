@@ -152,9 +152,9 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         })
       }
 
-      // Fetch existing nutzaps from public relays
-      const profileNdk = (this.props.client as any).profileNdk
-      const eventsSet = await profileNdk.fetchEvents(filter)
+      // Fetch existing nutzaps from public relays  
+      const ndk = (this.props.client as any).ndk
+      const eventsSet = await ndk.fetchEvents(filter)
       const events = Array.from(eventsSet)
       const nutzapTotals = new Map<string, number>()
       const seenEventIds = new Set<string>() // Track event IDs just for this initial fetch
@@ -253,8 +253,8 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         ...filter,
         since: Math.floor(Date.now() / 1000) // Current timestamp in seconds
       }
-      const profileNdkForSub = (this.props.client as any).profileNdk
-      this.nutzapSubscription = await profileNdkForSub.subscribe(subscriptionFilter, {
+      const ndkForSub = (this.props.client as any).ndk
+      this.nutzapSubscription = await ndkForSub.subscribe(subscriptionFilter, {
         closeOnEose: false
       })
 

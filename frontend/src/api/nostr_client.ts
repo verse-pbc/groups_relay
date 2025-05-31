@@ -51,9 +51,6 @@ export class NostrGroupError extends Error {
 
 export class NostrClient {
   private ndk: NDK;
-  private profileNdk: NDK;
-  private groupWriteNdk: NDK | null = null;
-  private groupWriteRelays: Set<string> = new Set();
   readonly config: NostrClientConfig;
   private profileCache: Map<string, any> = new Map();
   private walletService: ICashuWalletService | null = null;
@@ -99,66 +96,34 @@ export class NostrClient {
         );
       }
 
-      // Main NDK instance for group operations
+      // Single NDK instance with outbox model for all operations
       this.ndk = new NDK({
-        explicitRelayUrls: [this.config.relayUrl],
-        signer,
-      });
-
-      // Separate NDK instance for profile fetching
-      // Include the current relay in addition to public relays
-      this.profileNdk = new NDK({
         explicitRelayUrls: [
-          this.config.relayUrl,  // Include current relay
-          "wss://relay.nos.social", 
+          this.config.relayUrl,     // Group relay (current server)
+          "wss://relay.nos.social", // Public relays for discovery
           "wss://purplepag.es"
         ],
-        signer,  // Add signer for authentication
+        enableOutboxModel: true,        // Enable outbox model for user relay discovery
+        autoConnectUserRelays: true,    // Automatically connect to user relays
+        signer,
       });
 
       this.ndk.pool.on("relay:connect", (relay: NDKRelay) => {
         relay.authPolicy = NDKRelayAuthPolicies.signIn({ ndk: this.ndk });
       });
 
-      this.profileNdk.pool.on("relay:connect", (relay: NDKRelay) => {
-        relay.authPolicy = NDKRelayAuthPolicies.signIn({ ndk: this.profileNdk });
-      });
-
-      // Add error tracking for main NDK instances
+      // Add error tracking for NDK instance
       this.ndk.pool.on('relay:disconnect', (relay: NDKRelay) => {
         // Normal disconnections should trigger reconnection, not be counted as failures
         this.markRelayAsDead(relay.url, false);
       });
-
-      this.profileNdk.pool.on('relay:disconnect', (relay: NDKRelay) => {
-        // Normal disconnections should trigger reconnection, not be counted as failures
-        this.markRelayAsDead(relay.url, false);
-      });
-      
-      // Track connection failures - use existing auth failure handlers
-      // Note: We'll rely on the existing auth event handlers below to catch auth failures
       
       // Track flapping relays (frequently connecting/disconnecting)
       this.ndk.pool.on('flapping', (relay: NDKRelay) => {
         this.markRelayAsDead(relay.url, true, new Error('Relay is flapping'));
       });
-      
-      this.profileNdk.pool.on('flapping', (relay: NDKRelay) => {
-        this.markRelayAsDead(relay.url, true, new Error('Relay is flapping'));
-      });
 
       this.ndk.pool.on('relay:auth', (relay: NDKRelay, _challenge: string) => {
-        // Auth challenge received - set up auth failure detection
-        const authTimeout = setTimeout(() => {
-          this.markRelayAsDead(relay.url, true, new Error('Auth timeout'));
-        }, 10000); // 10 second auth timeout
-        
-        // Clear timeout if auth succeeds
-        relay.once('authed', () => clearTimeout(authTimeout));
-        relay.once('disconnect', () => clearTimeout(authTimeout));
-      });
-
-      this.profileNdk.pool.on('relay:auth', (relay: NDKRelay, _challenge: string) => {
         // Auth challenge received - set up auth failure detection
         const authTimeout = setTimeout(() => {
           this.markRelayAsDead(relay.url, true, new Error('Auth timeout'));
@@ -758,27 +723,11 @@ export class NostrClient {
     console.log(`🔄 Attempting to reconnect to ${relayUrl}`);
     
     try {
-      // Find the relay in our pools and attempt reconnection
-      const mainRelay = this.ndk.pool.relays.get(relayUrl);
-      const profileRelay = this.profileNdk.pool.relays.get(relayUrl);
-      const groupWriteRelay = this.groupWriteNdk?.pool.relays.get(relayUrl);
+      // Find the relay in our single NDK pool and attempt reconnection
+      const relay = this.ndk.pool.relays.get(relayUrl);
       
-      const reconnectPromises = [];
-      
-      if (mainRelay && mainRelay.status !== 1) { // Not connected
-        reconnectPromises.push(this.connectToRelay(mainRelay));
-      }
-      
-      if (profileRelay && profileRelay.status !== 1) {
-        reconnectPromises.push(this.connectToRelay(profileRelay));
-      }
-      
-      if (groupWriteRelay && groupWriteRelay.status !== 1) {
-        reconnectPromises.push(this.connectToRelay(groupWriteRelay));
-      }
-      
-      if (reconnectPromises.length > 0) {
-        await Promise.allSettled(reconnectPromises);
+      if (relay && relay.status !== 1) { // Not connected
+        await this.connectToRelay(relay);
         console.log(`✅ Reconnection attempt completed for ${relayUrl}`);
       }
     } catch (error) {
@@ -886,7 +835,7 @@ export class NostrClient {
         limit: 1
       };
       
-      const events = await this.profileNdk.fetchEvents(filter);
+      const events = await this.ndk.fetchEvents(filter);
       if (events.size === 0) {
         const fallbackRelays = ["wss://relay.damus.io", "wss://relay.nos.social", "wss://relay.primal.net"];
         return this.filterHealthyRelays(fallbackRelays);
@@ -916,113 +865,7 @@ export class NostrClient {
   }
 
 
-  // Initialize group write relay pool from member pubkeys
-  async initializeGroupWriteRelays(memberPubkeys: string[]): Promise<void> {
-    try {
-      // Collect all unique write relays from all members
-      const allRelays = new Set<string>();
-      
-      // Fetch relay lists for all members in parallel
-      await Promise.all(memberPubkeys.map(async (pubkey) => {
-        try {
-          const relays = await this.getUserRelays(pubkey);
-          relays.forEach(relay => allRelays.add(relay));
-        } catch (err) {
-          // Skip failed relay fetches
-        }
-      }));
-      
-      // Add some fallback relays to ensure we have coverage
-      allRelays.add("wss://relay.damus.io");
-      allRelays.add("wss://relay.nos.social");
-      allRelays.add("wss://relay.primal.net");
-      
-      // Filter out dead relays and limit total connections
-      const limitedRelays = this.filterHealthyRelays(Array.from(allRelays));
-      
-      // Only recreate if the relay set has changed significantly
-      const newRelaySet = new Set(limitedRelays);
-      const hasChanged = newRelaySet.size !== this.groupWriteRelays.size || 
-                        !Array.from(newRelaySet).every(relay => this.groupWriteRelays.has(relay));
-      
-      if (!hasChanged && this.groupWriteNdk) {
-        return; // No change needed
-      }
-      
-      // Close existing group write NDK if it exists
-      if (this.groupWriteNdk) {
-        try {
-          Array.from(this.groupWriteNdk.pool.relays.values()).forEach(relay => {
-            try {
-              relay.disconnect();
-            } catch (err) {
-              // Ignore disconnection errors
-            }
-          });
-        } catch (err) {
-          // Ignore cleanup errors
-        }
-      }
-      
-      // Create new group write NDK instance
-      this.groupWriteNdk = new NDK({
-        explicitRelayUrls: limitedRelays,
-        signer: this.ndk.signer
-      });
-      
-      this.groupWriteRelays = newRelaySet;
-      
-      // Add error listeners to track failed relays
-      this.groupWriteNdk.pool.on('relay:connect', (relay: NDKRelay) => {
-        console.log(`✅ Group write relay connected: ${relay.url}`);
-      });
-      
-      this.groupWriteNdk.pool.on('relay:disconnect', (relay: NDKRelay) => {
-        console.warn(`⚠️ Group write relay disconnected: ${relay.url}`);
-        // Normal disconnections should trigger reconnection, not be counted as failures
-        this.markRelayAsDead(relay.url, false);
-      });
-      
-      // Group write relay auth failures will be handled by individual relay listeners
-      
-      this.groupWriteNdk.pool.on('flapping', (relay: NDKRelay) => {
-        console.warn(`❌ Group write relay flapping: ${relay.url}`);
-        this.markRelayAsDead(relay.url, true, new Error('Relay is flapping'));
-      });
-      
-      this.groupWriteNdk.pool.on('relay:auth', (relay: NDKRelay, _challenge: string) => {
-        // Auth challenge received - set up auth failure detection
-        const authTimeout = setTimeout(() => {
-          this.markRelayAsDead(relay.url, true, new Error('Auth timeout'));
-        }, 10000); // 10 second auth timeout
-        
-        // Clear timeout if auth succeeds
-        relay.once('authed', () => clearTimeout(authTimeout));
-        relay.once('disconnect', () => clearTimeout(authTimeout));
-      });
-      
-      // Connect with timeout
-      const connectPromise = this.groupWriteNdk.connect();
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Group write relay connection timeout")), 5000)
-      );
-      
-      try {
-        await Promise.race([connectPromise, timeoutPromise]);
-      } catch (err) {
-        console.warn("Some group write relays failed to connect:", err);
-        // Mark relays that failed to connect as actual failures
-        limitedRelays.forEach(relayUrl => {
-          const relay = this.groupWriteNdk?.pool.relays.get(relayUrl);
-          if (!relay || relay.status !== 1) { // Not connected
-            this.markRelayAsDead(relayUrl, true, err instanceof Error ? err : new Error(String(err)));
-          }
-        });
-      }
-    } catch (error) {
-      console.error("Failed to initialize group write relays:", error);
-    }
-  }
+  // Note: Group write relay management removed - NDK outbox model handles this automatically
 
 
   /**
@@ -1034,7 +877,7 @@ export class NostrClient {
 
   async connect() {
     try {
-      await Promise.all([this.ndk.connect(), this.profileNdk.connect()]);
+      await this.ndk.connect();
       
       // Create wallet service immediately after connection
       if (!this.walletService) {
@@ -1112,27 +955,12 @@ export class NostrClient {
 
   async disconnect() {
     try {
-      // Close all relay connections from all NDK instances
-      const groupRelays = Array.from(this.ndk.pool.relays.values());
-      const profileRelays = Array.from(this.profileNdk.pool.relays.values());
-      const groupWriteRelays = this.groupWriteNdk ? Array.from(this.groupWriteNdk.pool.relays.values()) : [];
-
-      await Promise.all([
-        ...groupRelays.map((relay) => relay.disconnect()),
-        ...profileRelays.map((relay) => relay.disconnect()),
-        ...groupWriteRelays.map((relay) => relay.disconnect()),
-      ]);
+      // Close all relay connections from the single NDK instance
+      const relays = Array.from(this.ndk.pool.relays.values());
+      await Promise.all(relays.map((relay) => relay.disconnect()));
 
       // Clear any subscriptions
       this.ndk.pool.removeAllListeners();
-      this.profileNdk.pool.removeAllListeners();
-      if (this.groupWriteNdk) {
-        this.groupWriteNdk.pool.removeAllListeners();
-        this.groupWriteNdk = null;
-      }
-      
-      // Clear group write relay cache
-      this.groupWriteRelays.clear();
 
     } catch (error) {
       console.error("Error during disconnect:", error);
@@ -1299,7 +1127,7 @@ export class NostrClient {
       }
 
       const user = new NDKUser({ pubkey });
-      user.ndk = this.profileNdk; // Use the profile-specific NDK instance
+      user.ndk = this.ndk; // Use the main NDK instance with outbox model
       await user.fetchProfile();
 
       // Cache the profile
