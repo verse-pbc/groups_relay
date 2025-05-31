@@ -3,7 +3,6 @@ import NDK, {
   NDKUser, 
   NDKCashuMintList,
   NDKZapper,
-  NDKPrivateKeySigner,
   NDKRelaySet
 } from "@nostr-dev-kit/ndk";
 import {
@@ -207,17 +206,22 @@ export class CashuWalletService implements ICashuWalletService {
       await this.ensureNutzapMonitor();
 
       // Check if wallet has P2PK key, if not, add one
-      if (!this.walletP2PKPrivkey || !this.walletP2PKPubkey) {
+      if (this.wallet.privkeys.size === 0) {
         console.log("🔧 Existing wallet lacks P2PK key, adding one...");
         await this.addP2PKKeyToExistingWallet();
+      } else {
+        // NDK wallet already has P2PK key available via wallet.p2pk
+        console.log("✅ Using existing P2PK key from wallet:", this.wallet.p2pk);
       }
 
       // Set up NDK's wallet integration for automatic zapper usage
       this.ndk.wallet = this.wallet;
       console.log("\u2705 Set up NDK wallet integration for existing wallet");
 
-      // Publish/update kind 10019 event for nutzap receiving
-      await this.publishNutzapConfig();
+      // Publish wallet metadata and nutzap config using NDK's built-in methods
+      await this.wallet.publish(); // Creates kind:17375 wallet metadata event
+      await this.wallet.backup(true); // Creates kind:375 backup event  
+      await this.publishNutzapConfig(); // Creates kind:10019 nutzap config event
 
       return;
     }
@@ -262,7 +266,11 @@ export class CashuWalletService implements ICashuWalletService {
     });
 
     if (mints && mints.length > 0) {
-      await this.createWalletMetadata(mints);
+      // Set mints on the wallet first
+      this.wallet.mints = mints;
+      // Let NDK handle wallet metadata creation
+      await this.wallet.publish(); // Creates kind:17375 wallet metadata event
+      await this.wallet.backup(true); // Creates kind:375 backup event
     }
 
     // Update balance and start monitoring
@@ -271,8 +279,10 @@ export class CashuWalletService implements ICashuWalletService {
 
     console.log("Created new NIP-60 wallet");
 
-    // Publish kind 10019 event for nutzap receiving
-    await this.publishNutzapConfig();
+    // Publish wallet metadata and nutzap config using NDK's built-in methods
+    await this.wallet.publish(); // Creates kind:17375 wallet metadata event
+    await this.wallet.backup(true); // Creates kind:375 backup event
+    await this.publishNutzapConfig(); // Creates kind:10019 nutzap config event
   }
 
   isInitialized(): boolean {
@@ -550,8 +560,9 @@ export class CashuWalletService implements ICashuWalletService {
     if (!this.wallet.mints.includes(mintUrl)) {
       this.wallet.mints.push(mintUrl);
 
-      // Update wallet metadata with new mint
-      await this.createWalletMetadata(this.wallet.mints);
+      // Update wallet metadata with new mint using NDK's built-in methods
+      await this.wallet.publish(); // Updates kind:17375 wallet metadata event
+      await this.wallet.backup(true); // Updates kind:375 backup event
 
       // Update kind:10019 to include new mint as authorized
       await this.publishNutzapConfig();
@@ -575,8 +586,9 @@ export class CashuWalletService implements ICashuWalletService {
     if (mintIndex > -1) {
       this.wallet.mints.splice(mintIndex, 1);
 
-      // Update wallet metadata without the removed mint
-      await this.createWalletMetadata(this.wallet.mints);
+      // Update wallet metadata without the removed mint using NDK's built-in methods
+      await this.wallet.publish(); // Updates kind:17375 wallet metadata event
+      await this.wallet.backup(true); // Updates kind:375 backup event
 
       // Update kind:10019 to remove mint from authorized list
       await this.publishNutzapConfig();
@@ -668,13 +680,18 @@ export class CashuWalletService implements ICashuWalletService {
         console.log('🔌 Connecting to nutzap relays...');
         const connectPromise = zapperNdk.connect();
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Nutzap relay connection timeout")), 5000)
+          setTimeout(() => reject(new Error("Nutzap relay connection timeout")), 3000)
         );
         await Promise.race([connectPromise, timeoutPromise]);
         console.log('✅ Connected to nutzap relays for profile nutzap');
       } catch (error) {
         console.warn("Failed to connect to some nutzap relays:", error);
         // Continue anyway - some relays might be connected
+        // Also fallback to using main NDK if all nutzap relays fail
+        if (Array.from(zapperNdk.pool.relays.values()).length === 0) {
+          console.log('🔄 Falling back to main NDK since no nutzap relays connected');
+          zapperNdk = this.ndk;
+        }
       }
     }
 
@@ -836,13 +853,18 @@ export class CashuWalletService implements ICashuWalletService {
         console.log('🔌 Connecting to nutzap relays for event...');
         const connectPromise = zapperNdk.connect();
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Nutzap relay connection timeout")), 5000)
+          setTimeout(() => reject(new Error("Nutzap relay connection timeout")), 3000)
         );
         await Promise.race([connectPromise, timeoutPromise]);
         console.log('✅ Connected to nutzap relays for event nutzap');
       } catch (error) {
         console.warn("Failed to connect to some nutzap relays:", error);
         // Continue anyway - some relays might be connected
+        // Also fallback to using main NDK if all nutzap relays fail
+        if (Array.from(zapperNdk.pool.relays.values()).length === 0) {
+          console.log('🔄 Falling back to main NDK since no nutzap relays connected');
+          zapperNdk = this.ndk;
+        }
       }
     }
 
@@ -1177,8 +1199,7 @@ export class CashuWalletService implements ICashuWalletService {
     }
   }
 
-  private walletP2PKPrivkey: string | null = null;
-  private walletP2PKPubkey: string | null = null;
+  // Removed manual P2PK management - now using NDK's built-in wallet.p2pk and wallet.privkeys
 
   private async fetchExistingWallet(
     user: NDKUser
@@ -1244,15 +1265,8 @@ export class CashuWalletService implements ICashuWalletService {
             if (event.content) {
               const metadata = JSON.parse(event.content);
               if (metadata.privkey) {
-                this.walletP2PKPrivkey = metadata.privkey;
-                console.log("🔑 Found P2PK private key in wallet metadata");
-
-                // Get the corresponding public key
-                // NDKPrivateKeySigner is now imported statically
-                const signer = new NDKPrivateKeySigner(metadata.privkey);
-                const pubkey = await signer.user().then((u) => u.pubkey);
-                this.walletP2PKPubkey = pubkey;
-                console.log("📝 Wallet P2PK pubkey:", pubkey);
+                // P2PK management is now handled by NDK wallet automatically
+                console.log("🔑 Found P2PK private key in wallet metadata (NDK will manage this)");
               }
             }
           } catch (err) {
@@ -1352,200 +1366,26 @@ export class CashuWalletService implements ICashuWalletService {
     }
   }
 
-  private async createWalletMetadata(mints: string[]): Promise<void> {
-    let tempNdkCleanup: (() => void) | null = null;
-
-    try {
-      const user = await this.ndk.signer?.user();
-      if (!user) return;
-
-      // Get user's relays - wallet metadata needs to be published everywhere
-      const userRelays = await this.getUserRelays(user.pubkey);
-      const allRelays = [...new Set([...userRelays])]; // Could add group relay if needed
-
-      // Create temporary NDK with all relays
-      const allNdk = new NDK({
-        explicitRelayUrls: allRelays,
-        signer: this.ndk.signer,
-      });
-
-      // Connect with timeout
-      try {
-        await allNdk.connect();
-        // Set up cleanup function
-        tempNdkCleanup = () => {
-          try {
-            Array.from(allNdk.pool.relays.values()).forEach((relay) => {
-              try {
-                relay.disconnect();
-              } catch (err) {
-                // Ignore disconnection errors
-              }
-            });
-            allNdk.pool.removeAllListeners();
-          } catch (err) {
-            console.warn(
-              "Error cleaning up temp NDK in createWalletMetadata:",
-              err
-            );
-          }
-        };
-      } catch (err) {
-        console.warn(
-          "⚠️ Create wallet metadata: Some relays may not have connected:",
-          err
-        );
-      }
-
-      // Create wallet metadata event
-      const walletEvent = new NDKEvent(allNdk);
-      walletEvent.kind = 17375; // Replaceable event
-
-      // Wallet metadata structure (as tag arrays for NIP-60)
-      walletEvent.tags = mints.map((mint) => ["mint", mint]);
-
-      // Generate a P2PK private key for the wallet
-      // NDKPrivateKeySigner is now imported statically
-      const walletSigner = NDKPrivateKeySigner.generate();
-      const walletPrivkey = walletSigner.privateKey;
-      this.walletP2PKPrivkey = walletPrivkey!;
-      console.log("🔑 Generated new P2PK private key for wallet");
-      const walletPubkey = await walletSigner.user().then((u) => u.pubkey);
-      this.walletP2PKPubkey = walletPubkey;
-
-      // Create wallet metadata with the P2PK private key
-      const walletMetadata = {
-        privkey: walletPrivkey,
-      };
-
-      // Encrypt the content using NIP-44
-      walletEvent.content = JSON.stringify(walletMetadata);
-      const ndkUser = allNdk.getUser({ pubkey: user.pubkey });
-      await walletEvent.encrypt(ndkUser, undefined, "nip44");
-
-      await walletEvent.sign();
-      await walletEvent.publish();
-
-      console.log(
-        "Created/updated NIP-60 wallet metadata to all relays with mints:",
-        mints
-      );
-
-      // Add the P2PK key to the wallet's privkeys map and create backup
-      if (this.wallet && walletPrivkey) {
-        try {
-          const walletUser = await walletSigner.user();
-          this.wallet.privkeys.set(walletUser.pubkey, walletSigner);
-
-          // Create backup using wallet's built-in backup method
-          await this.wallet.backup(true); // true = publish the backup
-          console.log("✅ Created wallet backup (kind 375)");
-        } catch (error) {
-          console.warn("⚠️ Failed to create wallet backup:", error);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to create wallet metadata:", error);
-    } finally {
-      // Clean up temporary NDK instance
-      if (tempNdkCleanup) {
-        tempNdkCleanup();
-      }
-    }
-  }
+  // Removed createWalletMetadata - now using NDK's built-in wallet.publish() and wallet.backup() methods
 
   /**
    * Add P2PK key to existing wallet that doesn't have one
    */
   private async addP2PKKeyToExistingWallet(): Promise<void> {
-    let tempNdkCleanup: (() => void) | null = null;
-
     try {
       const user = await this.ndk.signer?.user();
       if (!user || !this.wallet) return;
 
-      // Generate a P2PK private key for the wallet
-      // NDKPrivateKeySigner is now imported statically
-      const walletSigner = NDKPrivateKeySigner.generate();
-      const walletPrivkey = walletSigner.privateKey;
-      this.walletP2PKPrivkey = walletPrivkey!;
-      console.log("🔑 Generated new P2PK private key for existing wallet");
-      const walletPubkey = await walletSigner.user().then((u) => u.pubkey);
-      this.walletP2PKPubkey = walletPubkey;
+      // Use NDK's built-in getP2pk() method to generate and set up P2PK key
+      const p2pk = await this.wallet.getP2pk();
+      
+      console.log("🔑 Generated new P2PK private key for existing wallet using NDK:", p2pk);
 
-      // Update the wallet metadata event with the new P2PK key
-      const walletMetadata = {
-        privkey: walletPrivkey,
-      };
-
-      // Get user's relays - wallet metadata needs to be published everywhere
-      const userRelays = await this.getUserRelays(user.pubkey);
-      const allRelays = [...new Set([...userRelays])];
-
-      // Create temporary NDK with all relays
-      const allNdk = new NDK({
-        explicitRelayUrls: allRelays,
-        signer: this.ndk.signer,
-      });
-
-      // Connect with timeout
-      try {
-        await allNdk.connect();
-        // Set up cleanup function
-        tempNdkCleanup = () => {
-          try {
-            Array.from(allNdk.pool.relays.values()).forEach((relay) => {
-              try {
-                relay.disconnect();
-              } catch (err) {
-                // Ignore disconnection errors
-              }
-            });
-            allNdk.pool.removeAllListeners();
-          } catch (err) {
-            console.warn(
-              "Error cleaning up temp NDK in addP2PKKeyToExistingWallet:",
-              err
-            );
-          }
-        };
-      } catch (err) {
-        console.warn(
-          "⚠️ Update wallet metadata: Some relays may not have connected:",
-          err
-        );
-      }
-
-      // Create wallet metadata event
-      const walletEvent = new NDKEvent(allNdk);
-      walletEvent.kind = 17375; // Replaceable event
-
-      // Wallet metadata structure (as tag arrays for NIP-60)
-      walletEvent.tags = this.wallet.mints.map((mint) => ["mint", mint]);
-
-      // Encrypt the content using NIP-44
-      walletEvent.content = JSON.stringify(walletMetadata);
-      const ndkUser = allNdk.getUser({ pubkey: user.pubkey });
-      await walletEvent.encrypt(ndkUser, undefined, "nip44");
-
-      await walletEvent.sign();
-      await walletEvent.publish();
-
-      console.log("✅ Updated wallet metadata with P2PK key");
-
-      // Add the P2PK key to the wallet's privkeys map and create backup
-      if (this.wallet && walletPrivkey) {
-        try {
-          const walletUser = await walletSigner.user();
-          this.wallet.privkeys.set(walletUser.pubkey, walletSigner);
-
-          // Create backup using wallet's built-in backup method
-          await this.wallet.backup(true); // true = publish the backup
-          console.log("✅ Created wallet backup (kind 375)");
-        } catch (error) {
-          console.warn("⚠️ Failed to create wallet backup:", error);
-        }
-      }
+      // Update wallet metadata using NDK's built-in methods
+      await this.wallet.publish(); // Updates kind:17375 wallet metadata event  
+      await this.wallet.backup(true); // Creates/updates kind:375 backup event
+      
+      console.log("✅ Updated wallet metadata and backup with P2PK key");
 
       // Now we can start the nutzap monitor with the new key
       if (this.nutzapMonitor) {
@@ -1556,11 +1396,6 @@ export class CashuWalletService implements ICashuWalletService {
       }
     } catch (error) {
       console.error("❌ Failed to add P2PK key to existing wallet:", error);
-    } finally {
-      // Clean up temporary NDK instance
-      if (tempNdkCleanup) {
-        tempNdkCleanup();
-      }
     }
   }
 
@@ -1569,8 +1404,8 @@ export class CashuWalletService implements ICashuWalletService {
    * This should be called whenever mints are added/removed
    */
   async publishNutzapConfig(): Promise<void> {
-    if (!this.walletP2PKPubkey) {
-      console.warn("⚠️ Cannot publish nutzap config: no P2PK pubkey");
+    if (!this.wallet || this.wallet.privkeys.size === 0) {
+      console.warn("⚠️ Cannot publish nutzap config: no wallet P2PK key");
       return;
     }
 
@@ -1597,7 +1432,7 @@ export class CashuWalletService implements ICashuWalletService {
       // Set properties using NDKCashuMintList's clean API
       mintList.relays = relays;
       mintList.mints = mints;
-      mintList.p2pk = this.walletP2PKPubkey;
+      mintList.p2pk = this.wallet.p2pk; // Use NDK's built-in P2PK
 
       // Convert to event and publish
       await mintList.toNostrEvent();
@@ -1607,7 +1442,7 @@ export class CashuWalletService implements ICashuWalletService {
       console.log("📝 Nutzap config:", {
         relays,
         mints,
-        p2pk: this.walletP2PKPubkey,
+        p2pk: this.wallet.p2pk,
       });
     } catch (error) {
       console.error("❌ Failed to publish nutzap config:", error);
@@ -1652,26 +1487,22 @@ export class CashuWalletService implements ICashuWalletService {
       // Set the wallet for redemption
       (this.nutzapMonitor as any).wallet = this.wallet;
 
-      // Add the WALLET's P2PK private key for nutzap redemption
+      // Add the WALLET's P2PK private keys for nutzap redemption
       // According to NIP-60, nutzaps use a separate wallet private key, NOT the user's Nostr key
-      // This key is extracted from the kind 17375 wallet metadata event
       try {
-        if (this.walletP2PKPrivkey) {
-          // NDKPrivateKeySigner is now imported statically
-          const privkeySigner = new NDKPrivateKeySigner(this.walletP2PKPrivkey);
-          this.nutzapMonitor.addPrivkey(privkeySigner);
-          console.log("🔑 Added wallet P2PK private key to nutzap monitor");
+        if (this.wallet.privkeys.size > 0) {
+          // Add all wallet private keys to the nutzap monitor
+          for (const [pubkey, signer] of this.wallet.privkeys.entries()) {
+            this.nutzapMonitor.addPrivkey(signer);
+            console.log(`🔑 Added wallet P2PK private key ${pubkey} to nutzap monitor`);
+          }
         } else {
           console.warn(
-            "⚠️ Wallet does not have a P2PK private key - cannot redeem nutzaps"
-          );
-          // The NDKCashuWallet doesn't expose the privkey, and we couldn't extract it from the metadata event
-          console.warn(
-            "⚠️ This means the wallet was likely created without a P2PK private key"
+            "⚠️ Wallet does not have P2PK private keys - cannot redeem nutzaps"
           );
         }
       } catch (error) {
-        console.error("🔴 Error setting up wallet private key:", error);
+        console.error("🔴 Error setting up wallet private keys:", error);
       }
 
       // Listen for all nutzap monitor events
@@ -2312,16 +2143,16 @@ export class CashuWalletService implements ICashuWalletService {
    * Filter nutzap relays with basic validation
    */
   private filterNutzapRelays(relays: string[]): string[] {
-    return relays
-      .filter(relay => {
-        try {
-          const url = new URL(relay);
-          return url.protocol === 'ws:' || url.protocol === 'wss:';
-        } catch {
-          return false;
-        }
-      })
-      .slice(0, 5); // Allow up to 5 relays for nutzaps
+    // Only filter out obviously malformed URLs, but respect user's choices
+    return relays.filter(relay => {
+      try {
+        const url = new URL(relay);
+        return url.protocol === 'ws:' || url.protocol === 'wss:';
+      } catch {
+        return false;
+      }
+    });
+    // Removed arbitrary 5-relay limit to respect user's explicit relay choices per NIP-61
   }
 
   // Cleanup method

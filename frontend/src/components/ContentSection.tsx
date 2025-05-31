@@ -182,13 +182,6 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         // Skip if author has no 10019 config
         if (authorizedMints.length === 0 || !cashuPubkey) return
         
-        // Find the amount tag
-        const amountTag = event.tags.find((tag: string[]) => tag[0] === 'amount')
-        if (!amountTag) return
-
-        const amount = parseInt(amountTag[1])
-        if (isNaN(amount)) return
-
         // Find the mint tag - check 'u' tag as per NIP-61 
         const uTag = event.tags.find((tag: string[]) => tag[0] === 'u')
         const mint = uTag ? uTag[1] : null
@@ -203,12 +196,18 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         // Verify mint is authorized
         if (!normalizedAuthorizedMints.includes(normalizedMint)) return
         
-        // Find the proof tag and verify P2PK lock
+        // Find the proof tag and extract amount + verify P2PK lock
         const proofTag = event.tags.find((tag: string[]) => tag[0] === 'proof')
         if (!proofTag) return
+
+        // Get amount from proof - NIP-61 nutzaps don't have amount tags
+        let amount: number
         
         try {
           const proof = JSON.parse(proofTag[1])
+          amount = proof.amount
+          if (!amount || isNaN(amount)) return
+          
           // Parse the secret to check P2PK lock
           const secret = JSON.parse(proof.secret)
           
@@ -277,13 +276,6 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         // Skip if author has no 10019 config
         if (authorizedMints.length === 0 || !cashuPubkey) return
         
-        // Find the amount tag
-        const amountTag = event.tags.find((tag: string[]) => tag[0] === 'amount')
-        if (!amountTag) return
-
-        const amount = parseInt(amountTag[1])
-        if (isNaN(amount)) return
-
         // Find the mint tag - check 'u' tag as per NIP-61
         const uTag = event.tags.find((tag: string[]) => tag[0] === 'u')
         const mint = uTag ? uTag[1] : null
@@ -297,12 +289,18 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         // Verify mint is authorized (authorizedMints are already normalized)
         if (!authorizedMints.includes(normalizedMint)) return
         
-        // Find the proof tag and verify P2PK lock
+        // Find the proof tag and extract amount + verify P2PK lock
         const proofTag = event.tags.find((tag: string[]) => tag[0] === 'proof')
         if (!proofTag) return
+
+        // Get amount from proof - NIP-61 nutzaps don't have amount tags  
+        let amount: number
         
         try {
           const proof = JSON.parse(proofTag[1])
+          amount = proof.amount
+          if (!amount || isNaN(amount)) return
+          
           // Parse the secret to check P2PK lock
           const secret = JSON.parse(proof.secret)
           
