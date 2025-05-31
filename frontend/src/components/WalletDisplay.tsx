@@ -574,25 +574,41 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
           <div class="space-y-2 pt-2 border-t border-gray-700">
             <div class="text-xs text-gray-400">Connected Mints:</div>
             {mints.map(mint => {
-              const balance = mintBalances[mint] || 0;
-              console.log(`🔍 Mint: ${mint}, Balance from mintBalances:`, balance, "mintBalances object:", mintBalances);
+              // Get balance from both authorized and unauthorized mint balances
+              const balance = mintBalances[mint] || unauthorizedMintBalances[mint] || 0;
+              const isAuthorized = mintBalances[mint] !== undefined;
+              console.log(`🔍 Mint: ${mint}, Balance:`, balance, "isAuthorized:", isAuthorized, "mintBalances:", mintBalances, "unauthorizedMintBalances:", unauthorizedMintBalances);
               return (
-                <div key={mint} class="flex items-center justify-between text-xs p-2 bg-[var(--color-bg-primary)] rounded border border-[var(--color-border)]">
+                <div key={mint} class={`flex items-center justify-between text-xs p-2 rounded border ${isAuthorized ? 'bg-[var(--color-bg-primary)] border-[var(--color-border)]' : 'bg-yellow-900/20 border-yellow-700/30'}`}>
                   <div class="flex items-center gap-2">
                     <span class="text-gray-300 truncate">
                       {getMintHostname(mint)}
+                      {!isAuthorized && <span class="text-yellow-400 ml-1">⚠️</span>}
                     </span>
-                    <span class="text-[#f7931a] font-medium flex items-center gap-0.5">
+                    <span class={`font-medium flex items-center gap-0.5 ${isAuthorized ? 'text-[#f7931a]' : 'text-yellow-400'}`}>
                       ₿{balance.toLocaleString()}
                       <span class="text-[10px] font-normal">sats</span>
                     </span>
                   </div>
-                  <button
-                    onClick={() => removeMint(mint)}
-                    class="text-red-400 hover:text-red-300 text-xs"
-                  >
-                    Remove
-                  </button>
+                  <div class="flex items-center gap-2">
+                    {!isAuthorized && (
+                      <button
+                        onClick={async () => {
+                          await addMint(mint);
+                          await fetchBalance(true);
+                        }}
+                        class="text-green-400 hover:text-green-300 text-xs"
+                      >
+                        Accept
+                      </button>
+                    )}
+                    <button
+                      onClick={() => removeMint(mint)}
+                      class="text-red-400 hover:text-red-300 text-xs"
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
               );
             })}
