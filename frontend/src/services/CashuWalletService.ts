@@ -2221,15 +2221,20 @@ export class CashuWalletService implements ICashuWalletService {
       // Create a promise for this fetch to prevent duplicate requests
       const fetchPromise = (async () => {
         try {
-          // Use NDK's fetchEvent for kind:10019 (CashuMintList)
-          const event = await this.ndk.fetchEvent({
-            kinds: [10019],
-            authors: [pubkey],
-          });
-
+          // Use NDK's user.getZapInfo which properly handles outbox relay discovery for kind:10019
+          const user = new NDKUser({ pubkey });
+          user.ndk = this.ndk;
+          
+          const zapInfo = await user.getZapInfo();
+          const nip61Info = zapInfo.get('nip61');
+          
           let result: NDKCashuMintList | null = null;
-          if (event) {
-            result = NDKCashuMintList.from(event);
+          if (nip61Info && 'mints' in nip61Info) {
+            // Create NDKCashuMintList from the discovered info
+            result = new NDKCashuMintList(this.ndk);
+            result.mints = (nip61Info as any).mints || [];
+            result.relays = (nip61Info as any).relays || [];
+            result.p2pk = (nip61Info as any).p2pk || '';
           }
 
           // Cache the result (even if null, to avoid repeated lookups)
@@ -2277,25 +2282,23 @@ export class CashuWalletService implements ICashuWalletService {
     }
     
     try {
-      // Fetch all kind:10019 events in one query using NDK
-      const events = await this.ndk.fetchEvents({
-        kinds: [10019],
-        authors: pubkeysToFetch,
-      });
-      
-      // Map events back to authors and cache them
-      events.forEach((event: any) => {
-        const mintList = NDKCashuMintList.from(event);
-        result.set(event.pubkey, mintList);
-        this.user10019Cache.set(event.pubkey, mintList);
-      });
-      
-      // Cache the pubkeys that didn't have events as null
-      pubkeysToFetch.forEach(pubkey => {
-        if (!result.has(pubkey)) {
-          result.set(pubkey, null);
-          this.user10019Cache.set(pubkey, null);
+      // Use our improved fetchUser10019 method for each user in parallel
+      // This leverages outbox model and user.getZapInfo() for proper relay discovery
+      const fetchPromises = pubkeysToFetch.map(async (pubkey) => {
+        try {
+          const mintList = await this.fetchUser10019(pubkey);
+          return { pubkey, mintList };
+        } catch (error) {
+          console.warn(`Failed to fetch 10019 for ${pubkey}:`, error);
+          return { pubkey, mintList: null };
         }
+      });
+      
+      const fetchResults = await Promise.all(fetchPromises);
+      
+      // Add results to the map (fetchUser10019 already handles caching)
+      fetchResults.forEach(({ pubkey, mintList }) => {
+        result.set(pubkey, mintList);
       });
       
     } catch (error) {
