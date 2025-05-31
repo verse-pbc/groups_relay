@@ -18,6 +18,9 @@ interface UserDisplayProps {
     profile?: any
     has10019?: boolean
   }
+  // Balance passed down from ProfileMenu to avoid duplicate subscriptions
+  walletBalance?: number
+  hasWalletBalance?: boolean
 }
 
 interface UserDisplayState {
@@ -62,18 +65,12 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
     // Add ESC key listener
     document.addEventListener('keydown', this.handleKeyDown);
     
-    // Subscribe to balance updates to trigger re-renders when wallet balance changes
+    // Subscribe to balance updates for wallet state changes
     const { client } = this.props;
     if (client) {
-      console.log('🔍 UserDisplay subscribing to balance updates');
       this.unsubscribeBalance = client.onBalanceUpdate((balance) => {
-        console.log('🔍 UserDisplay balance update received:', balance, '- forcing re-render');
-        // Force re-render by updating state (even if we don't use this state directly)  
         this.setState({ walletBalance: balance });
       });
-      console.log('🔍 UserDisplay subscription complete');
-    } else {
-      console.warn('🔍 UserDisplay: No client available for balance subscription');
     }
     
     // Fetch user profile
@@ -157,7 +154,8 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
 
       // Use gossip model to fetch from user's write relays
-      const event10019 = await client.fetchUser10019(hexPubkey)
+      const walletService = client.getWalletService();
+      const event10019 = await walletService?.fetchUser10019(hexPubkey) || null;
       const has10019 = event10019 !== null
       
       this.setState({ targetUserHas10019: has10019 })
@@ -325,9 +323,8 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
     const { showNutzapModal, sending, amount, comment, error, profilePicture, displayId, displayName, copied } = this.state
     const sizeClasses = this.getSizeClasses()
 
-    // Check if wallet has balance (NDKCashuWallet doesn't expose proofs directly)
-    const hasWalletBalance = client.hasWalletBalance()
-    console.log('🔍 UserDisplay render - hasWalletBalance:', hasWalletBalance, 'targetUserHas10019:', this.state.targetUserHas10019)
+    // Use balance passed from ProfileMenu or fallback to client check
+    const hasWalletBalance = this.props.hasWalletBalance ?? client.hasWalletBalance()
 
     return (
       <div class="flex items-center gap-2">

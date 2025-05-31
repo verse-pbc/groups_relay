@@ -7,15 +7,17 @@ interface WalletDisplayProps {
   onClose?: () => void;
   isModal?: boolean;
   initialCashuBalance?: number;
+  // Balance passed down from ProfileMenu to avoid duplicate subscriptions
+  walletBalance?: number;
 }
 
-export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }: WalletDisplayProps) => {
+export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, walletBalance }: WalletDisplayProps) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [hasCheckedWallet, setHasCheckedWallet] = useState(false);
-  const [cashuBalance, setCashuBalance] = useState<number>(initialCashuBalance ?? 0);
+  const [cashuBalance, setCashuBalance] = useState<number>(initialCashuBalance ?? walletBalance ?? 0);
   const [mints, setMints] = useState<string[]>([
     "https://mint.minibits.cash/Bitcoin",
     "https://mint.coinos.io"
@@ -317,9 +319,9 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance }:
   useEffect(() => {
     // Auto-initialize wallet on component mount
     const autoInitialize = async () => {
-      if (!isInitialized && !loading && !hasCheckedWallet) {
+      // Only initialize if wallet is not already initialized
+      if (!client.isWalletInitialized() && !loading && !hasCheckedWallet) {
         setHasCheckedWallet(true);
-        await initializeWallet();
       }
     };
     

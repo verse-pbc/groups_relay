@@ -11,6 +11,9 @@ interface ContentSectionProps {
   cashuProofs?: Proof[]
   mints?: string[]
   onNutzapSent?: () => void
+  // Balance passed down from ProfileMenu to avoid duplicate subscriptions
+  walletBalance?: number
+  hasWalletBalance?: boolean
 }
 
 interface ContentSectionState {
@@ -49,12 +52,10 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
     // Add ESC key listener
     document.addEventListener('keydown', this.handleKeyDown)
     
-    // Subscribe to balance updates to trigger re-renders when wallet balance changes
+    // Subscribe to balance updates for wallet state changes
     const { client } = this.props;
     if (client) {
       this.unsubscribeBalance = client.onBalanceUpdate((balance) => {
-        console.log('🔍 ContentSection balance update received:', balance, '- forcing re-render');
-        // Force re-render by updating state
         this.setState({ walletBalance: balance });
       });
     }
@@ -127,7 +128,8 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       
       if (uniqueAuthors.length > 0) {
         // Use gossip model to fetch from users' write relays
-        const author10019Map = await this.props.client.fetchMultipleUsers10019(uniqueAuthors)
+        const walletService = this.props.client.getWalletService();
+        const author10019Map = await walletService?.fetchMultipleUsers10019(uniqueAuthors) || new Map();
         
         // Initialize all authors as not having 10019
         uniqueAuthors.forEach(author => {

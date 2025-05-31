@@ -649,10 +649,11 @@ export class App extends Component<AppProps, AppState> {
       }
     });
 
-    // Fetch 10019 events for all members using group write relay pool
-    const user10019Map = await this.props.client.fetchMultipleUsers10019(pubkeysArray);
+    // Fetch 10019 events for all members using wallet service
+    const walletService = this.props.client.getWalletService();
+    const user10019Map = await walletService?.fetchMultipleUsers10019(pubkeysArray) || new Map();
     
-    user10019Map.forEach((event, pubkey) => {
+    user10019Map.forEach((event: any, pubkey: string) => {
       const memberProfile = group.memberProfiles!.get(pubkey);
       if (memberProfile) {
         memberProfile.has10019 = true;

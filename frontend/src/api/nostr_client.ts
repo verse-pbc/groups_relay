@@ -56,8 +56,6 @@ export class NostrClient {
   private groupWriteRelays: Set<string> = new Set();
   readonly config: NostrClientConfig;
   private profileCache: Map<string, any> = new Map();
-  private user10019Cache: Map<string, any> = new Map();
-  private user10019FetchPromises: Map<string, Promise<any>> = new Map(); // Prevent duplicate fetches
   private walletService: ICashuWalletService | null = null;
   private storageInitialized = false;
 
@@ -204,7 +202,6 @@ export class NostrClient {
           // Update storage with valid transactions only
           await localforage.setItem('transactions', validTransactions);
         }
-        // Transactions are now managed by CashuWalletService
       } else {
       }
 
@@ -314,8 +311,7 @@ export class NostrClient {
 
       // Create wallet instance with user's NDK (has user relays)
       // This is important for wallet operations to work properly
-      // Note: NDKCashuWallet is now handled by CashuWalletService
-      const wallet = null; // Placeholder
+      const wallet = null; // Placeholder - actual wallet handled by CashuWalletService
       
       // For logging purposes, count what we found
       const detectedMints = new Set<string>();
@@ -330,7 +326,6 @@ export class NostrClient {
             const mintTags = event.tags.filter(tag => tag[0] === "mint" && tag[1]);
             if (mintTags.length > 0) {
               const eventMints = mintTags.map(tag => tag[1]);
-              // Mints are now managed by CashuWalletService
               eventMints.forEach((mint: string) => detectedMints.add(mint));
             }
           } else if (event.kind === 7375) {
@@ -390,8 +385,6 @@ export class NostrClient {
       }
 
 
-      // Balance caching is now handled by CashuWalletService
-
       // Always return the wallet if we have any events
       // The wallet needs to process the events itself
       if (events.size > 0) {
@@ -406,8 +399,6 @@ export class NostrClient {
         const allMints = [...new Set([...Array.from(detectedMints)])];
         if (allMints.length > 0) {
         }
-        
-        // NDK instance is now managed by CashuWalletService
         
         return wallet;
       }
@@ -470,12 +461,10 @@ export class NostrClient {
   // Check if wallet has any balance for nutzap functionality
   hasWalletBalance(): boolean {
     if (!this.walletService) {
-      console.log('🔍 hasWalletBalance: no wallet service');
       return false;
     }
     
     const cachedBalance = this.walletService.getCachedBalance();
-    console.log('🔍 hasWalletBalance: cached balance is', cachedBalance);
     return cachedBalance > 0;
   }
 
@@ -641,7 +630,13 @@ export class NostrClient {
       limit: 1
     };
     
-    const events = await this.ndk.fetchEvents(filter);
+    // Fetch event with timeout
+    const fetchPromise = this.ndk.fetchEvents(filter);
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error("Event fetch timeout")), 5000)
+    );
+    
+    const events = await Promise.race([fetchPromise, timeoutPromise]) as Set<any>;
     if (events.size === 0) {
       throw new Error('Event not found');
     }
@@ -650,8 +645,8 @@ export class NostrClient {
     const authorPubkey = event.pubkey;
     
     // Fetch the author's 10019 event to get their nutzap relays
-    const event10019 = await this.fetchUser10019(authorPubkey);
-    const nutzapRelays = event10019 ? this.parseNutzapRelays(event10019) : null;
+    const event10019 = await this.walletService!.fetchUser10019(authorPubkey);
+    const nutzapRelays = event10019 ? this.walletService!.parseNutzapRelays(event10019) : null;
 
     await this.walletService.sendNutzapToEvent(eventId, amount, mint, nutzapRelays);
   }
@@ -664,8 +659,8 @@ export class NostrClient {
     }
 
     // Fetch the user's 10019 event to get their nutzap relays
-    const event10019 = await this.fetchUser10019(pubkey);
-    const nutzapRelays = event10019 ? this.parseNutzapRelays(event10019) : null;
+    const event10019 = await this.walletService!.fetchUser10019(pubkey);
+    const nutzapRelays = event10019 ? this.walletService!.parseNutzapRelays(event10019) : null;
 
     await this.walletService.sendNutzap(pubkey, amount, mint, nutzapRelays);
   }
@@ -866,15 +861,6 @@ export class NostrClient {
       .slice(0, 3); // Conservative limit to prevent WebSocket exhaustion
   }
 
-  // More permissive filtering for nutzaps specifically (redundancy is important)
-  private filterNutzapRelays(relays: string[]): string[] {
-    return relays
-      .filter(relay => 
-        !this.persistentlyDeadRelays.has(relay) && 
-        !this.temporarilyDeadRelays.has(relay)
-      )
-      .slice(0, 5); // Allow more relays for nutzaps since they're temporary connections
-  }
 
   // Get user's preferred relays from NIP-65
   async getUserRelays(pubkey: string): Promise<string[]> {
@@ -915,20 +901,6 @@ export class NostrClient {
     }
   }
 
-  // Parse nutzap relays from kind:10019 event  
-  parseNutzapRelays(event10019: any): string[] {
-    const relays: string[] = [];
-    if (event10019?.tags) {
-      event10019.tags.forEach((tag: string[]) => {
-        if (tag[0] === 'relay' && tag[1]) {
-          relays.push(tag[1]);
-        }
-      });
-    }
-    
-    // Use specialized filtering for nutzaps (more permissive but still bounded)
-    return this.filterNutzapRelays(relays);
-  }
 
   // Initialize group write relay pool from member pubkeys
   async initializeGroupWriteRelays(memberPubkeys: string[]): Promise<void> {
@@ -1038,115 +1010,12 @@ export class NostrClient {
     }
   }
 
-  // Fetch user's kind:10019 event using group write relay pool
-  async fetchUser10019(pubkey: string): Promise<any> {
-    try {
-      // Check cache first
-      if (this.user10019Cache.has(pubkey)) {
-        return this.user10019Cache.get(pubkey);
-      }
 
-      // Check if we're already fetching this user's 10019
-      if (this.user10019FetchPromises.has(pubkey)) {
-        return await this.user10019FetchPromises.get(pubkey);
-      }
-
-      // Create a promise for this fetch to prevent duplicate requests
-      const fetchPromise = (async () => {
-        try {
-          // Use group write NDK if available, otherwise fall back to profile NDK
-          const ndkToUse = this.groupWriteNdk || this.profileNdk;
-
-          // Fetch kind:10019 event
-          const filter = {
-            kinds: [10019],
-            authors: [pubkey],
-            limit: 1
-          };
-
-          // Fetch from group write relays or profile relays
-          const events = await ndkToUse.fetchEvents(filter);
-          
-          let result = null;
-          if (events.size > 0) {
-            result = Array.from(events)[0];
-          }
-
-          // Cache the result (even if null, to avoid repeated lookups)
-          this.user10019Cache.set(pubkey, result);
-          
-          return result;
-        } finally {
-          // Clean up the fetch promise
-          this.user10019FetchPromises.delete(pubkey);
-        }
-      })();
-
-      // Store the promise to prevent duplicate fetches
-      this.user10019FetchPromises.set(pubkey, fetchPromise);
-      
-      return await fetchPromise;
-    } catch (error) {
-      console.error("Failed to fetch user 10019:", error);
-      // Still cache the failure to avoid repeated attempts
-      this.user10019Cache.set(pubkey, null);
-      return null;
-    }
-  }
-
-  // Fetch multiple users' kind:10019 events efficiently using group write relay pool
-  async fetchMultipleUsers10019(pubkeys: string[]): Promise<Map<string, any>> {
-    const result = new Map<string, any>();
-    const pubkeysToFetch: string[] = [];
-    
-    // Check cache first and collect pubkeys that need fetching
-    for (const pubkey of pubkeys) {
-      if (this.user10019Cache.has(pubkey)) {
-        const cached = this.user10019Cache.get(pubkey);
-        if (cached !== null) {
-          result.set(pubkey, cached);
-        }
-      } else {
-        pubkeysToFetch.push(pubkey);
-      }
-    }
-    
-    // If all were cached, return early
-    if (pubkeysToFetch.length === 0) {
-      return result;
-    }
-    
-    try {
-      // Use group write NDK if available, otherwise fall back to profile NDK
-      const ndkToUse = this.groupWriteNdk || this.profileNdk;
-
-      // Fetch all kind:10019 events in one query
-      const filter = {
-        kinds: [10019],
-        authors: pubkeysToFetch,
-        limit: pubkeysToFetch.length
-      };
-
-      const events = await ndkToUse.fetchEvents(filter);
-      
-      // Map events back to authors and cache them
-      events.forEach(event => {
-        result.set(event.pubkey, event);
-        this.user10019Cache.set(event.pubkey, event);
-      });
-      
-      // Cache the pubkeys that didn't have events as null
-      pubkeysToFetch.forEach(pubkey => {
-        if (!result.has(pubkey)) {
-          this.user10019Cache.set(pubkey, null);
-        }
-      });
-      
-    } catch (error) {
-      console.error("Failed to fetch multiple users' 10019 events:", error);
-    }
-    
-    return result;
+  /**
+   * Get the wallet service instance for Cashu operations
+   */
+  getWalletService(): ICashuWalletService | null {
+    return this.walletService;
   }
 
   async connect() {
