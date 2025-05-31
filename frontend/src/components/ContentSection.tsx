@@ -179,24 +179,33 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       
       console.log('🔍 Found kind:10019 nutzap relays:', Array.from(allNutzapRelays))
       
-      // Fetch nutzaps using union of:
-      // 1. NDK outbox model relays (kind 10002/kind 3)
+      // Fetch nutzaps using true union of:
+      // 1. NDK outbox model relays (kind 10002/kind 3) 
       // 2. Kind 10019 nutzap relays (NIP-61 compliance)
-      let eventsSet
+      
+      let eventsSet = new Set<any>()
+      
+      // First: Get nutzaps from outbox model (kind 10002/kind 3 relays)
+      console.log('🔍 Step 1: Fetching via outbox model')
+      const outboxEvents = await ndk.fetchEvents(filter)
+      outboxEvents.forEach((event: any) => eventsSet.add(event))
+      console.log('🔍 Found', outboxEvents.size, 'nutzaps via outbox model')
+      
+      // Second: Get nutzaps from kind:10019 relays (NIP-61 compliance)
       if (allNutzapRelays.size > 0) {
-        // Query with explicit relay union for maximum coverage
         const nutzapRelayUrls = Array.from(allNutzapRelays)
-        console.log('🔍 Querying union of outbox + nutzap relays:', nutzapRelayUrls)
+        console.log('🔍 Step 2: Fetching via kind:10019 relays:', nutzapRelayUrls)
         
-        // NDK will use outbox model + our explicit nutzap relays
-        eventsSet = await ndk.fetchEvents(filter, { 
-          relays: nutzapRelayUrls 
+        const nutzapEvents = await ndk.fetchEvents(filter, { 
+          relayUrls: nutzapRelayUrls 
         })
+        nutzapEvents.forEach((event: any) => eventsSet.add(event))
+        console.log('🔍 Found', nutzapEvents.size, 'nutzaps via kind:10019 relays')
       } else {
-        // Fallback to pure outbox model if no kind:10019 relays found
-        console.log('🔍 No kind:10019 relays found, using pure outbox model')
-        eventsSet = await ndk.fetchEvents(filter)
+        console.log('🔍 Step 2: No kind:10019 relays found, skipping')
       }
+      
+      console.log('🔍 Total unique nutzaps found:', eventsSet.size)
       const events = Array.from(eventsSet)
       const nutzapTotals = new Map<string, number>()
       const seenEventIds = new Set<string>() // Track event IDs just for this initial fetch
