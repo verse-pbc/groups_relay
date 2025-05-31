@@ -464,8 +464,22 @@ export class NostrClient {
       return false;
     }
     
-    const cachedBalance = this.walletService.getCachedBalance();
-    return cachedBalance > 0;
+    // Get current authorized balance instead of potentially stale cache
+    // This is synchronous access to the wallet's current mint balances
+    const wallet = (this.walletService as any).wallet;
+    if (!wallet) return false;
+    
+    const mintBalances = wallet.mintBalances || {};
+    const authorizedMints = wallet.mints || [];
+    
+    let authorizedBalance = 0;
+    for (const [mint, balance] of Object.entries(mintBalances)) {
+      if (authorizedMints.includes(mint) && typeof balance === 'number') {
+        authorizedBalance += balance;
+      }
+    }
+    
+    return authorizedBalance > 0;
   }
 
   // Add a mint to the wallet and persist to NIP-60

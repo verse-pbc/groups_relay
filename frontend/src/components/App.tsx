@@ -653,23 +653,15 @@ export class App extends Component<AppProps, AppState> {
     const walletService = this.props.client.getWalletService();
     const user10019Map = await walletService?.fetchMultipleUsers10019(pubkeysArray) || new Map();
     
-    user10019Map.forEach((event: any, pubkey: string) => {
+    user10019Map.forEach((mintList: any, pubkey: string) => {
       const memberProfile = group.memberProfiles!.get(pubkey);
-      if (memberProfile) {
+      if (memberProfile && mintList) {
         memberProfile.has10019 = true;
         memberProfile.lastChecked10019 = Date.now();
         
-        // Parse the 10019 event data
-        const mints: string[] = [];
-        let cashuPubkey: string | null = null;
-        
-        event.tags.forEach((tag: string[]) => {
-          if (tag[0] === 'mint' && tag[1]) {
-            mints.push(tag[1].replace(/\/$/, '')); // Normalize
-          } else if (tag[0] === 'pubkey' && tag[1]) {
-            cashuPubkey = tag[1];
-          }
-        });
+        // Use wallet service parsing methods instead of manual tag parsing
+        const mints = walletService?.parseNutzapMints(mintList) || [];
+        const cashuPubkey = walletService?.parseNutzapP2PK(mintList);
         
         if (cashuPubkey) {
           memberProfile.cashuPubkey = cashuPubkey;

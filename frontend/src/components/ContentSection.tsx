@@ -137,20 +137,12 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         })
         
         // Process fetched events
-        author10019Map.forEach((event: any, pubkey: string) => {
-          const mints: string[] = []
-          let cashuPubkey: string | null = null
+        author10019Map.forEach((mintList: any, pubkey: string) => {
+          if (!mintList) return; // Skip null entries
           
-          event.tags.forEach((tag: string[]) => {
-            if (tag[0] === 'mint' && tag[1]) {
-              // Normalize mint URL (remove trailing slash)
-              const normalizedMint = tag[1].replace(/\/$/, '')
-              mints.push(normalizedMint)
-            } else if (tag[0] === 'pubkey' && tag[1]) {
-              // This is the P2PK pubkey for receiving nutzaps
-              cashuPubkey = tag[1]
-            }
-          })
+          // Use wallet service parsing methods instead of manual tag parsing
+          const mints = walletService?.parseNutzapMints(mintList) || [];
+          const cashuPubkey = walletService?.parseNutzapP2PK(mintList);
           
           if (mints.length > 0 && cashuPubkey) {
             authorMints.set(pubkey, mints)

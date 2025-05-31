@@ -91,11 +91,11 @@ export type Transaction = {
 
 // Cashu event parsing interface
 export interface ICashuEventParsing {
-  parseNutzapRelays(event10019: any): string[];
-  parseNutzapMints(event10019: any): string[];
-  parseNutzapP2PK(event10019: any): string | null;
-  fetchUser10019(pubkey: string): Promise<any>;
-  fetchMultipleUsers10019(pubkeys: string[]): Promise<Map<string, any>>;
+  parseNutzapRelays(mintList: NDKCashuMintList | null): string[];
+  parseNutzapMints(mintList: NDKCashuMintList | null): string[];
+  parseNutzapP2PK(mintList: NDKCashuMintList | null): string | null;
+  fetchUser10019(pubkey: string): Promise<NDKCashuMintList | null>;
+  fetchMultipleUsers10019(pubkeys: string[]): Promise<Map<string, NDKCashuMintList | null>>;
 }
 
 // Main service interface combining all capabilities
@@ -142,8 +142,8 @@ export class CashuWalletService implements ICashuWalletService {
   private userPubkey: string | null = null;
   private balanceCacheTimeout: number = 5 * 60 * 1000; // 5 minutes
   private lastBalanceCalculationTime = 0;
-  private user10019Cache: Map<string, any> = new Map();
-  private user10019FetchPromises: Map<string, Promise<any>> = new Map(); // Prevent duplicate fetches
+  private user10019Cache: Map<string, NDKCashuMintList | null> = new Map();
+  private user10019FetchPromises: Map<string, Promise<NDKCashuMintList | null>> = new Map(); // Prevent duplicate fetches
 
   constructor(ndk: NDK, storage: IWalletStorage = new LocalStorageAdapter()) {
     this.ndk = ndk;
@@ -294,8 +294,21 @@ export class CashuWalletService implements ICashuWalletService {
         return this.cachedBalance;
       }
 
-      // Use NDK's built-in balance getter which uses wallet.state internally
-      const balance = this.wallet.balance?.amount || 0;
+      // Calculate balance from authorized mints only
+      const mintBalances = this.wallet.mintBalances || {};
+      const authorizedMints = this.wallet.mints || [];
+      
+      let balance = 0;
+      for (const [mint, mintBalance] of Object.entries(mintBalances)) {
+        if (authorizedMints.includes(mint)) {
+          balance += mintBalance;
+          console.log(`  ✅ Including ${mintBalance} sats from authorized mint: ${mint}`);
+        } else {
+          console.log(`  ⚠️ Excluding ${mintBalance} sats from unauthorized mint: ${mint}`);
+        }
+      }
+      
+      console.log(`  📊 Total authorized balance: ${balance} sats`);
 
       this.lastBalanceCalculationTime = now;
       this.updateCachedBalance(balance);
@@ -312,15 +325,29 @@ export class CashuWalletService implements ICashuWalletService {
   getWalletState() {
     if (!this.wallet) return null;
     
+    // Calculate authorized balance for consistency with getBalance()
+    const mintBalances = this.wallet.mintBalances || {};
+    const authorizedMints = this.wallet.mints || [];
+    let authorizedBalance = 0;
+    
+    for (const [mint, balance] of Object.entries(mintBalances)) {
+      if (authorizedMints.includes(mint)) {
+        authorizedBalance += balance;
+      }
+    }
+    
     return {
       status: this.wallet.status,
       mints: this.wallet.mints,
-      balance: this.wallet.balance,
+      balance: { amount: authorizedBalance }, // Use authorized balance only
       mintBalances: this.wallet.mintBalances,
-      // Access detailed state information
+      // Access detailed state information (these include all mints)
       detailedBalance: this.wallet.state?.getBalance({ onlyAvailable: true }) || 0,
       reservedBalance: this.wallet.state?.getBalance({ onlyAvailable: false }) || 0,
-      totalProofs: this.wallet.state?.tokens.size || 0
+      totalProofs: this.wallet.state?.tokens.size || 0,
+      // Add breakdown for debugging
+      authorizedBalance,
+      rawNDKBalance: this.wallet.balance?.amount || 0
     };
   }
 
@@ -373,20 +400,11 @@ export class CashuWalletService implements ICashuWalletService {
     recipientPubkey: string
   ): Promise<string[]> {
     try {
-      const filter = {
-        kinds: [10019],
-        authors: [recipientPubkey],
-        limit: 1,
-      };
-
-      const events = await this.ndk.fetchEvents(filter);
-      if (events.size === 0) return [];
-
-      const event = Array.from(events)[0];
+      // Use our unified fetchUser10019 method
+      const mintList = await this.fetchUser10019(recipientPubkey);
       
-      // Use NDKCashuMintList for cleaner parsing
-      const mintList = NDKCashuMintList.from(event);
-      return mintList.mints; // Returns deduplicated array
+      // Use the parsing method for consistency
+      return this.parseNutzapMints(mintList);
       
     } catch (error) {
       console.error("Failed to fetch recipient accepted mints:", error);
@@ -977,21 +995,11 @@ export class CashuWalletService implements ICashuWalletService {
     try {
       if (!this.userPubkey) return [];
 
-      // Fetch the user's kind:10019 event
-      const filter = {
-        kinds: [10019],
-        authors: [this.userPubkey],
-        limit: 1,
-      };
-
-      const events = await this.ndk.fetchEvents(filter);
-      if (events.size === 0) return [];
-
-      const event = Array.from(events)[0];
+      // Use our unified fetchUser10019 method
+      const mintList = await this.fetchUser10019(this.userPubkey);
       
-      // Use NDKCashuMintList for cleaner parsing
-      const mintList = NDKCashuMintList.from(event);
-      return mintList.mints; // Returns deduplicated array
+      // Use the parsing method for consistency
+      return this.parseNutzapMints(mintList);
       
     } catch (error) {
       console.error("Failed to fetch nutzap config mints:", error);
@@ -2147,121 +2155,81 @@ export class CashuWalletService implements ICashuWalletService {
   // ========================================
 
   /**
-   * Parse nutzap relays from kind:10019 event using NDKCashuMintList
+   * Parse nutzap relays from NDKCashuMintList
    */
-  parseNutzapRelays(event10019: any): string[] {
+  parseNutzapRelays(mintList: NDKCashuMintList | null): string[] {
     try {
-      if (!event10019) return [];
+      if (!mintList) return [];
       
-      // Use NDKCashuMintList for cleaner relay parsing
-      const mintList = NDKCashuMintList.from(event10019);
+      // Use NDKCashuMintList's built-in relays getter
       const relays = mintList.relays || [];
       
       // Basic filtering for nutzap relays
       return this.filterNutzapRelays(relays);
     } catch (error) {
-      console.error("Failed to parse nutzap relays using NDKCashuMintList:", error);
-      
-      // Fallback to manual parsing if NDKCashuMintList fails
-      const relays: string[] = [];
-      if (event10019?.tags) {
-        event10019.tags.forEach((tag: string[]) => {
-          if (tag[0] === 'relay' && tag[1]) {
-            relays.push(tag[1]);
-          }
-        });
-      }
-      return this.filterNutzapRelays(relays);
+      console.error("Failed to parse nutzap relays from NDKCashuMintList:", error);
+      return [];
     }
   }
 
   /**
-   * Parse nutzap mints from kind:10019 event using NDKCashuMintList
+   * Parse nutzap mints from NDKCashuMintList
    */
-  parseNutzapMints(event10019: any): string[] {
+  parseNutzapMints(mintList: NDKCashuMintList | null): string[] {
     try {
-      if (!event10019) return [];
+      if (!mintList) return [];
       
-      // Use NDKCashuMintList for cleaner mint parsing
-      const mintList = NDKCashuMintList.from(event10019);
+      // Use NDKCashuMintList's built-in mints getter
       return mintList.mints || [];
     } catch (error) {
-      console.error("Failed to parse nutzap mints using NDKCashuMintList:", error);
-      
-      // Fallback to manual parsing if NDKCashuMintList fails
-      const mints: string[] = [];
-      if (event10019?.tags) {
-        event10019.tags.forEach((tag: string[]) => {
-          if (tag[0] === 'mint' && tag[1]) {
-            mints.push(tag[1]);
-          }
-        });
-      }
-      return mints;
+      console.error("Failed to parse nutzap mints from NDKCashuMintList:", error);
+      return [];
     }
   }
 
   /**
-   * Get P2PK from kind:10019 event using NDKCashuMintList
+   * Get P2PK from NDKCashuMintList
    */
-  parseNutzapP2PK(event10019: any): string | null {
+  parseNutzapP2PK(mintList: NDKCashuMintList | null): string | null {
     try {
-      if (!event10019) return null;
+      if (!mintList) return null;
       
-      // Use NDKCashuMintList for cleaner P2PK parsing
-      const mintList = NDKCashuMintList.from(event10019);
+      // Use NDKCashuMintList's built-in p2pk getter
       return mintList.p2pk || null;
     } catch (error) {
-      console.error("Failed to parse nutzap P2PK using NDKCashuMintList:", error);
-      
-      // Fallback to manual parsing if NDKCashuMintList fails
-      if (event10019?.tags) {
-        const pubkeyTag = event10019.tags.find((tag: string[]) => tag[0] === 'pubkey' && tag[1]);
-        if (pubkeyTag) {
-          return pubkeyTag[1];
-        }
-      }
-      // Fall back to event pubkey if no explicit pubkey tag
-      return event10019?.pubkey || null;
+      console.error("Failed to parse nutzap P2PK from NDKCashuMintList:", error);
+      return null;
     }
   }
 
   /**
-   * Fetch user's kind:10019 event with caching
+   * Fetch user's kind:10019 event using NDK's cleaner approach
    */
-  async fetchUser10019(pubkey: string): Promise<any> {
+  async fetchUser10019(pubkey: string): Promise<NDKCashuMintList | null> {
     try {
       // Check cache first
       if (this.user10019Cache.has(pubkey)) {
-        return this.user10019Cache.get(pubkey);
+        return this.user10019Cache.get(pubkey) ?? null;
       }
 
       // Check if we're already fetching this user's 10019
       if (this.user10019FetchPromises.has(pubkey)) {
-        return await this.user10019FetchPromises.get(pubkey);
+        const promise = this.user10019FetchPromises.get(pubkey);
+        return promise ? await promise : null;
       }
 
       // Create a promise for this fetch to prevent duplicate requests
       const fetchPromise = (async () => {
         try {
-          // Fetch kind:10019 event
-          const filter = {
+          // Use NDK's fetchEvent for kind:10019 (CashuMintList)
+          const event = await this.ndk.fetchEvent({
             kinds: [10019],
             authors: [pubkey],
-            limit: 1
-          };
+          });
 
-          // Fetch with timeout
-          const fetchPromise = this.ndk.fetchEvents(filter);
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("User 10019 fetch timeout")), 8000)
-          );
-          
-          const events = await Promise.race([fetchPromise, timeoutPromise]) as Set<any>;
-          
-          let result = null;
-          if (events.size > 0) {
-            result = Array.from(events)[0];
+          let result: NDKCashuMintList | null = null;
+          if (event) {
+            result = NDKCashuMintList.from(event);
           }
 
           // Cache the result (even if null, to avoid repeated lookups)
@@ -2287,19 +2255,17 @@ export class CashuWalletService implements ICashuWalletService {
   }
 
   /**
-   * Fetch multiple users' kind:10019 events efficiently
+   * Fetch multiple users' kind:10019 events efficiently using NDK
    */
-  async fetchMultipleUsers10019(pubkeys: string[]): Promise<Map<string, any>> {
-    const result = new Map<string, any>();
+  async fetchMultipleUsers10019(pubkeys: string[]): Promise<Map<string, NDKCashuMintList | null>> {
+    const result = new Map<string, NDKCashuMintList | null>();
     const pubkeysToFetch: string[] = [];
     
     // Check cache first and collect pubkeys that need fetching
     for (const pubkey of pubkeys) {
       if (this.user10019Cache.has(pubkey)) {
-        const cached = this.user10019Cache.get(pubkey);
-        if (cached !== null) {
-          result.set(pubkey, cached);
-        }
+        const cached = this.user10019Cache.get(pubkey) ?? null;
+        result.set(pubkey, cached);
       } else {
         pubkeysToFetch.push(pubkey);
       }
@@ -2311,30 +2277,23 @@ export class CashuWalletService implements ICashuWalletService {
     }
     
     try {
-      // Fetch all kind:10019 events in one query
-      const filter = {
+      // Fetch all kind:10019 events in one query using NDK
+      const events = await this.ndk.fetchEvents({
         kinds: [10019],
         authors: pubkeysToFetch,
-        limit: pubkeysToFetch.length
-      };
-
-      // Fetch events with timeout
-      const fetchPromise = this.ndk.fetchEvents(filter);
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Bulk user 10019 fetch timeout")), 8000)
-      );
-      
-      const events = await Promise.race([fetchPromise, timeoutPromise]) as Set<any>;
+      });
       
       // Map events back to authors and cache them
       events.forEach((event: any) => {
-        result.set(event.pubkey, event);
-        this.user10019Cache.set(event.pubkey, event);
+        const mintList = NDKCashuMintList.from(event);
+        result.set(event.pubkey, mintList);
+        this.user10019Cache.set(event.pubkey, mintList);
       });
       
       // Cache the pubkeys that didn't have events as null
       pubkeysToFetch.forEach(pubkey => {
         if (!result.has(pubkey)) {
+          result.set(pubkey, null);
           this.user10019Cache.set(pubkey, null);
         }
       });
