@@ -125,6 +125,7 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       const authorMints = new Map<string, string[]>()
       const authorHas10019 = new Map<string, boolean>()
       const authorCashuPubkeys = new Map<string, string>() // Map author pubkey -> cashu P2PK pubkey
+      const allNutzapRelays = new Set<string>() // Collect all nutzap relays from kind:10019
       
       if (uniqueAuthors.length > 0) {
         // Use gossip model to fetch from users' write relays
@@ -149,12 +150,53 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
             authorHas10019.set(pubkey, true)
             authorCashuPubkeys.set(pubkey, cashuPubkey)
           }
+          
+          // Extract relay list from kind:10019 'relay' tags per NIP-61
+          const relayTags = mintList.tags?.filter((tag: string[]) => tag[0] === 'relay') || []
+          const nutzapRelays = relayTags.map((tag: string[]) => tag[1]).filter(Boolean)
+          
+          nutzapRelays.forEach((relay: string) => allNutzapRelays.add(relay))
         })
       }
 
-      // Fetch existing nutzaps from public relays  
+      // Use the shared NDK instance with outbox model + kind 10019 relay union
       const ndk = (this.props.client as any).ndk
-      const eventsSet = await ndk.fetchEvents(filter)
+      const uniqueAuthorPubkeys = [...new Set(this.props.group.content?.map(item => item.pubkey) || [])]
+      
+      console.log('🔍 Fetching nutzaps using outbox model + kind:10019 relays for event authors (recipients):', uniqueAuthorPubkeys)
+      console.log('🔍 Filter:', filter)
+      
+      // First, let NDK discover relays for the event authors (nutzap recipients)
+      // by fetching their relay lists, which will populate the outbox tracker
+      await Promise.all(uniqueAuthorPubkeys.map(async (pubkey) => {
+        try {
+          const user = ndk.getUser({ pubkey })
+          await user.fetchProfile() // This will trigger relay discovery for this user
+        } catch (err) {
+          console.debug('Could not fetch profile for relay discovery:', pubkey, err)
+        }
+      }))
+      
+      console.log('🔍 Found kind:10019 nutzap relays:', Array.from(allNutzapRelays))
+      
+      // Fetch nutzaps using union of:
+      // 1. NDK outbox model relays (kind 10002/kind 3)
+      // 2. Kind 10019 nutzap relays (NIP-61 compliance)
+      let eventsSet
+      if (allNutzapRelays.size > 0) {
+        // Query with explicit relay union for maximum coverage
+        const nutzapRelayUrls = Array.from(allNutzapRelays)
+        console.log('🔍 Querying union of outbox + nutzap relays:', nutzapRelayUrls)
+        
+        // NDK will use outbox model + our explicit nutzap relays
+        eventsSet = await ndk.fetchEvents(filter, { 
+          relays: nutzapRelayUrls 
+        })
+      } else {
+        // Fallback to pure outbox model if no kind:10019 relays found
+        console.log('🔍 No kind:10019 relays found, using pure outbox model')
+        eventsSet = await ndk.fetchEvents(filter)
+      }
       const events = Array.from(eventsSet)
       const nutzapTotals = new Map<string, number>()
       const seenEventIds = new Set<string>() // Track event IDs just for this initial fetch
@@ -246,14 +288,15 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       this.eventAuthors = eventAuthors
       this.authorCashuPubkeys = authorCashuPubkeys
 
-      // Subscribe to new nutzaps from public relays
+      // Subscribe to new nutzaps using the shared NDK instance with outbox model
       // Add 'since' timestamp to only get events created after this moment
       const subscriptionFilter = {
         ...filter,
         since: Math.floor(Date.now() / 1000) // Current timestamp in seconds
       }
-      const ndkForSub = (this.props.client as any).ndk
-      this.nutzapSubscription = await ndkForSub.subscribe(subscriptionFilter, {
+      
+      console.log('🔔 Subscribing to nutzaps using outbox model')
+      this.nutzapSubscription = await ndk.subscribe(subscriptionFilter, {
         closeOnEose: false
       })
 

@@ -11,6 +11,18 @@ interface WalletDisplayProps {
   walletBalance?: number;
 }
 
+// Helper function to safely parse mint URLs
+const getMintHostname = (mint: string): string => {
+  try {
+    // Add https:// if no protocol is present
+    const urlString = mint.includes('://') ? mint : `https://${mint}`;
+    return new URL(urlString).hostname;
+  } catch {
+    // If URL parsing fails, return the original string
+    return mint;
+  }
+};
+
 export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, walletBalance }: WalletDisplayProps) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -240,8 +252,11 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
   };
 
   const addMint = async (mintUrl?: string) => {
-    const urlToAdd = mintUrl || newMintUrl;
-    if (!urlToAdd.trim()) return;
+    const inputUrl = mintUrl || newMintUrl;
+    if (!inputUrl.trim()) return;
+    
+    // Normalize URL to include protocol if missing
+    const urlToAdd = inputUrl.includes('://') ? inputUrl : `https://${inputUrl}`;
     
     setLoading(true);
     setError(null);
@@ -249,7 +264,10 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
       // Use the client's addMint method which handles NIP-60 persistence
       await client.addMint(urlToAdd);
       
-      setMints([...mints, urlToAdd]);
+      // Get the updated mints list from the wallet instead of managing local state
+      const updatedMints = await client.getCashuMints();
+      console.log("🔍 WalletDisplay - addMint - updatedMints after adding:", updatedMints);
+      setMints(updatedMints);
       setNewMintUrl("");
       
       // Refresh balance to include the new mint
@@ -271,8 +289,9 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
       // Use the client's removeMint method which handles everything
       await client.removeMint(mintUrl);
       
-      // Update local state
-      const updatedMints = mints.filter(m => m !== mintUrl);
+      // Get the updated mints list from the wallet instead of managing local state
+      const updatedMints = await client.getCashuMints();
+      console.log("🔍 WalletDisplay - removeMint - updatedMints after removing:", updatedMints);
       setMints(updatedMints);
       
       // Refresh balance to reflect the removed mint
@@ -561,7 +580,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
                 <div key={mint} class="flex items-center justify-between text-xs p-2 bg-[var(--color-bg-primary)] rounded border border-[var(--color-border)]">
                   <div class="flex items-center gap-2">
                     <span class="text-gray-300 truncate">
-                      {new URL(mint).hostname}
+                      {getMintHostname(mint)}
                     </span>
                     <span class="text-[#f7931a] font-medium flex items-center gap-0.5">
                       ₿{balance.toLocaleString()}
@@ -602,7 +621,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
                 {Object.entries(unauthorizedMintBalances).map(([mint, balance]) => (
                   <div key={mint} class="flex items-center justify-between text-xs py-1">
                     <span class="text-gray-400 truncate">
-                      {new URL(mint).hostname}
+                      {getMintHostname(mint)}
                     </span>
                     <div class="flex items-center gap-2">
                       <span class="text-yellow-400 font-medium">
@@ -766,7 +785,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
                         const balance = mintBalances[mint] || 0;
                         return (
                           <option key={mint} value={mint}>
-                            {new URL(mint).hostname} (₿{balance} sats)
+                            {getMintHostname(mint)} (₿{balance} sats)
                           </option>
                         );
                       })}
@@ -830,7 +849,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
                       Amount: <span class="text-[#f7931a]">₿{mintAmount} sats</span>
                     </span>
                     <span>•</span>
-                    <span>Mint: {new URL(selectedMint || mints[0]).hostname}</span>
+                    <span>Mint: {getMintHostname(selectedMint || mints[0])}</span>
                   </div>
                   
                   <div class="space-y-2">

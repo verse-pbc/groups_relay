@@ -667,25 +667,33 @@ export class CashuWalletService implements ICashuWalletService {
     let tempNdk: NDK | null = null;
 
     if (nutzapRelays && nutzapRelays.length > 0) {
-      console.log('🔗 Creating temporary NDK for nutzap relays:', nutzapRelays);
-      // Create a temporary NDK instance with the recipient's nutzap relays
+      // Enrich recipient's relays with our own relays for better delivery
+      const ourRelays = Array.from(this.ndk.pool.relays.values()).map(r => r.url);
+      const enrichedRelays = [...new Set([...nutzapRelays, ...ourRelays])]; // Remove duplicates
+      
+      console.log('🔗 Creating temporary NDK for enriched nutzap relays:');
+      console.log('  Recipient relays:', nutzapRelays);
+      console.log('  Our relays:', ourRelays);
+      console.log('  Final enriched relays:', enrichedRelays);
+      
+      // Create a temporary NDK instance with enriched relays (recipient + ours)
       tempNdk = new NDK({
-        explicitRelayUrls: nutzapRelays,
+        explicitRelayUrls: enrichedRelays,
         signer: this.ndk.signer,
       });
       zapperNdk = tempNdk;
 
-      // Connect to the nutzap relays with timeout
+      // Connect to the enriched relay set with timeout
       try {
-        console.log('🔌 Connecting to nutzap relays...');
+        console.log('🔌 Connecting to enriched nutzap relays...');
         const connectPromise = zapperNdk.connect();
         const timeoutPromise = new Promise((_, reject) => 
           setTimeout(() => reject(new Error("Nutzap relay connection timeout")), 3000)
         );
         await Promise.race([connectPromise, timeoutPromise]);
-        console.log('✅ Connected to nutzap relays for profile nutzap');
+        console.log('✅ Connected to enriched nutzap relays for profile nutzap');
       } catch (error) {
-        console.warn("Failed to connect to some nutzap relays:", error);
+        console.warn("Failed to connect to some enriched nutzap relays:", error);
         // Continue anyway - some relays might be connected
         // Also fallback to using main NDK if all nutzap relays fail
         if (Array.from(zapperNdk.pool.relays.values()).length === 0) {
@@ -840,25 +848,33 @@ export class CashuWalletService implements ICashuWalletService {
     let tempNdk: NDK | null = null;
 
     if (nutzapRelays && nutzapRelays.length > 0) {
-      console.log('🔗 Creating temporary NDK for nutzap relays:', nutzapRelays);
-      // Create a temporary NDK instance with the recipient's nutzap relays
+      // Enrich recipient's relays with our own relays for better delivery
+      const ourRelays = Array.from(this.ndk.pool.relays.values()).map(r => r.url);
+      const enrichedRelays = [...new Set([...nutzapRelays, ...ourRelays])]; // Remove duplicates
+      
+      console.log('🔗 Creating temporary NDK for enriched event nutzap relays:');
+      console.log('  Recipient relays:', nutzapRelays);
+      console.log('  Our relays:', ourRelays);
+      console.log('  Final enriched relays:', enrichedRelays);
+      
+      // Create a temporary NDK instance with enriched relays (recipient + ours)
       tempNdk = new NDK({
-        explicitRelayUrls: nutzapRelays,
+        explicitRelayUrls: enrichedRelays,
         signer: this.ndk.signer,
       });
       zapperNdk = tempNdk;
 
-      // Connect to the nutzap relays with timeout
+      // Connect to the enriched relay set with timeout
       try {
-        console.log('🔌 Connecting to nutzap relays for event...');
+        console.log('🔌 Connecting to enriched nutzap relays for event...');
         const connectPromise = zapperNdk.connect();
         const timeoutPromise = new Promise((_, reject) => 
           setTimeout(() => reject(new Error("Nutzap relay connection timeout")), 3000)
         );
         await Promise.race([connectPromise, timeoutPromise]);
-        console.log('✅ Connected to nutzap relays for event nutzap');
+        console.log('✅ Connected to enriched nutzap relays for event nutzap');
       } catch (error) {
-        console.warn("Failed to connect to some nutzap relays:", error);
+        console.warn("Failed to connect to some enriched nutzap relays:", error);
         // Continue anyway - some relays might be connected
         // Also fallback to using main NDK if all nutzap relays fail
         if (Array.from(zapperNdk.pool.relays.values()).length === 0) {
