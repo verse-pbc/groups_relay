@@ -1440,7 +1440,26 @@ export class CashuWalletService implements ICashuWalletService {
       }
 
       // Get mints from wallet - these become the "authorized" mints
-      const mints = this.wallet?.mints || [];
+      // But first check if there's an existing kind:10019 to preserve user's previous mint choices
+      let mints = this.wallet?.mints || [];
+      
+      // If wallet metadata has no mints, try to restore from existing kind:10019
+      if (mints.length === 0) {
+        try {
+          const existingMints = await this.getNutzapConfigMints();
+          if (existingMints.length > 0) {
+            console.log("🔄 Restoring mints from existing kind:10019:", existingMints);
+            mints = existingMints;
+            // Also update the wallet metadata to include these restored mints
+            this.wallet.mints = existingMints;
+            await this.wallet.publish(); // Update wallet metadata
+            await this.wallet.backup();  // Update backup
+            console.log("✅ Restored wallet metadata with previous mints");
+          }
+        } catch (error) {
+          console.warn("⚠️ Could not restore mints from existing kind:10019:", error);
+        }
+      }
 
       // Create kind 10019 event using NDKCashuMintList
       const mintList = new NDKCashuMintList(this.ndk);
