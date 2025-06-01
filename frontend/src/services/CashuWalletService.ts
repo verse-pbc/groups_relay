@@ -1337,22 +1337,18 @@ export class CashuWalletService implements ICashuWalletService {
       );
       console.log(`Wallet metadata contains ${walletMints.size} mints`);
 
-      // Set mints from wallet metadata first
+      // Only set mints from wallet metadata, NOT from tokens
+      // This respects the user's mint preferences
       if (walletMints.size > 0) {
         wallet.mints = Array.from(walletMints);
         console.log("✅ Setting wallet mints from metadata:", wallet.mints);
       } else if (tokenMints.size > 0) {
-        // If no wallet metadata but we have tokens, auto-add them for better UX
-        // This makes existing tokens immediately spendable
+        // If no wallet metadata but we have tokens, warn the user
         console.warn(
           "⚠️ No mints in wallet metadata but found tokens from:",
           Array.from(tokenMints)
         );
-        console.log("🔧 Auto-adding token mints to wallet metadata for better UX");
-        wallet.mints = Array.from(tokenMints);
-        
-        // We'll update the wallet metadata after the wallet is ready
-        // to include these mints so they're authorized for future use
+        // Don't auto-add mints - user needs to explicitly accept them
       }
 
       // The wallet will process the events when we call start()
@@ -1376,19 +1372,8 @@ export class CashuWalletService implements ICashuWalletService {
         }
       });
 
-      // Update wallet metadata if we auto-added mints from tokens
-      if (walletMints.size === 0 && tokenMints.size > 0) {
-        console.log("🔄 Updating wallet metadata to include auto-added mints");
-        try {
-          // Update metadata and backup to include the auto-added mints
-          await wallet.publish();
-          await wallet.backup();
-          console.log("✅ Updated wallet metadata with auto-added mints");
-        } catch (error) {
-          console.warn("⚠️ Failed to update wallet metadata:", error);
-          // Continue anyway - mints are set in memory
-        }
-      }
+      // Don't auto-update wallet metadata - respect user's mint choices
+      // Metadata should only be updated when user explicitly adds/removes mints
 
       return wallet;
     } catch (error) {
