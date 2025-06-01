@@ -598,7 +598,7 @@ export class NostrClient {
 
 
   // Send nutzap to an event
-  async sendNutzapToEvent(eventId: string, amount: number, mint?: string): Promise<void> {
+  async sendNutzapToEvent(eventId: string, amount: number, mint?: string, nutzapRelays?: string[] | null, groupId?: string): Promise<void> {
     if (!this.walletService) {
       throw new Error('Wallet not initialized')
     }
@@ -623,16 +623,18 @@ export class NostrClient {
     const event = Array.from(events)[0];
     const authorPubkey = event.pubkey;
     
-    // Fetch the author's 10019 event to get their nutzap relays
-    const event10019 = await this.walletService!.fetchUser10019(authorPubkey);
-    const nutzapRelays = event10019 ? this.walletService!.parseNutzapRelays(event10019) : null;
+    // If nutzapRelays not provided, fetch the author's 10019 event to get their nutzap relays
+    if (!nutzapRelays) {
+      const event10019 = await this.walletService!.fetchUser10019(authorPubkey);
+      nutzapRelays = event10019 ? this.walletService!.parseNutzapRelays(event10019) : null;
+    }
 
-    await this.walletService.sendNutzapToEvent(eventId, amount, mint, nutzapRelays);
+    await this.walletService.sendNutzapToEvent(eventId, amount, mint, nutzapRelays, groupId);
   }
 
 
   // Send nutzap to a user
-  async sendNutzap(pubkey: string, amount: number, mint?: string): Promise<void> {
+  async sendNutzap(pubkey: string, amount: number, mint?: string, groupId?: string): Promise<void> {
     if (!this.walletService) {
       throw new Error('Wallet not initialized')
     }
@@ -641,7 +643,7 @@ export class NostrClient {
     const event10019 = await this.walletService!.fetchUser10019(pubkey);
     const nutzapRelays = event10019 ? this.walletService!.parseNutzapRelays(event10019) : null;
 
-    await this.walletService.sendNutzap(pubkey, amount, mint, nutzapRelays);
+    await this.walletService.sendNutzap(pubkey, amount, mint, nutzapRelays, groupId);
   }
 
   // Public methods for fetching events and subscribing

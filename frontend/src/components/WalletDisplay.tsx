@@ -126,6 +126,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
       
       // Update balance
       setCashuBalance(cashuBalance);
+      console.log("🎯 WalletDisplay - Updated balance to:", cashuBalance);
       
       // Update mint balances
       console.log("🎯 WalletDisplay - Setting mint balances:");
@@ -367,6 +368,13 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
     return () => unsubscribe();
   }, [client]);
 
+  // Sync with walletBalance prop when it changes
+  useEffect(() => {
+    if (walletBalance !== undefined && walletBalance !== cashuBalance) {
+      setCashuBalance(walletBalance);
+    }
+  }, [walletBalance]);
+
   useEffect(() => {
     if (success) {
       const timer = setTimeout(() => setSuccess(null), 3000);
@@ -418,13 +426,25 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
         
         if (claimed) {
           setSuccess("Payment received! Tokens claimed successfully.");
+          
+          // Force refresh balance immediately
+          await fetchBalance(true);
+          
+          // Also trigger the client's balance update mechanism
+          try {
+            const newBalance = await client.getCashuBalance();
+            client.notifyBalanceUpdate(newBalance);
+          } catch (err) {
+            console.warn("Failed to trigger client balance update:", err);
+          }
+          
+          // Close modal and clear state
           setShowReceiveModal(false);
           setMintInvoice("");
           setMintAmount("");
           setQrCodeDataUrl(null);
           setCurrentQuote(null);
           setSelectedMint("");
-          await fetchBalance();
           clearInterval(checkInterval);
         }
       } catch (err) {
@@ -602,7 +622,14 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
                 ...Object.keys(unauthorizedMintBalances)
               ]);
               
-              return Array.from(allMints).map(mint => {
+              return Array.from(allMints)
+                .filter(mint => {
+                  // Only show mints that are authorized OR have a balance > 0
+                  const balance = mintBalances[mint] || unauthorizedMintBalances[mint] || 0;
+                  const isAuthorized = mintBalances[mint] !== undefined;
+                  return isAuthorized || balance > 0;
+                })
+                .map(mint => {
                 // Get balance from both authorized and unauthorized mint balances
                 const balance = mintBalances[mint] || unauthorizedMintBalances[mint] || 0;
                 const isAuthorized = mintBalances[mint] !== undefined;
@@ -620,7 +647,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
                     </span>
                   </div>
                   <div class="flex items-center gap-2">
-                    {!isAuthorized && (
+                    {!isAuthorized && balance > 0 && (
                       <button
                         onClick={async () => {
                           await addMint(mint);
@@ -660,38 +687,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
               </button>
             </div>
             
-            {/* Show unauthorized mint balances if any */}
-            {Object.keys(unauthorizedMintBalances).length > 0 && (
-              <div class="mt-3 p-2 bg-yellow-900/20 border border-yellow-700/30 rounded">
-                <div class="text-xs text-yellow-400 mb-1">⚠️ Tokens from unauthorized mints:</div>
-                {Object.entries(unauthorizedMintBalances).map(([mint, balance]) => (
-                  <div key={mint} class="flex items-center justify-between text-xs py-1">
-                    <span class="text-gray-400 truncate">
-                      {getMintHostname(mint)}
-                    </span>
-                    <div class="flex items-center gap-2">
-                      <span class="text-yellow-400 font-medium">
-                        ₿{balance.toLocaleString()} sats
-                      </span>
-                      <button
-                        onClick={async () => {
-                          // Add mint to wallet and update kind:10019
-                          await addMint(mint);
-                          // Refresh to update authorized/unauthorized status
-                          await fetchBalance(true);
-                        }}
-                        class="text-green-400 hover:text-green-300 text-xs"
-                      >
-                        Accept
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                <p class="text-xs text-yellow-400/80 mt-1">
-                  These tokens cannot be spent unless you accept the mint
-                </p>
-              </div>
-            )}
+            {/* Note: Unauthorized mints are now handled in the main section above with Accept buttons */}
           </div>
         )}
         
@@ -944,15 +940,25 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
                         
                         if (claimed) {
                           setSuccess(`Successfully claimed tokens!`);
+                          
+                          // Force refresh balance immediately after claiming
+                          await fetchBalance(true);
+                          
+                          // Also trigger the client's balance update mechanism
+                          try {
+                            const newBalance = await client.getCashuBalance();
+                            client.notifyBalanceUpdate(newBalance);
+                          } catch (err) {
+                            console.warn("Failed to trigger client balance update:", err);
+                          }
+                          
+                          // Close modal and clear state
                           setShowReceiveModal(false);
                           setMintInvoice("");
                           setMintAmount("");
                           setQrCodeDataUrl(null);
                           setCurrentQuote(null);
                           setSelectedMint("");
-                          
-                          // Force refresh balance after claiming tokens
-                          await fetchBalance(true);
                         } else {
                           setError("Invoice not paid yet. For testnut mints, try again in a moment.");
                         }

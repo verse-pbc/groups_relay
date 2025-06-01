@@ -42,13 +42,15 @@ export interface INutzapOperations {
     pubkey: string,
     amount: number,
     mint?: string,
-    nutzapRelays?: string[] | null
+    nutzapRelays?: string[] | null,
+    groupId?: string
   ): Promise<void>;
   sendNutzapToEvent(
     eventId: string,
     amount: number,
     mint?: string,
-    nutzapRelays?: string[] | null
+    nutzapRelays?: string[] | null,
+    groupId?: string
   ): Promise<void>;
 }
 
@@ -774,7 +776,8 @@ export class CashuWalletService implements ICashuWalletService {
     pubkey: string,
     amount: number,
     mint?: string,
-    nutzapRelays?: string[] | null
+    nutzapRelays?: string[] | null,
+    groupId?: string
   ): Promise<void> {
     if (!this.wallet) {
       throw new Error("Wallet not initialized");
@@ -819,6 +822,7 @@ export class CashuWalletService implements ICashuWalletService {
     const zapper = new NDKZapper(user, amount, "sat", {
       comment: "",
       ndk: zapperNdk,
+      tags: groupId ? [["h", groupId]] : undefined,
     });
 
     try {
@@ -881,8 +885,7 @@ export class CashuWalletService implements ICashuWalletService {
         }
       };
 
-      // Execute the zap using zapNip61 with event-based completion
-      
+      // Execute the zap using zapNip61 with tags from constructor
       const zapPromise = new Promise(async (resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error("Zap execution timeout"));
@@ -911,6 +914,8 @@ export class CashuWalletService implements ICashuWalletService {
               mints: mint ? [mint] : undefined
             }
           );
+
+          console.log('🏷️ [sendNutzap] Nutzap created:', nutzap instanceof NDKNutzap ? JSON.stringify(nutzap.rawEvent()) : 'Error creating nutzap');
 
           if (nutzap instanceof NDKNutzap) {
             // Create relay set for publication
@@ -973,7 +978,8 @@ export class CashuWalletService implements ICashuWalletService {
     eventId: string,
     amount: number,
     mint?: string,
-    nutzapRelays?: string[] | null
+    nutzapRelays?: string[] | null,
+    groupId?: string
   ): Promise<void> {
     if (!this.wallet) {
       throw new Error("Wallet not initialized");
@@ -1025,6 +1031,7 @@ export class CashuWalletService implements ICashuWalletService {
     const zapper = new NDKZapper(event, amount, "sat", {
       comment: "",
       ndk: zapperNdk,
+      tags: groupId ? [["h", groupId]] : undefined,
     });
 
     try {
@@ -1087,8 +1094,7 @@ export class CashuWalletService implements ICashuWalletService {
         }
       };
 
-      // Execute the zap using zapNip61 with event-based completion
-      
+      // Execute the zap using zapNip61 with tags from constructor
       const zapPromise = new Promise(async (resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error("Event zap execution timeout"));
@@ -1117,6 +1123,8 @@ export class CashuWalletService implements ICashuWalletService {
               mints: mint ? [mint] : undefined
             }
           );
+
+          console.log('🏷️ [sendNutzapToEvent] Nutzap created:', nutzap instanceof NDKNutzap ? JSON.stringify(nutzap.rawEvent()) : 'Error creating nutzap');
 
           if (nutzap instanceof NDKNutzap) {
             // Create relay set for publication

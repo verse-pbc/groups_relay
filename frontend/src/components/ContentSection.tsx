@@ -525,7 +525,7 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
 
     try {
       // No timeout needed - the CashuWalletService now handles this with NDK zapper events
-      await this.props.client.sendNutzapToEvent(eventId, sats);
+      await this.props.client.sendNutzapToEvent(eventId, sats, undefined, undefined, this.props.group.id);
       
       // SUCCESS - Just close the modal and show success message
       // The nutzap total will update when the event arrives via subscription
@@ -627,6 +627,7 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
                           if (this.props.onNutzapSent) this.props.onNutzapSent();
                         }}
                         hideNutzap={item.pubkey === this.getCurrentUserPubkey() && !window.location.search.includes('selfnutzap')}
+                        groupId={this.props.group.id}
                         profileData={
                           this.props.group.memberProfiles?.has(item.pubkey) 
                             ? {

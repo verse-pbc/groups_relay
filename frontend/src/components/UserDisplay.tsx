@@ -22,6 +22,7 @@ interface UserDisplayProps {
   // Balance passed down from ProfileMenu to avoid duplicate subscriptions
   walletBalance?: number
   hasWalletBalance?: boolean
+  groupId?: string  // Optional group context for nutzaps
 }
 
 interface UserDisplayState {
@@ -281,7 +282,7 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
 
       // No timeout needed - the CashuWalletService now handles this with NDK zapper events
-      await client.sendNutzap(hexPubkey, sats);
+      await client.sendNutzap(hexPubkey, sats, undefined, this.props.groupId);
 
       // SUCCESS - Update balance optimistically (without re-fetching from mints)
       const currentBalance = this.state.walletBalance
