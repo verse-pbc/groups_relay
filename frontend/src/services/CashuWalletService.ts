@@ -98,6 +98,17 @@ export interface ICashuEventParsing {
 }
 
 // Main service interface combining all capabilities
+export interface IRecipientCompatibility {
+  canSendToRecipient(recipientPubkey: string, minAmount?: number): Promise<{
+    canSend: boolean;
+    compatibleBalance: number;
+    compatibleMints: string[];
+    recipientMints: string[];
+    reason?: string;
+  }>;
+  getCompatibleMintsWithBalances(recipientPubkey: string): Promise<Record<string, number>>;
+}
+
 export interface ICashuWalletService
   extends IWalletBalance,
     IWalletTransactions,
@@ -105,7 +116,8 @@ export interface ICashuWalletService
     INutzapOperations,
     IMintOperations,
     IWalletInitialization,
-    ICashuEventParsing {}
+    ICashuEventParsing,
+    IRecipientCompatibility {}
 
 // Storage interface for persistence
 interface IWalletStorage {
@@ -419,6 +431,118 @@ export class CashuWalletService implements ICashuWalletService {
     } catch (error) {
       console.error("Failed to fetch recipient accepted mints:", error);
       return [];
+    }
+  }
+
+  /**
+   * Check if we can send nutzaps to a recipient
+   * 
+   * This method performs a comprehensive compatibility check that includes:
+   * 1. Verifying the recipient has a kind:10019 nutzap configuration
+   * 2. Checking if we have tokens in mints the recipient accepts
+   * 3. Ensuring sufficient balance in compatible mints
+   * 
+   * @param recipientPubkey - Hex pubkey of the intended recipient
+   * @param minAmount - Minimum amount in sats to check compatibility for (default: 1)
+   * @returns Promise resolving to compatibility information
+   */
+  async canSendToRecipient(recipientPubkey: string, minAmount: number = 1): Promise<{
+    canSend: boolean;
+    compatibleBalance: number;
+    compatibleMints: string[];
+    recipientMints: string[];
+    reason?: string;
+  }> {
+    try {
+      // Check if recipient has kind:10019 config
+      const recipientMints = await this.getRecipientAcceptedMints(recipientPubkey);
+      
+      if (recipientMints.length === 0) {
+        return {
+          canSend: false,
+          compatibleBalance: 0,
+          compatibleMints: [],
+          recipientMints: [],
+          reason: "Recipient has no nutzap configuration (kind:10019)"
+        };
+      }
+
+      // Get our available balance for this recipient (only from compatible mints)
+      const compatibleBalance = await this.getBalanceForRecipient(recipientPubkey);
+      
+      // Get list of mints we have that the recipient accepts
+      const ourMints = this.getMintsWithBalance(minAmount);
+      const compatibleMints = ourMints.filter(mint => recipientMints.includes(mint));
+      
+      const canSend = compatibleBalance >= minAmount;
+      
+      if (!canSend && compatibleMints.length === 0) {
+        return {
+          canSend: false,
+          compatibleBalance,
+          compatibleMints,
+          recipientMints,
+          reason: "No compatible mints - recipient accepts different mints than you have"
+        };
+      }
+      
+      if (!canSend) {
+        return {
+          canSend: false,
+          compatibleBalance,
+          compatibleMints,
+          recipientMints,
+          reason: `Insufficient balance in compatible mints (need ${minAmount}, have ${compatibleBalance})`
+        };
+      }
+
+      return {
+        canSend: true,
+        compatibleBalance,
+        compatibleMints,
+        recipientMints
+      };
+      
+    } catch (error) {
+      console.error("Failed to check recipient compatibility:", error);
+      return {
+        canSend: false,
+        compatibleBalance: 0,
+        compatibleMints: [],
+        recipientMints: [],
+        reason: "Error checking recipient compatibility"
+      };
+    }
+  }
+
+  /**
+   * Get compatible mints between sender and recipient with their balances
+   * 
+   * This method returns only the mints where both sender has tokens and 
+   * recipient accepts them, along with the available balance in each mint.
+   * Useful for pre-selecting the best mint for nutzap transactions.
+   * 
+   * @param recipientPubkey - Hex pubkey of the intended recipient
+   * @returns Promise resolving to a record of mint URL -> balance in sats
+   */
+  async getCompatibleMintsWithBalances(recipientPubkey: string): Promise<Record<string, number>> {
+    try {
+      const recipientMints = await this.getRecipientAcceptedMints(recipientPubkey);
+      const ourMintBalances = await this.getMintBalances();
+      
+      const compatible: Record<string, number> = {};
+      
+      for (const [mint, balance] of Object.entries(ourMintBalances)) {
+        if (recipientMints.includes(mint) && balance > 0) {
+          compatible[mint] = balance;
+        }
+      }
+      
+      return compatible;
+      
+    } catch (error) {
+      console.error("Failed to get compatible mints with balances:", error);
+      return {};
     }
   }
 

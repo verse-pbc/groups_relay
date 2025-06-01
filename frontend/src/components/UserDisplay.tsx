@@ -1,6 +1,7 @@
 import { Component } from 'preact'
 import { NostrClient } from '../api/nostr_client'
 import type { Proof } from '@cashu/cashu-ts'
+import { TIMEOUTS, MIN_NUTZAP_AMOUNT } from '../constants'
 
 interface UserDisplayProps {
   pubkey: string
@@ -32,7 +33,10 @@ interface UserDisplayState {
   walletBalance: number
   selectedMint: string
   mintBalances: Record<string, number>
-  targetUserHas10019: boolean
+  canSendNutzap: boolean
+  compatibleBalance: number
+  compatibleMints: string[]
+  incompatibilityReason?: string
   // UserDisplay state
   profilePicture: string | null
   displayId: string
@@ -53,7 +57,10 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
     walletBalance: 0,
     selectedMint: '',
     mintBalances: {},
-    targetUserHas10019: false,
+    canSendNutzap: false,
+    compatibleBalance: 0,
+    compatibleMints: [],
+    incompatibilityReason: undefined,
     // UserDisplay state
     profilePicture: null,
     displayId: '',
@@ -92,10 +99,12 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       
       // Also use pre-fetched 10019 status if available
       if (profileData.has10019 !== undefined) {
-        this.setState({ targetUserHas10019: profileData.has10019 })
+        // Pre-fetched profile data available, but we still need full compatibility check
+        // since has10019 just means they have the config, not that we're compatible
+        setTimeout(() => this.checkRecipientCompatibility(), TIMEOUTS.COMPATIBILITY_CHECK_DELAY);
       } else {
-        // Check 10019 if not pre-fetched
-        setTimeout(() => this.checkTargetUser10019(), 100);
+        // Check compatibility if not pre-fetched
+        setTimeout(() => this.checkRecipientCompatibility(), TIMEOUTS.COMPATIBILITY_CHECK_DELAY);
       }
     } else if (client) {
       // Fallback to fetching profile if not pre-fetched
@@ -110,15 +119,15 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
         this.setState({ displayName })
       }
       
-      // Check if target user has 10019 event with a small delay to ensure relay is ready
-      setTimeout(() => this.checkTargetUser10019(), 100);
+      // Check if we can send nutzaps to this recipient with a small delay to ensure relay is ready
+      setTimeout(() => this.checkRecipientCompatibility(), TIMEOUTS.COMPATIBILITY_CHECK_DELAY);
     }
   }
 
   componentDidUpdate(prevProps: UserDisplayProps) {
     // Re-check if pubkey changes
     if (prevProps.pubkey !== this.props.pubkey) {
-      this.checkTargetUser10019();
+      this.checkRecipientCompatibility();
     }
   }
 
@@ -147,53 +156,89 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
   }
 
   // Check if target user has a kind:10019 event (nutzap config)
-  checkTargetUser10019 = async () => {
+  checkRecipientCompatibility = async () => {
     try {
       const { pubkey, client } = this.props
       // Convert npub to hex if needed
       const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
 
-      // Use gossip model to fetch from user's write relays
+      // Use gossip model to check compatibility
       const walletService = client.getWalletService();
-      const event10019 = await walletService?.fetchUser10019(hexPubkey) || null;
-      const has10019 = event10019 !== null
+      if (!walletService) {
+        this.setState({ 
+          canSendNutzap: false,
+          incompatibilityReason: "Wallet service not available"
+        })
+        return
+      }
       
-      this.setState({ targetUserHas10019: has10019 })
+      // Check compatibility using the new method
+      const compatibility = await walletService.canSendToRecipient(hexPubkey, MIN_NUTZAP_AMOUNT)
+      
+      this.setState({ 
+        canSendNutzap: compatibility.canSend,
+        compatibleBalance: compatibility.compatibleBalance,
+        compatibleMints: compatibility.compatibleMints,
+        incompatibilityReason: compatibility.reason
+      })
+      
+      console.log('🔍 Recipient compatibility check:', {
+        pubkey: hexPubkey.slice(0, 8) + '...',
+        canSend: compatibility.canSend,
+        compatibleBalance: compatibility.compatibleBalance,
+        compatibleMints: compatibility.compatibleMints,
+        reason: compatibility.reason
+      })
+      
     } catch (error) {
-      console.error('Failed to check target user 10019:', error)
-      this.setState({ targetUserHas10019: false })
+      console.error('Failed to check recipient compatibility:', error)
+      this.setState({ 
+        canSendNutzap: false,
+        incompatibilityReason: "Error checking compatibility"
+      })
     }
   }
 
   // Fetch wallet balance and mint balances when modal opens
   fetchWalletBalance = async () => {
     try {
-      const { mints, pubkey, client } = this.props
+      const { pubkey, client } = this.props
+      const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
 
       console.log('🔍 UserDisplay.fetchWalletBalance() called from nutzap modal')
-      console.log('  Props mints:', mints)
-      console.log('  Target pubkey:', pubkey)
-      console.log('  Client instance:', client)
+      console.log('  Target pubkey:', hexPubkey.slice(0, 8) + '...')
+      console.log('  Compatible mints:', this.state.compatibleMints)
 
-      // Get total balance and per-mint balances (reverting to working approach)
-      console.log('  Calling client.getCashuBalance()...')
-      const totalBalance = await client.getCashuBalance()
-      console.log('  client.getCashuBalance() returned:', totalBalance)
+      // Get compatible balance for this recipient
+      const totalBalance = this.state.compatibleBalance
+      console.log('  Compatible balance:', totalBalance)
       
-      console.log('  Calling client.getCashuMintBalances()...')
-      const mintBalances = await client.getCashuMintBalances()
-      console.log('  client.getCashuMintBalances() returned:', mintBalances)
+      // Get compatible mint balances only
+      const walletService = client.getWalletService()
+      if (walletService) {
+        const compatibleMintBalances = await walletService.getCompatibleMintsWithBalances(hexPubkey)
+        console.log('  Compatible mint balances:', compatibleMintBalances)
 
-      console.log('  Setting state with:')
-      console.log('    walletBalance:', totalBalance)
-      console.log('    mintBalances:', mintBalances)
-      console.log('    selectedMint:', mints?.[0] || '')
+        // Auto-select the first compatible mint with highest balance
+        const sortedMints = Object.entries(compatibleMintBalances)
+          .filter(([_, balance]) => balance > 0)
+          .sort(([, a], [, b]) => b - a)
+        
+        const selectedMint = sortedMints.length > 0 ? sortedMints[0][0] : ''
+        console.log('  Auto-selected mint:', selectedMint)
 
-      this.setState({
-        walletBalance: totalBalance,
-        mintBalances: mintBalances || {},
-        selectedMint: mints?.[0] || ''
-      })
+        this.setState({
+          walletBalance: totalBalance,
+          mintBalances: compatibleMintBalances,
+          selectedMint
+        })
+      } else {
+        this.setState({
+          walletBalance: totalBalance,
+          mintBalances: {},
+          selectedMint: ''
+        })
+      }
     } catch (error) {
       console.error('Failed to fetch wallet balance:', error)
       this.setState({ walletBalance: 0, mintBalances: {} })
@@ -238,7 +283,7 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       // Add timeout to prevent hanging on dead relays
       const sendPromise = client.sendNutzap(hexPubkey, sats);
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Nutzap timeout - relay connection failed")), 15000)
+        setTimeout(() => reject(new Error("Nutzap timeout - relay connection failed")), TIMEOUTS.NUTZAP_SEND_TIMEOUT)
       );
 
       // Race between send and timeout
@@ -284,7 +329,7 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
 
     this.copyTimeout = window.setTimeout(() => {
       this.setState({ copied: false })
-    }, 2000)
+    }, TIMEOUTS.COPY_FEEDBACK_DURATION)
   }
 
   getSizeClasses() {
@@ -381,20 +426,32 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
           </div>
         </div>
 
-        {!hideNutzap && hasWalletBalance && this.state.targetUserHas10019 && (
-          <button
-            onClick={() => {
-              console.log('🔥 NUTZAP BUTTON CLICKED - Opening modal and fetching balance')
-              this.setState({ showNutzapModal: true })
-              this.fetchWalletBalance()
-            }}
-            class="shrink-0 p-1.5 text-[#f7931a] hover:text-[#f68e0a] bg-[#f7931a]/10 hover:bg-[#f7931a]/20 rounded transition-colors"
-            title="Send nutzap"
-          >
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </button>
+        {!hideNutzap && hasWalletBalance && (
+          this.state.canSendNutzap ? (
+            <button
+              onClick={() => {
+                console.log('🔥 NUTZAP BUTTON CLICKED - Opening modal and fetching balance')
+                this.setState({ showNutzapModal: true })
+                this.fetchWalletBalance()
+              }}
+              class="shrink-0 p-1.5 text-[#f7931a] hover:text-[#f68e0a] bg-[#f7931a]/10 hover:bg-[#f7931a]/20 rounded transition-colors"
+              title="Send nutzap"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          ) : (
+            <button
+              disabled
+              class="shrink-0 p-1.5 text-gray-500 bg-gray-500/10 rounded opacity-50 cursor-not-allowed"
+              title={this.state.incompatibilityReason || "Cannot send nutzap to this user"}
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          )
         )}
 
         {showNutzapModal && (

@@ -3,6 +3,7 @@ import type { Group } from '../types'
 import { UserDisplay } from './UserDisplay'
 import { BaseComponent } from './BaseComponent'
 import type { Proof } from '@cashu/cashu-ts'
+import { TIMEOUTS, MIN_NUTZAP_AMOUNT } from '../constants'
 
 interface ContentSectionProps {
   group: Group
@@ -26,6 +27,12 @@ interface ContentSectionState {
   walletBalance: number
   eventNutzaps: Map<string, number> // eventId -> total amount
   authorHas10019: Map<string, boolean> // pubkey -> has 10019 event
+  authorCompatibility: Map<string, {
+    canSend: boolean
+    compatibleBalance: number
+    compatibleMints: string[]
+    reason?: string
+  }> // pubkey -> compatibility info
 }
 
 export class ContentSection extends BaseComponent<ContentSectionProps, ContentSectionState> {
@@ -39,7 +46,13 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
     nutzapError: null,
     walletBalance: 0,
     eventNutzaps: new Map<string, number>(),
-    authorHas10019: new Map<string, boolean>()
+    authorHas10019: new Map<string, boolean>(),
+    authorCompatibility: new Map<string, {
+      canSend: boolean
+      compatibleBalance: number
+      compatibleMints: string[]
+      reason?: string
+    }>()
   }
 
   private nutzapSubscription: any = null
@@ -92,7 +105,8 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       }
       this.setState({ 
         eventNutzaps: new Map(),
-        authorHas10019: new Map()
+        authorHas10019: new Map(),
+        authorCompatibility: new Map()
       })
       this.subscribeToNutzaps()
     }
@@ -309,6 +323,9 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       this.eventAuthors = eventAuthors
       this.authorCashuPubkeys = authorCashuPubkeys
 
+      // Check compatibility for all authors
+      this.checkAuthorsCompatibility(uniqueAuthors)
+
       // Subscribe to new nutzaps using the shared NDK instance with outbox model
       // Add 'since' timestamp to only get events created after this moment
       const subscriptionFilter = {
@@ -399,6 +416,52 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
     }
   }
 
+  // Check compatibility for all authors in parallel
+  private checkAuthorsCompatibility = async (authors: string[]) => {
+    try {
+      const walletService = this.props.client.getWalletService();
+      if (!walletService) return;
+
+      // Check compatibility for all authors in parallel
+      const compatibilityPromises = authors.map(async (pubkey) => {
+        try {
+          const compatibility = await walletService.canSendToRecipient(pubkey, MIN_NUTZAP_AMOUNT);
+          return { pubkey, compatibility };
+        } catch (error) {
+          console.warn(`Failed to check compatibility for ${pubkey}:`, error);
+          return { 
+            pubkey, 
+            compatibility: {
+              canSend: false,
+              compatibleBalance: 0,
+              compatibleMints: [],
+              recipientMints: [],
+              reason: "Error checking compatibility"
+            }
+          };
+        }
+      });
+
+      const results = await Promise.all(compatibilityPromises);
+      
+      // Update state with compatibility results
+      const authorCompatibility = new Map(this.state.authorCompatibility);
+      results.forEach(({ pubkey, compatibility }) => {
+        authorCompatibility.set(pubkey, {
+          canSend: compatibility.canSend,
+          compatibleBalance: compatibility.compatibleBalance,
+          compatibleMints: compatibility.compatibleMints,
+          reason: compatibility.reason
+        });
+      });
+
+      this.setState({ authorCompatibility });
+
+    } catch (error) {
+      console.error('Failed to check authors compatibility:', error);
+    }
+  }
+
   handleDeleteEvent = async (eventId: string) => {
     this.setState(prev => ({
       deletingEvents: new Set(prev.deletingEvents).add(eventId),
@@ -464,7 +527,7 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       // Add timeout to prevent hanging on dead relays
       const sendPromise = this.props.client.sendNutzapToEvent(eventId, sats);
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Nutzap timeout - relay connection failed")), 15000)
+        setTimeout(() => reject(new Error("Nutzap timeout - relay connection failed")), TIMEOUTS.NUTZAP_SEND_TIMEOUT)
       );
 
       // Race between send and timeout
@@ -593,25 +656,37 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
                     {/* Event Nutzap Button and Total */}
                     {((hasWalletBalance && 
                       item.pubkey !== this.getCurrentUserPubkey() && 
-                      this.state.authorHas10019.get(item.pubkey)) || 
+                      this.state.authorCompatibility.get(item.pubkey)?.canSend) || 
                       this.state.eventNutzaps.get(item.id)) && (
                       <div class="flex items-center gap-1">
                         {hasWalletBalance && 
-                         item.pubkey !== this.getCurrentUserPubkey() && 
-                         this.state.authorHas10019.get(item.pubkey) && (
-                          <button
-                            onClick={async () => {
-                              this.setState({ showNutzapModal: item.id })
-                              await this.fetchWalletBalance()
-                            }}
-                            class="text-[11px] opacity-0 group-hover:opacity-100 text-[#f7931a]
-                                   hover:text-[#f68e0a] transition-all duration-150 flex items-center p-1"
-                            title="Nutzap this message"
-                          >
-                            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                            </svg>
-                          </button>
+                         item.pubkey !== this.getCurrentUserPubkey() && (
+                          this.state.authorCompatibility.get(item.pubkey)?.canSend ? (
+                            <button
+                              onClick={async () => {
+                                this.setState({ showNutzapModal: item.id })
+                                await this.fetchWalletBalance()
+                              }}
+                              class="text-[11px] opacity-0 group-hover:opacity-100 text-[#f7931a]
+                                     hover:text-[#f68e0a] transition-all duration-150 flex items-center p-1"
+                              title="Nutzap this message"
+                            >
+                              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                              </svg>
+                            </button>
+                          ) : (
+                            <button
+                              disabled
+                              class="text-[11px] opacity-0 group-hover:opacity-100 text-gray-500 
+                                     transition-all duration-150 flex items-center p-1 cursor-not-allowed opacity-50"
+                              title={this.state.authorCompatibility.get(item.pubkey)?.reason || "Cannot send nutzap to this user"}
+                            >
+                              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                              </svg>
+                            </button>
+                          )
                         )}
                         {this.state.eventNutzaps.get(item.id) ? (
                           <span class="text-[10px] text-[#f7931a] font-medium">
