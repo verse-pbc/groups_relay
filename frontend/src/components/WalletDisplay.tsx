@@ -438,19 +438,29 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
 
   // Auto-initialize on mount for modal view (only if wallet not already initialized)
   useEffect(() => {
-    if (isModal && !isInitialized && !loading && !hasCheckedWallet) {
-      setHasCheckedWallet(true);
-      // Only initialize if the wallet is not already initialized at the client level
-      if (!isWalletInitialized) {
-        console.log('🔍 WalletDisplay - Auto-initializing wallet for modal');
-        initializeWallet();
-      } else {
-        console.log('🔍 WalletDisplay - Wallet already initialized, skipping auto-init');
-        setIsInitialized(true);
-        // Fetch balance since wallet is already initialized
-        fetchBalance(true);
+    const handleInitialization = async () => {
+      if (isModal && !isInitialized && !loading && !hasCheckedWallet) {
+        setHasCheckedWallet(true);
+        // Only initialize if the wallet is not already initialized at the client level
+        if (!isWalletInitialized) {
+          console.log('🔍 WalletDisplay - Auto-initializing wallet for modal');
+          initializeWallet();
+        } else {
+          console.log('🔍 WalletDisplay - Wallet already initialized, skipping auto-init');
+          setIsInitialized(true);
+          // Get mints from wallet since it's already initialized
+          const walletMints = await client.getCashuMints();
+          console.log("🔍 WalletDisplay - Already initialized walletMints:", walletMints);
+          if (walletMints.length > 0) {
+            setMints(walletMints);
+          }
+          // Fetch balance since wallet is already initialized
+          fetchBalance(true);
+        }
       }
-    }
+    };
+    
+    handleInitialization();
   }, [isModal, isWalletInitialized]);
 
   const containerClass = isModal 
@@ -584,12 +594,20 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
         {showMintManager && (
           <div class="space-y-2 pt-2 border-t border-gray-700">
             <div class="text-xs text-gray-400">Connected Mints:</div>
-            {mints.map(mint => {
-              // Get balance from both authorized and unauthorized mint balances
-              const balance = mintBalances[mint] || unauthorizedMintBalances[mint] || 0;
-              const isAuthorized = mintBalances[mint] !== undefined;
-              console.log(`🔍 Mint: ${mint}, Balance:`, balance, "isAuthorized:", isAuthorized, "mintBalances:", mintBalances, "unauthorizedMintBalances:", unauthorizedMintBalances);
-              return (
+            {(() => {
+              // Create a combined list of all mints that have balances or are in the mints list
+              const allMints = new Set([
+                ...mints,
+                ...Object.keys(mintBalances),
+                ...Object.keys(unauthorizedMintBalances)
+              ]);
+              
+              return Array.from(allMints).map(mint => {
+                // Get balance from both authorized and unauthorized mint balances
+                const balance = mintBalances[mint] || unauthorizedMintBalances[mint] || 0;
+                const isAuthorized = mintBalances[mint] !== undefined;
+                console.log(`🔍 Mint: ${mint}, Balance:`, balance, "isAuthorized:", isAuthorized, "mintBalances:", mintBalances, "unauthorizedMintBalances:", unauthorizedMintBalances);
+                return (
                 <div key={mint} class={`flex items-center justify-between text-xs p-2 rounded border ${isAuthorized ? 'bg-[var(--color-bg-primary)] border-[var(--color-border)]' : 'bg-yellow-900/20 border-yellow-700/30'}`}>
                   <div class="flex items-center gap-2">
                     <span class="text-gray-300 truncate">
@@ -621,8 +639,9 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
                     </button>
                   </div>
                 </div>
-              );
-            })}
+                );
+              });
+            })()}
             
             <div class="flex gap-2 mt-2">
               <input
