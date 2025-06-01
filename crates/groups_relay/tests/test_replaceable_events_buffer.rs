@@ -206,6 +206,9 @@ async fn test_signed_events_bypass_buffer() {
         .build_with_ctx(&Instant::now(), admin_keys.public_key());
     let signed_event = admin_keys.sign_event(event).await.unwrap();
 
+    // Subscribe to broadcasts to wait for the event to be processed
+    let mut broadcast_receiver = database.subscribe();
+
     // Send the signed event (should bypass buffer even though it's replaceable)
     subscription_manager
         .save_and_broadcast(StoreCommand::SaveSignedEvent(
@@ -215,8 +218,12 @@ async fn test_signed_events_bypass_buffer() {
         .await
         .unwrap();
 
-    // Wait a short time
-    sleep(Duration::from_millis(100)).await;
+    // Wait for the event to be broadcast (indicating it's been saved)
+    let timeout = Duration::from_secs(2);
+    let broadcast_result = tokio::time::timeout(timeout, broadcast_receiver.recv()).await;
+    assert!(broadcast_result.is_ok(), "Event should be broadcast within timeout");
+    let received_event = broadcast_result.unwrap().unwrap();
+    assert_eq!(received_event.id, signed_event.id, "Broadcast should contain our event");
 
     // Query for the event
     let events = database
