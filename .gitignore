@@ -46,3 +46,6 @@ CLAUDE.local.md
 .roomodes
 .windsurfrules
 .taskmasterconfig
+
+# Local NDK for development
+ndk/

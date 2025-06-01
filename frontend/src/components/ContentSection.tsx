@@ -3,7 +3,7 @@ import type { Group } from '../types'
 import { UserDisplay } from './UserDisplay'
 import { BaseComponent } from './BaseComponent'
 import type { Proof } from '@cashu/cashu-ts'
-import { TIMEOUTS, MIN_NUTZAP_AMOUNT } from '../constants'
+import { MIN_NUTZAP_AMOUNT } from '../constants'
 
 interface ContentSectionProps {
   group: Group
@@ -524,14 +524,8 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
     this.setState({ nutzapLoading: true, nutzapError: null })
 
     try {
-      // Add timeout to prevent hanging on dead relays
-      const sendPromise = this.props.client.sendNutzapToEvent(eventId, sats);
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Nutzap timeout - relay connection failed")), TIMEOUTS.NUTZAP_SEND_TIMEOUT)
-      );
-
-      // Race between send and timeout
-      await Promise.race([sendPromise, timeoutPromise]);
+      // No timeout needed - the CashuWalletService now handles this with NDK zapper events
+      await this.props.client.sendNutzapToEvent(eventId, sats);
       
       // SUCCESS - Just close the modal and show success message
       // The nutzap total will update when the event arrives via subscription

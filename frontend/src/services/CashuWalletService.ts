@@ -3,7 +3,8 @@ import NDK, {
   NDKUser, 
   NDKCashuMintList,
   NDKZapper,
-  NDKRelaySet
+  NDKRelaySet,
+  NDKNutzap
 } from "@nostr-dev-kit/ndk";
 import {
   NDKCashuWallet,
@@ -418,6 +419,7 @@ export class CashuWalletService implements ICashuWalletService {
   /**
    * Get mints that a recipient accepts from their kind:10019 event using NDKCashuMintList
    */
+
   private async getRecipientAcceptedMints(
     recipientPubkey: string
   ): Promise<string[]> {
@@ -778,146 +780,171 @@ export class CashuWalletService implements ICashuWalletService {
       throw new Error("Wallet not initialized");
     }
 
-    console.log('💸 Starting nutzap send to profile:', { pubkey, amount, nutzapRelays });
-
     const user = new NDKUser({ pubkey });
     user.ndk = this.ndk;
 
-    // Use NDKZapper for consistent handling
-    // NDKZapper is now imported statically
-
-    // Create NDK instance with nutzap relays if provided
+    // Create NDK instance with NIP-61 nutzap relays if provided
     let zapperNdk = this.ndk;
     let tempNdk: NDK | null = null;
 
     if (nutzapRelays && nutzapRelays.length > 0) {
-      // Enrich recipient's relays with our own relays for better delivery
-      const ourRelays = Array.from(this.ndk.pool.relays.values()).map(r => r.url);
-      const enrichedRelays = [...new Set([...nutzapRelays, ...ourRelays])]; // Remove duplicates
+      const prioritizedRelays = this.prioritizeNutzapRelays(nutzapRelays);
       
-      console.log('🔗 Creating temporary NDK for enriched nutzap relays:');
-      console.log('  Recipient relays:', nutzapRelays);
-      console.log('  Our relays:', ourRelays);
-      console.log('  Final enriched relays:', enrichedRelays);
-      
-      // Create a temporary NDK instance with enriched relays (recipient + ours)
       tempNdk = new NDK({
-        explicitRelayUrls: enrichedRelays,
+        explicitRelayUrls: prioritizedRelays,
         signer: this.ndk.signer,
       });
       zapperNdk = tempNdk;
 
-      // Connect to the enriched relay set with timeout
       try {
-        console.log('🔌 Connecting to enriched nutzap relays...');
         const connectPromise = zapperNdk.connect();
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Nutzap relay connection timeout")), 3000)
+          setTimeout(() => reject(new Error("NIP-61 relay connection timeout")), 2000)
         );
-        await Promise.race([connectPromise, timeoutPromise]);
-        console.log('✅ Connected to enriched nutzap relays for profile nutzap');
-      } catch (error) {
-        console.warn("Failed to connect to some enriched nutzap relays:", error);
-        // Continue anyway - some relays might be connected
-        // Also fallback to using main NDK if all nutzap relays fail
-        if (Array.from(zapperNdk.pool.relays.values()).length === 0) {
-          console.log('🔄 Falling back to main NDK since no nutzap relays connected');
-          zapperNdk = this.ndk;
+        
+        try {
+          await Promise.race([connectPromise, timeoutPromise]);
+        } catch (timeoutError) {
+          const connectedRelays = Array.from(zapperNdk.pool.relays.values()).filter(r => r.connected);
+          if (connectedRelays.length === 0) {
+            throw timeoutError;
+          }
         }
+      } catch (error) {
+        zapperNdk = this.ndk;
+        tempNdk = null;
       }
     }
 
-    console.log('⚡ Creating NDKZapper...');
     const zapper = new NDKZapper(user, amount, "sat", {
       comment: "",
-      ndk: zapperNdk, // Use the NDK with nutzap relays
+      ndk: zapperNdk,
     });
 
     try {
-      console.log('🔧 Setting up cashuPay callback...');
       // Set the cashuPay callback to use our wallet
       zapper.cashuPay = async (payment: any) => {
         try {
-          console.log('💰 Executing cashuPay:', payment);
-          const result = await this.wallet!.cashuPay({
-            ...payment,
-            mints: mint ? [mint] : undefined,
-          });
-
-          // Validate the result - NDK returns null on failure
-          if (!result || !result.proofs || result.proofs.length === 0) {
-            console.error("cashuPay failed in zapper - no valid result");
-            throw new Error(
-              "Failed to create nutzap: recipient may not have a compatible wallet"
-            );
+          // Determine which mints to use
+          let mintsToUse: string[] | undefined;
+          if (mint) {
+            mintsToUse = [mint];
+          } else {
+            const recipientPubkey = payment.recipientPubkey || pubkey;
+            const recipientMints = await this.getRecipientAcceptedMints(recipientPubkey);
+            const ourMints = Object.keys(this.wallet?.mintBalances || {});
+            const compatibleMints = ourMints.filter(m => recipientMints.includes(m));
+            mintsToUse = compatibleMints.length > 0 ? compatibleMints : undefined;
           }
 
-          console.log('✅ cashuPay successful:', result);
+          // Get recipient's P2PK for proof locking
+          const recipientPubkey = payment.recipientPubkey || pubkey;
+          const recipientMintList = await this.fetchUser10019(recipientPubkey);
+          const recipientP2PK = this.parseNutzapP2PK(recipientMintList);
+
+          const finalPayment = {
+            ...payment,
+            mints: mintsToUse,
+            p2pk: recipientP2PK,
+          };
+          
+          const result = await this.wallet!.cashuPay(finalPayment);
+
+          if (!result || !result.proofs || result.proofs.length === 0) {
+            const recipientPubkey = payment.recipientPubkey || pubkey;
+            const ourMintBalances = await this.getMintBalances();
+            const recipientMints = await this.getRecipientAcceptedMints(recipientPubkey);
+            const ourMints = Object.keys(ourMintBalances);
+            const compatibleMints = ourMints.filter(m => recipientMints.includes(m));
+            
+            if (compatibleMints.length === 0) {
+              throw new Error(
+                `Failed to create nutzap: No compatible mints found.\n\n` +
+                `Your mints: ${ourMints.length > 0 ? ourMints.join(', ') : 'None'}\n` +
+                `Recipient accepts: ${recipientMints.length > 0 ? recipientMints.join(', ') : 'None'}\n\n` +
+                `Add one of the recipient's mints to send nutzaps to them.`
+              );
+            } else {
+              const compatibleBalances = compatibleMints.map(m => `${ourMintBalances[m]} sats from ${m}`).join(', ');
+              throw new Error(
+                `Failed to create nutzap: Compatible mints available but payment failed.\n\n` +
+                `Compatible balances: ${compatibleBalances}\n` +
+                `Needed: ${amount} sats\n\n` +
+                `This might be due to insufficient balance in compatible mints or mint connectivity issues.`
+              );
+            }
+          }
+
           return result;
         } catch (error: any) {
-          console.error('❌ cashuPay failed:', error);
           throw error;
         }
       };
 
-      // Execute the zap with timeout
-      console.log('⚡ Executing zapper.zap()...');
-      const zapPromise = zapper.zap();
-      const zapTimeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Zap execution timeout")), 10000)
-      );
-      const zapResult = await Promise.race([zapPromise, zapTimeoutPromise]) as Map<any, any>;
+      // Execute the zap using zapNip61 with event-based completion
+      
+      const zapPromise = new Promise(async (resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("Zap execution timeout"));
+        }, 10000);
 
-      console.log("Profile zap result:", zapResult);
+        zapper.on("complete", (results) => {
+          clearTimeout(timeout);
+          resolve(results);
+        });
 
-      if (!zapResult || zapResult.size === 0) {
+        // Listen for successful payments to trigger balance updates
+        zapper.on("split:complete", (_, result) => {
+          if (result && !(result instanceof Error)) {
+            this.updateBalance();
+          }
+        });
+
+        try {
+          const nutzap = await zapper.zapNip61(
+            {
+              amount: amount,
+              pubkey: pubkey
+            },
+            {
+              relays: nutzapRelays || [],
+              mints: mint ? [mint] : undefined
+            }
+          );
+
+          if (nutzap instanceof NDKNutzap) {
+            // Create relay set for publication
+            const relaySet = nutzapRelays && nutzapRelays.length > 0 
+              ? new NDKRelaySet(new Set(nutzapRelays.map(url => zapperNdk.pool.relays.get(url)).filter((relay): relay is NonNullable<typeof relay> => relay !== undefined)), zapperNdk)
+              : undefined;
+            
+            // Fire-and-forget publish
+            nutzap.publish(relaySet).catch(() => {
+              // Publication failure is not fatal since payment succeeded
+            });
+            
+            clearTimeout(timeout);
+            resolve(nutzap);
+          }
+        } catch (error) {
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
+
+      const zapResult = await zapPromise as NDKNutzap;
+
+      if (!zapResult) {
         throw new Error("Failed to send nutzap: zapper returned no result");
       }
 
-      // Check if any of the zap splits succeeded
-      let hasValidCashuPayment = false;
-      let zapError: Error | null = null;
-
-      for (const [, result] of zapResult) {
-        if (result instanceof Error) {
-          // Capture the error for better messaging
-          zapError = result;
-        } else if (
-          result &&
-          "proofs" in result &&
-          result.proofs &&
-          result.proofs.length > 0
-        ) {
-          // Found a valid cashu payment
-          hasValidCashuPayment = true;
-          break;
-        }
+      if (!(zapResult instanceof NDKNutzap) || !zapResult.proofs || zapResult.proofs.length === 0) {
+        throw new Error("Failed to send nutzap: unable to create valid payment");
       }
-
-      if (!hasValidCashuPayment) {
-        if (zapError) {
-          console.error("Profile zap failed with error:", zapError.message);
-          throw new Error(`Failed to send nutzap: ${zapError.message}`);
-        } else {
-          console.error(
-            "Profile zap completed but no valid cashu payment was created"
-          );
-          throw new Error(
-            "Failed to send nutzap: unable to create valid payment"
-          );
-        }
-      }
-
-      console.log(`Nutzap sent successfully with ${amount} sats`);
-
-      // Update balance only if payment succeeded
-      this.updateCachedBalance(Math.max(0, this.cachedBalance - amount));
-      await this.updateBalance();
     } catch (error) {
-      console.error("Profile nutzap failed:", error);
       throw error;
     } finally {
-      // Clean up temporary NDK instance to prevent connection leaks
+      // Clean up temporary NDK instance
       if (tempNdk) {
         try {
           Array.from(tempNdk.pool.relays.values()).forEach((relay) => {
@@ -929,7 +956,7 @@ export class CashuWalletService implements ICashuWalletService {
           });
           tempNdk.pool.removeAllListeners();
         } catch (err) {
-          console.warn("Error cleaning up temporary NDK in sendNutzap:", err);
+          // Ignore cleanup errors
         }
       }
     }
@@ -952,8 +979,6 @@ export class CashuWalletService implements ICashuWalletService {
       throw new Error("Wallet not initialized");
     }
 
-    console.log('💸 Starting nutzap send to event:', { eventId, amount, nutzapRelays });
-
     // Fetch the event to get the author's pubkey
     const event = await this.ndk.fetchEvent(eventId);
     if (!event) {
@@ -964,150 +989,172 @@ export class CashuWalletService implements ICashuWalletService {
     const user = new NDKUser({ pubkey: event.pubkey });
     user.ndk = this.ndk;
 
-    // Use NDKZapper to properly create and publish nutzap
-    // NDKZapper is now imported statically
-
-    // Create NDK instance with nutzap relays if provided
+    // Create NDK instance with NIP-61 nutzap relays if provided
     let zapperNdk = this.ndk;
     let tempNdk: NDK | null = null;
 
     if (nutzapRelays && nutzapRelays.length > 0) {
-      // Enrich recipient's relays with our own relays for better delivery
-      const ourRelays = Array.from(this.ndk.pool.relays.values()).map(r => r.url);
-      const enrichedRelays = [...new Set([...nutzapRelays, ...ourRelays])]; // Remove duplicates
+      const prioritizedRelays = this.prioritizeNutzapRelays(nutzapRelays);
       
-      console.log('🔗 Creating temporary NDK for enriched event nutzap relays:');
-      console.log('  Recipient relays:', nutzapRelays);
-      console.log('  Our relays:', ourRelays);
-      console.log('  Final enriched relays:', enrichedRelays);
-      
-      // Create a temporary NDK instance with enriched relays (recipient + ours)
       tempNdk = new NDK({
-        explicitRelayUrls: enrichedRelays,
+        explicitRelayUrls: prioritizedRelays,
         signer: this.ndk.signer,
       });
       zapperNdk = tempNdk;
 
-      // Connect to the enriched relay set with timeout
       try {
-        console.log('🔌 Connecting to enriched nutzap relays for event...');
         const connectPromise = zapperNdk.connect();
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Nutzap relay connection timeout")), 3000)
+          setTimeout(() => reject(new Error("NIP-61 relay connection timeout")), 2000)
         );
-        await Promise.race([connectPromise, timeoutPromise]);
-        console.log('✅ Connected to enriched nutzap relays for event nutzap');
-      } catch (error) {
-        console.warn("Failed to connect to some enriched nutzap relays:", error);
-        // Continue anyway - some relays might be connected
-        // Also fallback to using main NDK if all nutzap relays fail
-        if (Array.from(zapperNdk.pool.relays.values()).length === 0) {
-          console.log('🔄 Falling back to main NDK since no nutzap relays connected');
-          zapperNdk = this.ndk;
+        
+        try {
+          await Promise.race([connectPromise, timeoutPromise]);
+        } catch (timeoutError) {
+          const connectedRelays = Array.from(zapperNdk.pool.relays.values()).filter(r => r.connected);
+          if (connectedRelays.length === 0) {
+            throw timeoutError;
+          }
         }
+      } catch (error) {
+        zapperNdk = this.ndk;
+        tempNdk = null;
       }
     }
 
-    console.log('⚡ Creating NDKZapper for event...');
     const zapper = new NDKZapper(event, amount, "sat", {
       comment: "",
-      ndk: zapperNdk, // Use the NDK with nutzap relays
+      ndk: zapperNdk,
     });
 
     try {
-      console.log('🔧 Setting up cashuPay callback for event...');
       // Set the cashuPay callback to use our wallet
       zapper.cashuPay = async (payment: any) => {
         try {
-          console.log('💰 Executing cashuPay for event:', payment);
-          const result = await this.wallet!.cashuPay({
-            ...payment,
-            mints: mint ? [mint] : undefined,
-          });
-
-          // Validate the result - NDK returns null on failure
-          if (!result || !result.proofs || result.proofs.length === 0) {
-            console.error("cashuPay failed in zapper - no valid result");
-            throw new Error(
-              "Failed to create nutzap: recipient may not have a compatible wallet"
-            );
+          // Determine which mints to use
+          let mintsToUse: string[] | undefined;
+          if (mint) {
+            mintsToUse = [mint];
+          } else {
+            const recipientPubkey = payment.recipientPubkey || event.pubkey;
+            const recipientMints = await this.getRecipientAcceptedMints(recipientPubkey);
+            const ourMints = Object.keys(this.wallet?.mintBalances || {});
+            const compatibleMints = ourMints.filter(m => recipientMints.includes(m));
+            mintsToUse = compatibleMints.length > 0 ? compatibleMints : undefined;
           }
 
-          console.log('✅ cashuPay successful for event:', result);
+          // Get recipient's P2PK for proof locking
+          const recipientPubkey = payment.recipientPubkey || event.pubkey;
+          const recipientMintList = await this.fetchUser10019(recipientPubkey);
+          const recipientP2PK = this.parseNutzapP2PK(recipientMintList);
+
+          const finalPayment = {
+            ...payment,
+            mints: mintsToUse,
+            p2pk: recipientP2PK,
+          };
+          
+          const result = await this.wallet!.cashuPay(finalPayment);
+
+          if (!result || !result.proofs || result.proofs.length === 0) {
+            const recipientPubkey = payment.recipientPubkey || event.pubkey;
+            const ourMintBalances = await this.getMintBalances();
+            const recipientMints = await this.getRecipientAcceptedMints(recipientPubkey);
+            const ourMints = Object.keys(ourMintBalances);
+            const compatibleMints = ourMints.filter(m => recipientMints.includes(m));
+            
+            if (compatibleMints.length === 0) {
+              throw new Error(
+                `Failed to create nutzap: No compatible mints found.\n\n` +
+                `Your mints: ${ourMints.length > 0 ? ourMints.join(', ') : 'None'}\n` +
+                `Recipient accepts: ${recipientMints.length > 0 ? recipientMints.join(', ') : 'None'}\n\n` +
+                `Add one of the recipient's mints to send nutzaps to them.`
+              );
+            } else {
+              const compatibleBalances = compatibleMints.map(m => `${ourMintBalances[m]} sats from ${m}`).join(', ');
+              throw new Error(
+                `Failed to create nutzap: Compatible mints available but payment failed.\n\n` +
+                `Compatible balances: ${compatibleBalances}\n` +
+                `Needed: ${amount} sats\n\n` +
+                `This might be due to insufficient balance in compatible mints or mint connectivity issues.`
+              );
+            }
+          }
+
           return result;
         } catch (error: any) {
-          // Ignore swap-related errors as they're non-fatal
-          // The wallet will fall back to using existing proofs
-          if (
-            error.message?.includes("Not enough funds available") &&
-            error.message?.includes("swap")
-          ) {
-            console.warn(
-              "Swap optimization failed, continuing with existing proofs"
-            );
-            // Let the error propagate so NDK can handle the fallback
-          }
-          console.error('❌ cashuPay failed for event:', error);
           throw error;
         }
       };
 
-      // Execute the zap - this will create and publish the nutzap event
-      console.log('⚡ Executing zapper.zap() for event...');
-      const zapPromise = zapper.zap();
-      const zapTimeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Event zap execution timeout")), 10000)
-      );
-      const zapResult = await Promise.race([zapPromise, zapTimeoutPromise]) as Map<any, any>;
+      // Execute the zap using zapNip61 with event-based completion
+      
+      const zapPromise = new Promise(async (resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("Event zap execution timeout"));
+        }, 10000);
 
-      console.log("Zap result:", zapResult);
+        zapper.on("complete", (results) => {
+          clearTimeout(timeout);
+          resolve(results);
+        });
 
-      if (!zapResult || zapResult.size === 0) {
+        // Listen for successful payments to trigger balance updates
+        zapper.on("split:complete", (_, result) => {
+          if (result && !(result instanceof Error)) {
+            this.updateBalance();
+          }
+        });
+
+        try {
+          const nutzap = await zapper.zapNip61(
+            {
+              amount: amount,
+              pubkey: event.pubkey
+            },
+            {
+              relays: nutzapRelays || [],
+              mints: mint ? [mint] : undefined
+            }
+          );
+
+          if (nutzap instanceof NDKNutzap) {
+            // Create relay set for publication
+            const relaySet = nutzapRelays && nutzapRelays.length > 0 
+              ? new NDKRelaySet(new Set(nutzapRelays.map(url => zapperNdk.pool.relays.get(url)).filter((relay): relay is NonNullable<typeof relay> => relay !== undefined)), zapperNdk)
+              : undefined;
+            
+            // Fire-and-forget publish
+            nutzap.publish(relaySet).catch(() => {
+              // Publication failure is not fatal since payment succeeded
+            });
+            
+            clearTimeout(timeout);
+            
+            // Backup balance update for event nutzaps
+            this.updateBalance();
+            
+            resolve(nutzap);
+          }
+        } catch (error) {
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
+
+      const zapResult = await zapPromise as NDKNutzap;
+
+      if (!zapResult) {
         throw new Error("Failed to send nutzap: zapper returned no result");
       }
 
-      // Check if any of the zap splits succeeded
-      let hasValidCashuPayment = false;
-      let zapError: Error | null = null;
-
-      for (const [, result] of zapResult) {
-        if (result instanceof Error) {
-          // Capture the error for better messaging
-          zapError = result;
-        } else if (
-          result &&
-          "proofs" in result &&
-          result.proofs &&
-          result.proofs.length > 0
-        ) {
-          // Found a valid cashu payment
-          hasValidCashuPayment = true;
-          break;
-        }
+      if (!(zapResult instanceof NDKNutzap) || !zapResult.proofs || zapResult.proofs.length === 0) {
+        throw new Error("Failed to send nutzap: unable to create valid payment");
       }
-
-      if (!hasValidCashuPayment) {
-        if (zapError) {
-          console.error("Zap failed with error:", zapError.message);
-          throw new Error(`Failed to send nutzap: ${zapError.message}`);
-        } else {
-          console.error("Zap completed but no valid cashu payment was created");
-          throw new Error(
-            "Failed to send nutzap: unable to create valid payment"
-          );
-        }
-      }
-
-      console.log(`Nutzap sent to event successfully with ${amount} sats`);
-
-      // Update balance only if payment succeeded
-      this.updateCachedBalance(Math.max(0, this.cachedBalance - amount));
-      await this.updateBalance();
     } catch (error) {
-      console.error("Nutzap failed:", error);
       throw error;
     } finally {
-      // Clean up temporary NDK instance to prevent connection leaks
+      // Clean up temporary NDK instance
       if (tempNdk) {
         try {
           Array.from(tempNdk.pool.relays.values()).forEach((relay) => {
@@ -1119,10 +1166,7 @@ export class CashuWalletService implements ICashuWalletService {
           });
           tempNdk.pool.removeAllListeners();
         } catch (err) {
-          console.warn(
-            "Error cleaning up temporary NDK in sendNutzapToEvent:",
-            err
-          );
+          // Ignore cleanup errors
         }
       }
     }
@@ -2312,6 +2356,54 @@ export class CashuWalletService implements ICashuWalletService {
       }
     });
     // Removed arbitrary 5-relay limit to respect user's explicit relay choices per NIP-61
+  }
+
+  /**
+   * Prioritize and filter nutzap relays for better connection reliability
+   */
+  private prioritizeNutzapRelays(relays: string[]): string[] {
+    // Filter valid relays first
+    const validRelays = this.filterNutzapRelays(relays);
+    
+    // Prioritize relays - local first, then reliable public relays
+    const priorityOrder = [
+      'ws://localhost:8080',
+      'wss://relay.nos.social/',
+      'wss://relay.damus.io/',
+      'wss://purplepag.es/',
+      'wss://nos.lol/',
+      'wss://relay.mostr.pub/',
+      'wss://communities.nos.social/'
+    ];
+    
+    const prioritized: string[] = [];
+    const remaining: string[] = [];
+    
+    // Add priority relays first (if they exist in the list)
+    priorityOrder.forEach(priority => {
+      const normalizedPriority = priority.replace(/\/$/, '');
+      const found = validRelays.find(relay => {
+        const normalizedRelay = relay.replace(/\/$/, '');
+        return normalizedRelay === normalizedPriority;
+      });
+      if (found) {
+        prioritized.push(found);
+      }
+    });
+    
+    // Add any remaining relays
+    validRelays.forEach(relay => {
+      const normalizedRelay = relay.replace(/\/$/, '');
+      const alreadyAdded = prioritized.some(p => p.replace(/\/$/, '') === normalizedRelay);
+      if (!alreadyAdded) {
+        remaining.push(relay);
+      }
+    });
+    
+    // Limit to max 5 relays to avoid connection overhead, prioritizing the first ones
+    const result = [...prioritized, ...remaining].slice(0, 5);
+    
+    return result;
   }
 
   // Cleanup method

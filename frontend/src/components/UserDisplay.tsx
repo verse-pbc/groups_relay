@@ -280,14 +280,8 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       // Convert npub to hex if needed
       const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
 
-      // Add timeout to prevent hanging on dead relays
-      const sendPromise = client.sendNutzap(hexPubkey, sats);
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Nutzap timeout - relay connection failed")), TIMEOUTS.NUTZAP_SEND_TIMEOUT)
-      );
-
-      // Race between send and timeout
-      await Promise.race([sendPromise, timeoutPromise]);
+      // No timeout needed - the CashuWalletService now handles this with NDK zapper events
+      await client.sendNutzap(hexPubkey, sats);
 
       // SUCCESS - Update balance optimistically (without re-fetching from mints)
       const currentBalance = this.state.walletBalance
