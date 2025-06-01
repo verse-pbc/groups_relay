@@ -286,6 +286,7 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
               isModal={true}
               initialCashuBalance={this.state.cashuBalance}
               walletBalance={this.state.cashuBalance}
+              isWalletInitialized={this.props.client.isWalletInitialized()}
             />
           </div>
         </div>

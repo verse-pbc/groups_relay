@@ -9,6 +9,8 @@ interface WalletDisplayProps {
   initialCashuBalance?: number;
   // Balance passed down from ProfileMenu to avoid duplicate subscriptions
   walletBalance?: number;
+  // Wallet initialization status passed from parent to prevent duplicate initialization
+  isWalletInitialized?: boolean;
 }
 
 // Helper function to safely parse mint URLs
@@ -23,7 +25,7 @@ const getMintHostname = (mint: string): string => {
   }
 };
 
-export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, walletBalance }: WalletDisplayProps) => {
+export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, walletBalance, isWalletInitialized }: WalletDisplayProps) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -434,13 +436,22 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
     return () => clearInterval(checkInterval);
   }, [mintInvoice, currentQuote, selectedMint]);
 
-  // Auto-initialize on mount for modal view
+  // Auto-initialize on mount for modal view (only if wallet not already initialized)
   useEffect(() => {
     if (isModal && !isInitialized && !loading && !hasCheckedWallet) {
       setHasCheckedWallet(true);
-      initializeWallet();
+      // Only initialize if the wallet is not already initialized at the client level
+      if (!isWalletInitialized) {
+        console.log('🔍 WalletDisplay - Auto-initializing wallet for modal');
+        initializeWallet();
+      } else {
+        console.log('🔍 WalletDisplay - Wallet already initialized, skipping auto-init');
+        setIsInitialized(true);
+        // Fetch balance since wallet is already initialized
+        fetchBalance(true);
+      }
     }
-  }, [isModal]);
+  }, [isModal, isWalletInitialized]);
 
   const containerClass = isModal 
     ? "bg-[var(--color-bg-secondary)] rounded-lg p-6"

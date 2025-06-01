@@ -211,20 +211,32 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       const seenEventIds = new Set<string>() // Track event IDs just for this initial fetch
 
       events.forEach((event: any) => {
+        console.log('🔍 Processing nutzap event:', event.id, 'from author:', event.pubkey)
+        
         // Check if we've already processed this event ID in this batch
         if (seenEventIds.has(event.id)) {
+          console.log('  ⏭️ Skipping duplicate event ID:', event.id)
           return
         }
         seenEventIds.add(event.id)
         // Find the event tag
         const eventTag = event.tags.find((tag: string[]) => tag[0] === 'e')
-        if (!eventTag) return
+        if (!eventTag) {
+          console.log('  ❌ No event tag found in nutzap')
+          return
+        }
 
         const eventId = eventTag[1]
+        console.log('  🎯 Nutzap targets event:', eventId)
         
         // Get the author of the target event
         const eventAuthor = eventAuthors.get(eventId)
-        if (!eventAuthor) return
+        if (!eventAuthor) {
+          console.log('  ❌ Event ID not found in current group content:', eventId)
+          console.log('  📝 Available event IDs:', Array.from(eventAuthors.keys()))
+          return
+        }
+        console.log('  👤 Event author:', eventAuthor)
         
         // Get the authorized mints for this event's author
         const authorizedMints = authorMints.get(eventAuthor) || []
