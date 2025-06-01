@@ -40,3 +40,9 @@ flamegraph.svg
 db
 .claude/settings.local.json
 CLAUDE.local.md
+
+# AI coding assistant files (unused)
+.roo
+.roomodes
+.windsurfrules
+.taskmasterconfig
