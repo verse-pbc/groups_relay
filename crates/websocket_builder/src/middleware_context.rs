@@ -61,6 +61,55 @@ impl<O> MessageSender<O> {
         Ok(())
     }
 
+    /// Sends a message through the channel, bypassing the current middleware.
+    ///
+    /// This method is useful when the current middleware has already processed
+    /// the message (e.g., already applied filtering/validation) and you want to
+    /// skip re-processing in the current middleware while still allowing
+    /// other middleware in the chain to process the message.
+    ///
+    /// The outbound processing will start from the previous middleware in the chain
+    /// (current index - 1), or index 0 if already at the first middleware.
+    ///
+    /// # When to use send_bypass() vs send():
+    /// 
+    /// **Use `send_bypass()` when:**
+    /// - You've already applied the current middleware's logic (e.g., filtering, validation)
+    /// - You want to avoid duplicate processing in the current middleware
+    /// - Example: Historical events that were already filtered during database query
+    ///
+    /// **Use `send()` when:**
+    /// - You want the message to go through the normal middleware chain processing
+    /// - The current middleware should also process this outbound message
+    /// - Example: Broadcasting new events that need full filtering/validation
+    ///
+    /// # Arguments
+    /// * `message` - The message to send
+    ///
+    /// # Returns
+    /// * `Ok(())` - Message sent successfully
+    /// * `Err(TrySendError)` - Channel is full or closed
+    pub fn send_bypass(&mut self, message: O) -> Result<(), TrySendError<(O, usize)>> {
+        let bypass_index = if self.index > 0 { self.index - 1 } else { 0 };
+        
+        debug!(
+            "MessageSender bypassing current middleware (index {}) and starting from index {}",
+            self.index, bypass_index
+        );
+
+        if let Err(e) = self.sender.try_send((message, bypass_index)) {
+            error!(
+                "Failed to send bypass message. Current capacity: {}. Error: {}",
+                self.capacity(),
+                e
+            );
+            return Err(e);
+        }
+
+        debug!("MessageSender successfully sent bypass message");
+        Ok(())
+    }
+
     /// Returns the number of available slots in the channel.
     pub fn capacity(&self) -> usize {
         self.sender.capacity()

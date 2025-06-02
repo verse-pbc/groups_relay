@@ -224,9 +224,32 @@ impl Nip29Middleware {
             self.verify_filter(authed_pubkey, filter)?;
         }
 
-        // Delegate to the extracted subscription handler
+        // Create the visibility checker closure
+        let groups = Arc::clone(&self.groups);
+        let subdomain = connection_state
+            .map(|cs| cs.subdomain().clone())
+            .unwrap_or(Scope::Default);
+
+        let visibility_checker = move |event: &Event,
+                                       authed_pubkey: &Option<PublicKey>,
+                                       relay_pk: &PublicKey|
+              -> Result<bool, Error> {
+            // Check if this is a group event
+            if let Some(group_ref) = groups.find_group_from_event(event, &subdomain) {
+                // Group event - check access control using the group's can_see_event method
+                group_ref
+                    .value()
+                    .can_see_event(authed_pubkey, relay_pk, event)
+                    .map_err(|e| Error::internal(format!("Group access check failed: {}", e)))
+            } else {
+                // Not a group event or unmanaged group - allow it through
+                Ok(true)
+            }
+        };
+
+        // Delegate to the extracted subscription handler with the closure
         super::subscription_handler::handle_subscription(
-            &self.groups,
+            visibility_checker,
             &self.relay_pubkey,
             subscription_id,
             filters,
@@ -424,6 +447,10 @@ impl Middleware for Nip29Middleware {
         &self,
         ctx: &mut OutboundContext<'_, Self::State, Self::IncomingMessage, Self::OutgoingMessage>,
     ) -> Result<(), anyhow::Error> {
+        // Note: Historical events from REQ handlers (subscription_handler) don't go through
+        // this process_outbound hook. They are sent directly using send_bypass() after
+        // already applying visibility filtering during pagination processing. This hook
+        // primarily handles broadcasted events from subscription_manager that need filtering.
         let Some(RelayMessage::Event { event, .. }) = &ctx.message else {
             return ctx.next().await;
         };

@@ -1,12 +1,21 @@
 use crate::error::Error;
 use crate::nostr_session_state::NostrConnectionState;
-use crate::Groups;
 use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
 use std::collections::HashSet;
-use std::sync::Arc;
 use tracing::{debug, error};
 use websocket_builder::MessageSender;
+
+/// Context struct to group related subscription handling parameters
+struct SubscriptionContext<'a> {
+    relay_pubkey: &'a PublicKey,
+    subscription_id: SubscriptionId,
+    filters: Vec<Filter>,
+    authed_pubkey: Option<PublicKey>,
+    relay_conn: &'a crate::subscription_manager::SubscriptionManager,
+    subdomain: &'a Scope,
+    sender: MessageSender<RelayMessage<'static>>,
+}
 
 /// Handles subscription requests, compensating for post-query filtering in groups relay.
 ///
@@ -57,14 +66,16 @@ use websocket_builder::MessageSender;
 /// Provide a guarantee that when a client receives fewer events than their limit, it means
 /// there are no more accessible events available (not just that they were filtered out).
 /// This enables reliable pagination for clients despite our post-query filtering.
-pub async fn handle_subscription(
-    groups: &Arc<Groups>,
+pub async fn handle_subscription<F>(
+    visibility_checker: F,
     relay_pubkey: &PublicKey,
     subscription_id: SubscriptionId,
     filters: Vec<Filter>,
     authed_pubkey: Option<PublicKey>,
     connection_state: Option<&NostrConnectionState>,
-) -> Result<(), Error> {
+) -> Result<(), Error>
+where
+    F: Fn(&Event, &Option<PublicKey>, &PublicKey) -> Result<bool, Error> + Send + Sync, {
     let Some(conn) = connection_state else {
         error!(
             "No connection_state available for subscription {}",
@@ -116,46 +127,36 @@ pub async fn handle_subscription(
         });
 
     if has_limit {
-        if can_use_window_sliding {
-            // Use window sliding optimization for better efficiency
-            handle_limited_subscription_window_sliding(
-                groups,
-                relay_pubkey,
-                subscription_id.clone(),
-                filters,
-                authed_pubkey,
-                relay_conn,
-                subdomain,
-                sender.clone(),
-            )
-            .await?;
-        } else {
-            // Use fill-buffer pagination for complex cases (e.g., since + until + limit)
-            handle_limited_subscription(
-                groups,
-                relay_pubkey,
-                subscription_id.clone(),
-                filters,
-                authed_pubkey,
-                relay_conn,
-                subdomain,
-                sender.clone(),
-            )
-            .await?;
-        }
-    } else {
-        // Simple case: no limits, just fetch and filter all events once
-        handle_unlimited_subscription(
-            groups,
+        let context = SubscriptionContext {
             relay_pubkey,
-            subscription_id.clone(),
+            subscription_id: subscription_id.clone(),
             filters,
             authed_pubkey,
             relay_conn,
             subdomain,
-            sender.clone(),
-        )
-        .await?;
+            sender: sender.clone(),
+        };
+
+        if can_use_window_sliding {
+            // Use window sliding optimization for better efficiency
+            handle_limited_subscription_window_sliding(&visibility_checker, context).await?;
+        } else {
+            // Use fill-buffer pagination for complex cases (e.g., since + until + limit)
+            handle_limited_subscription(&visibility_checker, context).await?;
+        }
+    } else {
+        // Simple case: no limits, just fetch and filter all events once
+        let context = SubscriptionContext {
+            relay_pubkey,
+            subscription_id: subscription_id.clone(),
+            filters,
+            authed_pubkey,
+            relay_conn,
+            subdomain,
+            sender: sender.clone(),
+        };
+        
+        handle_unlimited_subscription(&visibility_checker, context).await?;
     }
 
     // Send EOSE
@@ -175,21 +176,17 @@ pub async fn handle_subscription(
 /// This is the straightforward case: no pagination bug because we're fetching all events
 /// that match the filter criteria. Post-query filtering doesn't cause issues here because
 /// the client isn't expecting a specific count of events.
-async fn handle_unlimited_subscription(
-    groups: &Arc<Groups>,
-    relay_pubkey: &PublicKey,
-    subscription_id: SubscriptionId,
-    filters: Vec<Filter>,
-    authed_pubkey: Option<PublicKey>,
-    relay_conn: &crate::subscription_manager::SubscriptionManager,
-    subdomain: &Scope,
-    mut sender: MessageSender<RelayMessage<'static>>,
-) -> Result<(), Error> {
-    debug!("Handling unlimited subscription {}", subscription_id);
+async fn handle_unlimited_subscription<F>(
+    visibility_checker: &F,
+    mut context: SubscriptionContext<'_>,
+) -> Result<(), Error>
+where
+    F: Fn(&Event, &Option<PublicKey>, &PublicKey) -> Result<bool, Error> + Send + Sync, {
+    debug!("Handling unlimited subscription {}", context.subscription_id);
 
     // Fetch all events matching the filters
-    let events = relay_conn
-        .fetch_historical_events(&filters, subdomain)
+    let events = context.relay_conn
+        .fetch_historical_events(&context.filters, context.subdomain)
         .await?;
 
     debug!("Fetched {} events for unlimited subscription", events.len());
@@ -198,22 +195,17 @@ async fn handle_unlimited_subscription(
     let mut sent_count = 0;
     for event in events {
         // Check if user can see this event
-        let should_send = if let Some(group) = groups.find_group_from_event(&event, subdomain) {
-            // Group event - check access control
-            matches!(
-                group
-                    .value()
-                    .can_see_event(&authed_pubkey, relay_pubkey, &event),
-                Ok(true)
-            )
-        } else {
-            // Not a group event or unmanaged group - allow it through
-            true
-        };
+        let should_send = matches!(
+            visibility_checker(&event, &context.authed_pubkey, context.relay_pubkey),
+            Ok(true)
+        );
 
         if should_send {
-            if let Err(e) = sender.send(RelayMessage::Event {
-                subscription_id: std::borrow::Cow::Owned(subscription_id.clone()),
+            // Use send_bypass() for historical events since we've already applied
+            // visibility filtering above. This skips the current middleware's
+            // process_outbound() to avoid duplicate can_see_event() calls.
+            if let Err(e) = context.sender.send_bypass(RelayMessage::Event {
+                subscription_id: std::borrow::Cow::Owned(context.subscription_id.clone()),
                 event: std::borrow::Cow::Owned(event),
             }) {
                 error!("Failed to send event: {:?}", e);
@@ -225,7 +217,7 @@ async fn handle_unlimited_subscription(
 
     debug!(
         "Sent {} events for unlimited subscription {}",
-        sent_count, subscription_id
+        sent_count, context.subscription_id
     );
 
     Ok(())
@@ -240,19 +232,15 @@ async fn handle_unlimited_subscription(
 /// While less efficient than window sliding (due to re-fetching events), this approach
 /// handles all edge cases and ensures clients receive the requested number of events
 /// when they exist.
-async fn handle_limited_subscription(
-    groups: &Arc<Groups>,
-    relay_pubkey: &PublicKey,
-    subscription_id: SubscriptionId,
-    filters: Vec<Filter>,
-    authed_pubkey: Option<PublicKey>,
-    relay_conn: &crate::subscription_manager::SubscriptionManager,
-    subdomain: &Scope,
-    mut sender: MessageSender<RelayMessage<'static>>,
-) -> Result<(), Error> {
+async fn handle_limited_subscription<F>(
+    visibility_checker: &F,
+    mut context: SubscriptionContext<'_>,
+) -> Result<(), Error>
+where
+    F: Fn(&Event, &Option<PublicKey>, &PublicKey) -> Result<bool, Error> + Send + Sync, {
     debug!(
         "Handling limited subscription {} with fill-buffer pagination",
-        subscription_id
+        context.subscription_id
     );
 
     let mut seen_event_ids = HashSet::new();
@@ -261,10 +249,10 @@ async fn handle_limited_subscription(
     const MAX_MULTIPLIER: usize = 32;
 
     // Use channel capacity as the default limit to match buffer size
-    let channel_capacity = sender.capacity();
+    let channel_capacity = context.sender.capacity();
 
     // Track original limits for each filter
-    let original_limits: Vec<Option<usize>> = filters.iter().map(|f| f.limit).collect();
+    let original_limits: Vec<Option<usize>> = context.filters.iter().map(|f| f.limit).collect();
     let target_limit = original_limits
         .iter()
         .filter_map(|&l| l)
@@ -273,7 +261,7 @@ async fn handle_limited_subscription(
 
     loop {
         // Adjust filters with exponentially growing limits
-        let mut adjusted_filters = filters.clone();
+        let mut adjusted_filters = context.filters.clone();
         for (i, filter) in adjusted_filters.iter_mut().enumerate() {
             if let Some(original_limit) = original_limits[i] {
                 filter.limit = if multiplier <= MAX_MULTIPLIER {
@@ -285,8 +273,8 @@ async fn handle_limited_subscription(
         }
 
         // Fetch events from database
-        let events = relay_conn
-            .fetch_historical_events(&adjusted_filters, subdomain)
+        let events = context.relay_conn
+            .fetch_historical_events(&adjusted_filters, context.subdomain)
             .await?;
 
         if events.is_empty() {
@@ -309,22 +297,17 @@ async fn handle_limited_subscription(
             seen_event_ids.insert(event.id);
 
             // Check if user can see this event
-            let should_send = if let Some(group) = groups.find_group_from_event(&event, subdomain) {
-                // Group event - check access control
-                matches!(
-                    group
-                        .value()
-                        .can_see_event(&authed_pubkey, relay_pubkey, &event),
-                    Ok(true)
-                )
-            } else {
-                // Not a group event or unmanaged group - allow it through
-                true
-            };
+            let should_send = matches!(
+                visibility_checker(&event, &context.authed_pubkey, context.relay_pubkey),
+                Ok(true)
+            );
 
             if should_send {
-                if let Err(e) = sender.send(RelayMessage::Event {
-                    subscription_id: std::borrow::Cow::Owned(subscription_id.clone()),
+                // Use send_bypass() for historical events since we've already applied
+                // visibility filtering above. This skips the current middleware's
+                // process_outbound() to avoid duplicate can_see_event() calls.
+                if let Err(e) = context.sender.send_bypass(RelayMessage::Event {
+                    subscription_id: std::borrow::Cow::Owned(context.subscription_id.clone()),
                     event: std::borrow::Cow::Owned(event),
                 }) {
                     error!("Failed to send event: {:?}", e);
@@ -356,7 +339,7 @@ async fn handle_limited_subscription(
 
     debug!(
         "Fill-buffer: Sent {} events total to subscription {}",
-        sent_count, subscription_id
+        sent_count, context.subscription_id
     );
 
     Ok(())
@@ -381,29 +364,25 @@ async fn handle_limited_subscription(
 /// The algorithm stops when we've sent enough events that pass the filter, when there are
 /// no more events in the database, or after a maximum number of iterations (to prevent
 /// infinite loops in edge cases).
-async fn handle_limited_subscription_window_sliding(
-    groups: &Arc<Groups>,
-    relay_pubkey: &PublicKey,
-    subscription_id: SubscriptionId,
-    filters: Vec<Filter>,
-    authed_pubkey: Option<PublicKey>,
-    relay_conn: &crate::subscription_manager::SubscriptionManager,
-    subdomain: &Scope,
-    mut sender: MessageSender<RelayMessage<'static>>,
-) -> Result<(), Error> {
+async fn handle_limited_subscription_window_sliding<F>(
+    visibility_checker: &F,
+    mut context: SubscriptionContext<'_>,
+) -> Result<(), Error>
+where
+    F: Fn(&Event, &Option<PublicKey>, &PublicKey) -> Result<bool, Error> + Send + Sync, {
     debug!(
         "Handling limited subscription {} with window sliding optimization",
-        subscription_id
+        context.subscription_id
     );
 
     let mut seen_event_ids = HashSet::new();
     let mut sent_count = 0;
 
     // Use channel capacity as the default limit
-    let channel_capacity = sender.capacity();
+    let channel_capacity = context.sender.capacity();
 
     // Get the target limit from filters
-    let target_limit = filters
+    let target_limit = context.filters
         .iter()
         .filter_map(|f| f.limit)
         .max()
@@ -415,7 +394,7 @@ async fn handle_limited_subscription_window_sliding(
         Forward,  // For since+limit (move towards future)
     }
 
-    let direction = if filters
+    let direction = if context.filters
         .iter()
         .any(|f| f.since.is_some() && f.until.is_none())
     {
@@ -437,7 +416,7 @@ async fn handle_limited_subscription_window_sliding(
         }
 
         // Adjust filters based on sliding window
-        let mut adjusted_filters = filters.clone();
+        let mut adjusted_filters = context.filters.clone();
         for filter in adjusted_filters.iter_mut() {
             if let Some(boundary) = boundary_timestamp {
                 match direction {
@@ -454,8 +433,8 @@ async fn handle_limited_subscription_window_sliding(
         }
 
         // Fetch events from database
-        let events = relay_conn
-            .fetch_historical_events(&adjusted_filters, subdomain)
+        let events = context.relay_conn
+            .fetch_historical_events(&adjusted_filters, context.subdomain)
             .await?;
 
         if events.is_empty() {
@@ -501,22 +480,17 @@ async fn handle_limited_subscription_window_sliding(
             }
 
             // Check if user can see this event
-            let should_send = if let Some(group) = groups.find_group_from_event(&event, subdomain) {
-                // Group event - check access control
-                matches!(
-                    group
-                        .value()
-                        .can_see_event(&authed_pubkey, relay_pubkey, &event),
-                    Ok(true)
-                )
-            } else {
-                // Not a group event or unmanaged group - allow it through
-                true
-            };
+            let should_send = matches!(
+                visibility_checker(&event, &context.authed_pubkey, context.relay_pubkey),
+                Ok(true)
+            );
 
             if should_send {
-                if let Err(e) = sender.send(RelayMessage::Event {
-                    subscription_id: std::borrow::Cow::Owned(subscription_id.clone()),
+                // Use send_bypass() for historical events since we've already applied
+                // visibility filtering above. This skips the current middleware's
+                // process_outbound() to avoid duplicate can_see_event() calls.
+                if let Err(e) = context.sender.send_bypass(RelayMessage::Event {
+                    subscription_id: std::borrow::Cow::Owned(context.subscription_id.clone()),
                     event: std::borrow::Cow::Owned(event),
                 }) {
                     error!("Failed to send event: {:?}", e);
@@ -548,7 +522,7 @@ async fn handle_limited_subscription_window_sliding(
 
     debug!(
         "Window sliding: Sent {} events total to subscription {}",
-        sent_count, subscription_id
+        sent_count, context.subscription_id
     );
 
     Ok(())
@@ -558,6 +532,7 @@ async fn handle_limited_subscription_window_sliding(
 mod tests {
     use super::*;
     use crate::nostr_database::RelayDatabase;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     /// This test simulates the pagination bug where post-query filtering

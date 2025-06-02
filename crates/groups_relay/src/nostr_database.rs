@@ -770,3 +770,4 @@ mod tests {
         assert_eq!(scope_set.len(), 4, "Should have exactly 4 scopes");
     }
 }
+
