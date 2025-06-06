@@ -1,17 +1,15 @@
 [workspace]
-# Note: While load_tester is only needed for testing and could be in optional-members,
-# we keep it in members to prevent rust-analyzer from failing. Moving it to optional-members
-# causes rust-analyzer to fail to load the workspace.
 members = [
     "crates/groups_relay",
     "crates/websocket_builder",
-    "crates/load_tester",
+    "crates/nostr_relay_builder",
 ]
 resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+
 
 [workspace.dependencies]
 futures-util = "0.3.31"
@@ -26,6 +24,7 @@ futures = "0.3.31"
 clap = { version = "4.5.17", features = ["derive"] }
 nostr-sdk = { git = "https://github.com/verse-pbc/nostr", features = ["all-nips"] }
 nostr = { git = "https://github.com/verse-pbc/nostr", features = ["std"] }
+nostr-database = { git = "https://github.com/verse-pbc/nostr" }
 nostr-lmdb = { git = "https://github.com/verse-pbc/nostr" }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 metrics = "0.24.1"
