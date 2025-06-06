@@ -72,7 +72,7 @@ impl<O> MessageSender<O> {
     /// (current index - 1), or index 0 if already at the first middleware.
     ///
     /// # When to use send_bypass() vs send():
-    /// 
+    ///
     /// **Use `send_bypass()` when:**
     /// - You've already applied the current middleware's logic (e.g., filtering, validation)
     /// - You want to avoid duplicate processing in the current middleware
@@ -91,7 +91,7 @@ impl<O> MessageSender<O> {
     /// * `Err(TrySendError)` - Channel is full or closed
     pub fn send_bypass(&mut self, message: O) -> Result<(), TrySendError<(O, usize)>> {
         let bypass_index = if self.index > 0 { self.index - 1 } else { 0 };
-        
+
         debug!(
             "MessageSender bypassing current middleware (index {}) and starting from index {}",
             self.index, bypass_index

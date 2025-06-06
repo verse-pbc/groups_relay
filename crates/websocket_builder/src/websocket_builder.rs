@@ -215,7 +215,7 @@ impl<
             state_factory,
             middlewares: Vec::new(),
             message_converter,
-            channel_size: 100, // Default size (production may use larger values)
+            channel_size: 100, // Default size
             max_connection_time: None,
             max_connections: None,
         }
@@ -239,6 +239,25 @@ impl<
         middleware: M,
     ) -> Self {
         self.middlewares.push(Arc::new(middleware));
+        self
+    }
+
+    /// Adds a middleware that's already wrapped in an Arc to the processing chain.
+    ///
+    /// This method is useful when you need to add middlewares that are already
+    /// type-erased as trait objects.
+    ///
+    /// # Arguments
+    /// * `middleware` - The middleware instance wrapped in Arc
+    ///
+    /// # Returns
+    /// The builder instance for method chaining
+    #[must_use]
+    pub fn with_arc_middleware(
+        mut self,
+        middleware: Arc<dyn Middleware<State = TapState, IncomingMessage = I, OutgoingMessage = O>>,
+    ) -> Self {
+        self.middlewares.push(middleware);
         self
     }
 
@@ -336,12 +355,12 @@ where
     C: MessageConverter<I, O> + Send + Sync + Clone + 'static,
     F: StateFactory<S> + Send + Sync + Clone + 'static,
 {
-    middlewares: Arc<MiddlewareVec<S, I, O>>,
-    message_converter: Arc<C>,
-    state_factory: F,
-    channel_size: usize,
-    max_connection_time: Option<Duration>,
-    connection_semaphore: Option<Arc<Semaphore>>,
+    pub(crate) middlewares: Arc<MiddlewareVec<S, I, O>>,
+    pub(crate) message_converter: Arc<C>,
+    pub(crate) state_factory: F,
+    pub(crate) channel_size: usize,
+    pub(crate) max_connection_time: Option<Duration>,
+    pub(crate) connection_semaphore: Option<Arc<Semaphore>>,
 }
 
 impl<TapState, I, O, Converter, Factory> WebSocketHandler<TapState, I, O, Converter, Factory>

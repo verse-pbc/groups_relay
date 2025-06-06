@@ -1,32 +1,14 @@
-//! Actor-based WebSocket handler that eliminates head-of-line blocking.
+//! Actor-based WebSocket handler using the WebSocket trait
 //!
-//! # Architecture
-//!
-//! Each WebSocket connection is managed by three independent actors:
-//!
-//! - **Reader Actor**: Reads messages from the WebSocket and forwards them to the State Actor
-//! - **Writer Actor**: Receives messages from the queue and writes them to the WebSocket
-//! - **State Actor**: Owns the connection state and processes all middleware sequentially
-//!
-//! This separation allows the reader and writer to operate concurrently while maintaining
-//! sequential state mutations. The State Actor ensures that all state changes happen in a
-//! predictable order, eliminating the need for locks or synchronization primitives.
-//!
-//! ## Benefits
-//!
-//! - **No head-of-line blocking**: Outbound messages don't wait for inbound processing
-//! - **Concurrent I/O**: Read and write operations happen simultaneously
-//! - **Owned state**: No Arc<Mutex<State>> required, state is exclusively owned by one actor
-//! - **Sequential consistency**: All state mutations happen in order
-//!
+//! This version uses the WebSocket trait for better testability
+//! and framework independence, allowing it to work with any WebSocket implementation.
 
 use crate::{
+    websocket_trait::{AxumWebSocket, WebSocketConnection, WsMessage, WsSink, WsStream},
     ConnectionContext, DisconnectContext, InboundContext, MessageConverter, Middleware,
     OutboundContext, StateFactory,
 };
 use anyhow::Result;
-use axum::extract::ws::{Message, WebSocket};
-use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -77,7 +59,7 @@ type MiddlewareCollection<S, I, O> =
     Arc<Vec<Arc<dyn Middleware<State = S, IncomingMessage = I, OutgoingMessage = O>>>>;
 
 /// The state actor that owns the connection state
-struct StateActor<S, I, O> {
+pub struct StateActor<S, I, O> {
     state: S,
     middlewares: MiddlewareCollection<S, I, O>,
     receiver: mpsc::UnboundedReceiver<StateCommand<S, I, O>>,
@@ -91,7 +73,7 @@ where
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
 {
-    fn spawn(
+    pub fn spawn(
         initial_state: S,
         middlewares: MiddlewareCollection<S, I, O>,
         outbound_sender: mpsc::Sender<(O, usize)>,
@@ -165,8 +147,6 @@ where
     }
 
     async fn process_inbound(&mut self, connection_id: String, message: I) -> Result<Vec<O>> {
-        // Create the context for middleware processing
-        // Using the main outbound sender directly
         let mut ctx = InboundContext::new(
             connection_id,
             Some(message),
@@ -176,7 +156,6 @@ where
             0,
         );
 
-        // Process through the first middleware (which will chain to others)
         if !self.middlewares.is_empty() {
             if let Err(e) = self.middlewares[0].process_inbound(&mut ctx).await {
                 error!("Error in inbound middleware processing: {}", e);
@@ -184,8 +163,6 @@ where
             }
         }
 
-        // Since messages are sent directly to the outbound channel,
-        // we don't need to collect them here
         Ok(Vec::new())
     }
 
@@ -195,7 +172,6 @@ where
         message: O,
         middleware_index: usize,
     ) -> Result<Option<O>> {
-        // Create the context starting at the specified middleware index
         let mut ctx = OutboundContext::new(
             connection_id,
             message,
@@ -205,7 +181,6 @@ where
             middleware_index,
         );
 
-        // Process through middleware in reverse order
         if middleware_index < self.middlewares.len() {
             if let Err(e) = self.middlewares[middleware_index]
                 .process_outbound(&mut ctx)
@@ -216,12 +191,10 @@ where
             }
         }
 
-        // Return the potentially modified message
         Ok(ctx.message)
     }
 
     async fn on_connect(&mut self, connection_id: String) -> Result<Vec<O>> {
-        // Create the context
         let mut ctx = ConnectionContext::new(
             connection_id,
             Some(self.outbound_sender.clone()),
@@ -230,7 +203,6 @@ where
             0,
         );
 
-        // Process through middleware
         if !self.middlewares.is_empty() {
             if let Err(e) = self.middlewares[0].on_connect(&mut ctx).await {
                 error!("Error in on_connect middleware processing: {}", e);
@@ -238,12 +210,10 @@ where
             }
         }
 
-        // Messages are sent directly to outbound channel
         Ok(Vec::new())
     }
 
     async fn on_disconnect(&mut self, connection_id: String) -> Result<Vec<O>> {
-        // Create the context
         let mut ctx = DisconnectContext::new(
             connection_id,
             Some(self.outbound_sender.clone()),
@@ -252,7 +222,6 @@ where
             0,
         );
 
-        // Process through middleware
         if !self.middlewares.is_empty() {
             if let Err(e) = self.middlewares[0].on_disconnect(&mut ctx).await {
                 error!("Error in on_disconnect middleware processing: {}", e);
@@ -260,12 +229,11 @@ where
             }
         }
 
-        // Messages are sent directly to outbound channel
         Ok(Vec::new())
     }
 }
 
-/// Actor-based WebSocket handler that separates read/write/state concerns
+/// Actor-based WebSocket handler that works with any WebSocket implementation
 pub struct ActorWebSocketHandler<S, I, O, C, F>
 where
     S: Send + Sync + 'static,
@@ -320,12 +288,17 @@ where
         }
     }
 
-    pub async fn start(
+    pub async fn start<W>(
         &self,
-        socket: WebSocket,
+        socket: W,
         connection_id: String,
         cancellation_token: CancellationToken,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        W: WebSocketConnection,
+        W::Sink: Send + 'static,
+        W::Stream: Send + 'static,
+    {
         let connection_token = cancellation_token.child_token();
 
         // Create initial state
@@ -334,7 +307,7 @@ where
         // Create channels for read/write coordination
         let (outbound_tx, outbound_rx) = mpsc::channel::<(O, usize)>(self.channel_size);
 
-        // Spawn state actor with connection ID
+        // Spawn state actor
         let state_sender = StateActor::spawn(
             initial_state,
             self.middlewares.clone(),
@@ -356,9 +329,7 @@ where
 
         // Wait for on_connect response
         match connect_rx.await {
-            Ok(Ok(_)) => {
-                // Messages are sent directly by middleware
-            }
+            Ok(Ok(_)) => {}
             Ok(Err(e)) => {
                 error!("Error during on_connect: {}", e);
                 return Err(e);
@@ -376,7 +347,6 @@ where
             connection_id.clone(),
             ws_stream,
             state_sender.clone(),
-            outbound_tx.clone(),
             connection_token.clone(),
         );
 
@@ -418,14 +388,16 @@ where
         Ok(())
     }
 
-    fn spawn_reader(
+    fn spawn_reader<Str>(
         &self,
         connection_id: String,
-        mut ws_stream: futures_util::stream::SplitStream<WebSocket>,
+        mut ws_stream: Str,
         state_sender: mpsc::UnboundedSender<StateCommand<S, I, O>>,
-        _outbound_tx: mpsc::Sender<(O, usize)>,
         cancellation_token: CancellationToken,
-    ) -> tokio::task::JoinHandle<()> {
+    ) -> tokio::task::JoinHandle<()>
+    where
+        Str: WsStream + Send + 'static,
+    {
         let message_converter = self.message_converter.clone();
 
         tokio::spawn(async move {
@@ -437,11 +409,9 @@ where
 
                     message = ws_stream.next() => {
                         match message {
-                            Some(Ok(Message::Text(text))) => {
-                                // Convert message
+                            Some(Ok(WsMessage::Text(text))) => {
                                 match message_converter.inbound_from_string(text) {
                                     Ok(Some(msg)) => {
-                                        // Send to state actor for processing
                                         let (response_tx, response_rx) = oneshot::channel();
                                         let command = StateCommand::ProcessInbound {
                                             connection_id: connection_id.clone(),
@@ -453,11 +423,8 @@ where
                                             break;
                                         }
 
-                                        // Wait for processing (messages are sent directly to outbound channel)
                                         match response_rx.await {
-                                            Ok(Ok(_messages)) => {
-                                                // Messages already sent to outbound channel by state actor
-                                            }
+                                            Ok(Ok(_)) => {}
                                             Ok(Err(e)) => {
                                                 error!("Error processing inbound message: {}", e);
                                             }
@@ -475,7 +442,16 @@ where
                                     }
                                 }
                             }
-                            Some(Ok(Message::Close(_))) => {
+                            Some(Ok(WsMessage::Binary(data))) => {
+                                debug!("Received binary message with {} bytes", data.len());
+                            }
+                            Some(Ok(WsMessage::Ping(data))) => {
+                                debug!("Received ping with {} bytes", data.len());
+                            }
+                            Some(Ok(WsMessage::Pong(data))) => {
+                                debug!("Received pong with {} bytes", data.len());
+                            }
+                            Some(Ok(WsMessage::Close(_))) => {
                                 debug!("WebSocket closed by client");
                                 break;
                             }
@@ -486,7 +462,6 @@ where
                             None => {
                                 break;
                             }
-                            _ => {}
                         }
                     }
                 }
@@ -496,29 +471,30 @@ where
         })
     }
 
-    fn spawn_writer(
+    fn spawn_writer<Snk>(
         &self,
         connection_id: String,
-        mut ws_sink: futures_util::stream::SplitSink<WebSocket, Message>,
+        mut ws_sink: Snk,
         mut outbound_rx: mpsc::Receiver<(O, usize)>,
         state_sender: mpsc::UnboundedSender<StateCommand<S, I, O>>,
         cancellation_token: CancellationToken,
-    ) -> tokio::task::JoinHandle<()> {
+    ) -> tokio::task::JoinHandle<()>
+    where
+        Snk: WsSink + Send + 'static,
+    {
         let message_converter = self.message_converter.clone();
 
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     _ = cancellation_token.cancelled() => {
-                        // Send close frame
-                        let _ = ws_sink.send(Message::Close(None)).await;
+                        let _ = ws_sink.send(WsMessage::Close(None)).await;
                         break;
                     }
 
                     message = outbound_rx.recv() => {
                         match message {
                             Some((msg, middleware_index)) => {
-                                // Process through outbound middleware
                                 let (response_tx, response_rx) = oneshot::channel();
                                 let command = StateCommand::ProcessOutbound {
                                     connection_id: connection_id.clone(),
@@ -531,13 +507,11 @@ where
                                     break;
                                 }
 
-                                // Wait for processed message
                                 match response_rx.await {
                                     Ok(Ok(Some(processed_msg))) => {
-                                        // Convert to string
                                         match message_converter.outbound_to_string(processed_msg) {
                                             Ok(text) => {
-                                                if let Err(e) = ws_sink.send(Message::Text(text)).await {
+                                                if let Err(e) = ws_sink.send(WsMessage::Text(text)).await {
                                                     error!("Failed to send message: {}", e);
                                                     break;
                                                 }
@@ -625,5 +599,44 @@ where
             self.state_factory,
             self.channel_size,
         )
+    }
+}
+
+/// Extension trait to add convenience methods for axum WebSocket
+#[async_trait::async_trait]
+pub trait AxumWebSocketExt<S, I, O, C, F>
+where
+    S: Send + Sync + 'static,
+    I: Send + Sync + 'static,
+    O: Send + Sync + 'static,
+    C: MessageConverter<I, O> + Send + Sync + Clone + 'static,
+    F: StateFactory<S> + Send + Sync + Clone + 'static,
+{
+    /// Start handling an axum WebSocket connection
+    async fn start_axum(
+        &self,
+        socket: axum::extract::ws::WebSocket,
+        connection_id: String,
+        cancellation_token: CancellationToken,
+    ) -> anyhow::Result<()>;
+}
+
+#[async_trait::async_trait]
+impl<S, I, O, C, F> AxumWebSocketExt<S, I, O, C, F> for ActorWebSocketHandler<S, I, O, C, F>
+where
+    S: Send + Sync + 'static,
+    I: Send + Sync + 'static,
+    O: Send + Sync + 'static,
+    C: MessageConverter<I, O> + Send + Sync + Clone + 'static,
+    F: StateFactory<S> + Send + Sync + Clone + 'static,
+{
+    async fn start_axum(
+        &self,
+        socket: axum::extract::ws::WebSocket,
+        connection_id: String,
+        cancellation_token: CancellationToken,
+    ) -> anyhow::Result<()> {
+        let axum_ws = AxumWebSocket::new(socket);
+        self.start(axum_ws, connection_id, cancellation_token).await
     }
 }

@@ -1,6 +1,6 @@
 # WebSocket Builder
 
-A middleware-based WebSocket framework for building protocol-aware servers in Rust. Designed for building stateful connection pipelines with type-safe message processing.
+A low-level middleware-based WebSocket framework for building protocol-aware servers in Rust. This crate provides the foundation for protocol implementations like `nostr_relay_builder`. Designed for building stateful connection pipelines with type-safe message processing.
 
 ## Core Features
 
