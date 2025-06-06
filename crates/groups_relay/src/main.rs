@@ -14,7 +14,7 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use groups_relay::{config, groups::Groups, nostr_database::RelayDatabase, server};
+use groups_relay::{config, groups::Groups, server, RelayDatabase};
 use nostr_sdk::RelayUrl;
 use std::sync::Arc;
 
@@ -78,6 +78,7 @@ async fn main() -> Result<()> {
         websocket: relay_settings.websocket.clone(),
         db_path: relay_settings.db_path.clone(),
         base_domain_parts: relay_settings.base_domain_parts,
+        query_limit: relay_settings.query_limit,
     };
 
     if let Some(target_url) = args.relay_url {

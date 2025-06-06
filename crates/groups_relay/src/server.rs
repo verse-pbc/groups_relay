@@ -1,15 +1,17 @@
 use crate::{
-    app_state::HttpServerState,
-    config,
-    groups::Groups,
-    handler, metrics,
-    nostr_database::RelayDatabase,
-    nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
-    websocket_server::{self, NostrMessageConverter},
+    app_state::HttpServerState, config, groups::Groups, handler, metrics,
+    middlewares::ValidationMiddleware, relay_logic::groups_logic::GroupsRelayProcessor,
+    RelayDatabase,
 };
 use anyhow::Result;
-use axum::{routing::get, Router};
-use nostr_sdk::prelude::*;
+use axum::{
+    routing::get,
+    Router,
+};
+use nostr_relay_builder::{
+    AuthConfig, Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware, RelayBuilder,
+    RelayConfig, RelayInfo, WebSocketConfig,
+};
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
@@ -22,15 +24,7 @@ use tracing::{error, info};
 
 pub struct ServerState {
     pub http_state: Arc<HttpServerState>,
-    pub ws_handler: Arc<
-        websocket_server::WebSocketHandler<
-            NostrConnectionState,
-            ClientMessage<'static>,
-            RelayMessage<'static>,
-            NostrMessageConverter,
-            NostrConnectionFactory,
-        >,
-    >,
+    pub handlers: Arc<nostr_relay_builder::RelayHandlers>,
     pub cancellation_token: CancellationToken,
     pub metrics_handle: metrics::PrometheusHandle,
     pub connection_counter: Arc<AtomicUsize>,
@@ -45,7 +39,6 @@ pub async fn run_server(
 ) -> Result<()> {
     // Setup metrics
     let metrics_handle = metrics::setup_metrics()?;
-
     let http_state = Arc::new(HttpServerState::new(groups.clone()));
 
     info!(
@@ -63,24 +56,64 @@ pub async fn run_server(
         settings.base_domain_parts
     );
 
-    let relay_url_parsed = RelayUrl::parse(&settings.relay_url)?;
+    // Build the relay configuration
+    let websocket_config = WebSocketConfig {
+        channel_size: settings.websocket.channel_size,
+        max_connections: settings.websocket.max_connections,
+        max_connection_time: settings.websocket.max_connection_time.map(|d| d.as_secs()),
+    };
 
-    let ws_handler = Arc::new(websocket_server::build_websocket_handler(
-        relay_url_parsed,
-        settings.auth_url.clone(),
-        groups.clone(),
-        &relay_keys,
-        database,
-        &settings,
-    )?);
+    let relay_config = RelayConfig::new(
+        settings.relay_url.clone(),
+        database.clone(),
+        relay_keys.clone(),
+    )
+    .with_subdomains(settings.base_domain_parts)
+    .with_auth(AuthConfig {
+        auth_url: settings.auth_url.clone(),
+        base_domain_parts: settings.base_domain_parts,
+        validate_subdomains: true,
+    })
+    .with_websocket_config(websocket_config)
+    .with_query_limit(settings.query_limit);
 
+    let groups_processor = GroupsRelayProcessor::new(groups.clone(), relay_keys.public_key);
+
+    // Create cancellation token and connection counter
     let cancellation_token = CancellationToken::new();
+    let connection_counter = Arc::new(AtomicUsize::new(0));
+
+    // Define relay information
+    let relay_info = RelayInfo {
+        name: "Nostr Groups Relay".to_string(),
+        description: "A specialized relay implementing NIP-29 for Nostr group management. This relay is under development and all data may be deleted in the future".to_string(),
+        pubkey: relay_keys.public_key.to_string(),
+        contact: "https://daniel.nos.social".to_string(),
+        supported_nips: vec![1, 9, 11, 29, 40, 42, 70],
+        software: "groups_relay".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        icon: Some("https://pfp.nostr.build/c60f4853a6d4ae046bdbbd935f0ccd7354c9c411c324b411666d325562a5a906.png".to_string()),
+    };
+
+    // Build the relay handlers using the improved API
+    let handlers = Arc::new(
+        RelayBuilder::new(relay_config)
+            .with_middleware(ValidationMiddleware::new(relay_keys.public_key))
+            .with_middleware(Nip09Middleware::new(database.clone()))
+            .with_middleware(Nip40ExpirationMiddleware::new())
+            .with_middleware(Nip70Middleware)
+            .with_cancellation_token(cancellation_token.clone())
+            .with_connection_counter(connection_counter.clone())
+            .build_handlers(groups_processor, relay_info)
+            .await?,
+    );
+
     let app_state = Arc::new(ServerState {
         http_state: http_state.clone(),
-        ws_handler: ws_handler.clone(),
+        handlers: handlers.clone(),
         cancellation_token: cancellation_token.clone(),
         metrics_handle: metrics_handle.clone(),
-        connection_counter: Arc::new(AtomicUsize::new(0)),
+        connection_counter: connection_counter.clone(),
         base_domain_parts: settings.base_domain_parts,
     });
 
@@ -89,10 +122,13 @@ pub async fn run_server(
         .allow_methods(Any)
         .allow_headers(Any);
 
+    // Metrics handler without state
+    let metrics_handler = move || async move { metrics_handle.render() };
+
     let router = Router::new()
         .route("/", get(handler::handle_root))
-        .route("/health", get(handler::handle_health))
-        .route("/metrics", get(handler::handle_metrics))
+        .route("/health", get(|| async { "OK" }))
+        .route("/metrics", get(metrics_handler))
         .route("/api/subdomains", get(handler::handle_subdomains))
         .route("/api/config", get(handler::handle_config))
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))

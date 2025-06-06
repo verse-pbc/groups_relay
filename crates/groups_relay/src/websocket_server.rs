@@ -1,95 +1,54 @@
 use crate::{
-    config,
-    groups::Groups,
-    middlewares::{
-        ErrorHandlingMiddleware, EventVerifierMiddleware, LoggerMiddleware, Nip09Middleware,
-        Nip29Middleware, Nip40ExpirationMiddleware, Nip42Middleware, Nip70Middleware,
-        ValidationMiddleware,
-    },
-    nostr_database::RelayDatabase,
-    nostr_session_state::{NostrConnectionFactory, NostrConnectionState},
+    config, groups::Groups, middlewares::ValidationMiddleware,
+    relay_logic::groups_logic::GroupsRelayProcessor,
 };
 use anyhow::Result;
+use nostr_relay_builder::{
+    AuthConfig, Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware, RelayBuilder,
+    RelayConfig, RelayWebSocketHandler, WebSocketConfig,
+};
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
-use websocket_builder::WebSocketBuilder;
-pub use websocket_builder::WebSocketHandler;
-
-#[derive(Clone, Debug)]
-pub struct NostrMessageConverter;
-
-impl<'a> websocket_builder::MessageConverter<ClientMessage<'a>, RelayMessage<'a>>
-    for NostrMessageConverter
-{
-    fn outbound_to_string(&self, message: RelayMessage<'a>) -> Result<String, anyhow::Error> {
-        Ok(message.as_json())
-    }
-
-    fn inbound_from_string(
-        &self,
-        message: String,
-    ) -> Result<Option<ClientMessage<'a>>, anyhow::Error> {
-        match ClientMessage::from_json(&message) {
-            Ok(sdk_msg) => Ok(Some(sdk_msg)),
-            Err(e) => {
-                if message.trim().is_empty() {
-                    Ok(None)
-                } else {
-                    tracing::warn!("Failed to parse client message: {}, error: {}", message, e);
-                    Err(anyhow::anyhow!("Failed to parse client message: {}", e))
-                }
-            }
-        }
-    }
-}
 
 #[allow(clippy::type_complexity)]
-pub fn build_websocket_handler(
+pub async fn build_websocket_handler(
     default_relay_url: RelayUrl,
     auth_url: String,
     groups: Arc<Groups>,
     relay_keys: &config::Keys,
-    database: Arc<RelayDatabase>,
+    database: Arc<nostr_relay_builder::RelayDatabase>,
     settings: &config::Settings,
-) -> Result<
-    WebSocketHandler<
-        NostrConnectionState,
-        ClientMessage<'static>,
-        RelayMessage<'static>,
-        NostrMessageConverter,
-        NostrConnectionFactory,
-    >,
-> {
-    let factory = NostrConnectionFactory::new(
+) -> Result<RelayWebSocketHandler> {
+    let websocket_config = WebSocketConfig {
+        channel_size: settings.websocket.channel_size,
+        max_connections: settings.websocket.max_connections,
+        max_connection_time: settings.websocket.max_connection_time.map(|d| d.as_secs()),
+    };
+
+    let relay_config = RelayConfig::new(
         default_relay_url.to_string(),
         database.clone(),
-        groups.clone(),
-        settings.base_domain_parts,
-    )?;
-    let converter = NostrMessageConverter;
+        relay_keys.clone(),
+    )
+    .with_subdomains(settings.base_domain_parts)
+    .with_auth(AuthConfig {
+        auth_url: auth_url.clone(),
+        base_domain_parts: settings.base_domain_parts,
+        validate_subdomains: true,
+    })
+    .with_websocket_config(websocket_config)
+    .with_query_limit(settings.query_limit);
 
-    let mut builder = WebSocketBuilder::new(factory, converter)
-        .with_middleware(LoggerMiddleware::new())
-        .with_middleware(ErrorHandlingMiddleware {})
-        .with_middleware(Nip42Middleware::new(auth_url, settings.base_domain_parts))
-        .with_middleware(EventVerifierMiddleware::new())
+    let groups_processor = GroupsRelayProcessor::new(groups.clone(), relay_keys.public_key);
+
+    // NIP-42 auth middleware is automatically added when with_auth() is used
+    let handler = RelayBuilder::new(relay_config)
         .with_middleware(ValidationMiddleware::new(relay_keys.public_key))
         .with_middleware(Nip09Middleware::new(database.clone()))
-        .with_middleware(Nip40ExpirationMiddleware::new(database.clone()))
-        .with_middleware(Nip70Middleware {})
-        .with_middleware(Nip29Middleware::new(
-            groups,
-            relay_keys.public_key,
-            database,
-        ));
+        .with_middleware(Nip40ExpirationMiddleware::new())
+        .with_middleware(Nip70Middleware)
+        .build_server(groups_processor)
+        .await?;
 
-    if let Some(max_conn_time) = settings.websocket.max_connection_time {
-        builder = builder.with_max_connection_time(max_conn_time);
-    }
-    if let Some(max_conns) = settings.websocket.max_connections {
-        builder = builder.with_max_connections(max_conns);
-    }
-    builder = builder.with_channel_size(settings.websocket.channel_size);
-
-    Ok(builder.build())
+    Ok(handler)
 }

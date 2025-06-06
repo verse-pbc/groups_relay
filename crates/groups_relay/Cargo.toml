@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+nostr_relay_builder = { path = "../nostr_relay_builder", features = ["axum"] }
 websocket_builder = { path = "../websocket_builder" }
 tokio = { workspace = true }
 anyhow = { workspace = true }
@@ -53,4 +54,8 @@ harness = false
 
 [[bench]]
 name = "event_sign"
+harness = false
+
+[[bench]]
+name = "middleware_comparison"
 harness = false
