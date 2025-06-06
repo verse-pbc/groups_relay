@@ -1,6 +1,6 @@
-use crate::error::Error;
 use crate::StoreCommand;
 use nostr_lmdb::Scope;
+use nostr_relay_builder::Error;
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -378,6 +378,9 @@ impl From<&Event> for Group {
             ..Default::default()
         };
 
+        // Apply tags to metadata to handle public/private, open/closed, etc.
+        group.metadata.apply_tags(event);
+
         // Only set created_at for group creation events
         if event.kind == KIND_GROUP_CREATE_9007 {
             group.created_at = event.created_at;
@@ -511,13 +514,12 @@ impl Group {
         &self,
         delete_group_request_event: Box<Event>,
         relay_pubkey: &PublicKey,
-        authed_pubkey: &Option<PublicKey>,
     ) -> Result<Vec<StoreCommand>, Error> {
         if delete_group_request_event.kind != KIND_GROUP_DELETE_9008 {
             return Err(Error::notice("Invalid event kind for delete group"));
         }
 
-        self.can_delete_group(authed_pubkey, relay_pubkey, &delete_group_request_event)?;
+        self.can_delete_group(relay_pubkey, &delete_group_request_event)?;
 
         // Delete all group kinds possible except this delete request (kind 9008)
         let non_addressable_filter =
@@ -537,7 +539,6 @@ impl Group {
         &mut self,
         delete_request_event: Box<Event>,
         relay_pubkey: &PublicKey,
-        authed_pubkey: &Option<PublicKey>,
     ) -> Result<Vec<StoreCommand>, Error> {
         if delete_request_event.kind != KIND_GROUP_DELETE_EVENT_9005 {
             return Err(Error::notice("Invalid event kind for delete event"));
@@ -549,7 +550,10 @@ impl Group {
             return Err(Error::notice("No event IDs found in delete request"));
         }
 
-        self.can_delete_event(authed_pubkey, relay_pubkey, &delete_request_event, "event")?;
+        // For deletion events, we use the event's pubkey since it's signed
+        // No need for NIP-42 authentication - the signature proves identity
+        let deletion_pubkey = Some(delete_request_event.pubkey);
+        self.can_delete_event(&deletion_pubkey, relay_pubkey, &delete_request_event, "event")?;
 
         // We may be deleting invites, remove them from memory too.
         let codes_to_remove: Vec<_> = self
@@ -633,7 +637,7 @@ impl Group {
                     && existing.roles.contains(&GroupRole::Admin)
                     && !member.roles.contains(&GroupRole::Admin)
                 {
-                    return Err(Error::notice("Cannot unset last admin role"));
+                    return Err(Error::notice("Notice: Cannot unset last admin role"));
                 }
             }
 
@@ -774,7 +778,7 @@ impl Group {
                 && current_admins.contains(&member.pubkey)
                 && !member.roles.contains(&GroupRole::Admin)
             {
-                return Err(Error::notice("Cannot unset last admin role"));
+                return Err(Error::notice("Notice: Cannot unset last admin role"));
             }
         }
 
@@ -833,7 +837,7 @@ impl Group {
         if self.members.contains_key(&event.pubkey) {
             // println!("[join_request] User {} is already a member", event.pubkey);
             info!("User {} is already a member", event.pubkey);
-            return Err(Error::duplicate("User is already a member"));
+            return Err(Error::notice("Notice: User is already a member"));
         }
 
         // println!(
@@ -1553,11 +1557,13 @@ impl Group {
 
     pub fn can_delete_group(
         &self,
-        authed_pubkey: &Option<PublicKey>,
         relay_pubkey: &PublicKey,
         delete_group_event: &Event,
     ) -> Result<(), Error> {
-        self.can_delete_event(authed_pubkey, relay_pubkey, delete_group_event, "group")
+        // For group deletion events, we use the event's pubkey since it's signed
+        // No need for NIP-42 authentication - the signature proves identity
+        let deletion_pubkey = Some(delete_group_event.pubkey);
+        self.can_delete_event(&deletion_pubkey, relay_pubkey, delete_group_event, "group")
     }
 
     pub fn can_delete_event(
@@ -1568,7 +1574,9 @@ impl Group {
         target: &str,
     ) -> Result<(), Error> {
         let Some(authed_pubkey) = authed_pubkey else {
-            return Err(Error::auth_required("User is not authenticated"));
+            return Err(Error::auth_required(
+                "Auth required: User is not authenticated",
+            ));
         };
 
         // Relay pubkey can delete all events
@@ -1615,7 +1623,9 @@ impl Group {
                 "User is not authenticated, cannot see event {}, kind {}",
                 event.id, event.kind
             );
-            return Err(Error::auth_required("User is not authenticated"));
+            return Err(Error::auth_required(
+                "Auth required: User is not authenticated",
+            ));
         };
 
         // Relay pubkey can see all events
@@ -2017,7 +2027,7 @@ mod tests {
                 .join_request(Box::new(join_event), &member_keys.public_key())
                 .unwrap_err()
                 .to_string(),
-            "duplicate: User is already a member"
+            "Notice: Notice: User is already a member"
         );
 
         // Verify member is still there with same role
@@ -2125,7 +2135,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_event_request_unauthenticated() {
+    async fn test_delete_event_request_without_auth_admin_can_delete() {
         let (admin_keys, member_keys, _) = create_test_keys().await;
         let (mut group, group_id) = create_test_group(&admin_keys).await;
         let relay_pubkey = admin_keys.public_key();
@@ -2138,13 +2148,30 @@ mod tests {
         .await;
         let delete_event = create_test_delete_event(&admin_keys, &group_id, &event).await;
 
-        let result = group.delete_event_request(Box::new(delete_event), &relay_pubkey, &None);
+        // Admin should be able to delete without NIP-42 auth - signature is sufficient
+        let result = group.delete_event_request(Box::new(delete_event.clone()), &relay_pubkey);
 
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Auth required: User is not authenticated"
-        );
+        assert!(result.is_ok());
+        let commands = result.unwrap();
+        assert_eq!(commands.len(), 2); // Delete command + save delete request event
+        
+        // Check the delete command
+        match &commands[0] {
+            StoreCommand::DeleteEvents(filter, _) => {
+                // Check that the filter would match the deleted event
+                assert!(filter.ids.as_ref().unwrap().contains(&event.id));
+            }
+            _ => panic!("Expected DeleteEvents command"),
+        }
+        
+        // Check the save delete request event command
+        match &commands[1] {
+            StoreCommand::SaveSignedEvent(saved_event, _) => {
+                assert_eq!(saved_event.id, delete_event.id);
+                assert_eq!(saved_event.kind, KIND_GROUP_DELETE_EVENT_9005);
+            }
+            _ => panic!("Expected SaveSignedEvent command"),
+        }
     }
 
     #[tokio::test]
@@ -2175,12 +2202,11 @@ mod tests {
         let result = group.delete_event_request(
             Box::new(delete_request),
             &relay_pubkey,
-            &Some(admin_keys.public_key()),
         );
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Invalid event kind for delete event"
+            "Notice: Invalid event kind for delete event"
         );
     }
 
@@ -2201,7 +2227,6 @@ mod tests {
         let result = group.delete_event_request(
             Box::new(delete_event),
             &relay_pubkey,
-            &Some(non_member_keys.public_key()),
         );
 
         assert!(result.is_err());
@@ -2272,7 +2297,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Cannot unset last admin role"
+            "Notice: Notice: Cannot unset last admin role"
         );
 
         // Verify the admin still has admin role
@@ -2328,7 +2353,6 @@ mod tests {
         let result = group.delete_event_request(
             Box::new(delete_event),
             &relay_pubkey,
-            &Some(admin_keys.public_key()),
         );
         assert!(result.is_ok());
         assert!(
@@ -2378,7 +2402,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Cannot unset last admin role"
+            "Notice: Notice: Cannot unset last admin role"
         );
 
         // Verify admin still has admin role
@@ -2424,7 +2448,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Cannot unset last admin role"
+            "Notice: Notice: Cannot unset last admin role"
         );
 
         // Verify admin still has admin role
@@ -2860,7 +2884,7 @@ mod tests {
         assert!(last_admin_result.is_err());
         assert_eq!(
             last_admin_result.unwrap_err().to_string(),
-            "Cannot remove last admin"
+            "Notice: Cannot remove last admin"
         );
     }
 

@@ -1,8 +1,6 @@
 pub mod group;
 
-use crate::error::Error;
 use crate::metrics;
-use crate::nostr_database::RelayDatabase;
 use crate::StoreCommand;
 use anyhow::Result;
 use dashmap::{
@@ -18,6 +16,7 @@ pub use group::{
     KIND_GROUP_USER_LEAVE_REQUEST_9022, KIND_SIMPLE_LIST_10009, NON_GROUP_ALLOWED_KINDS,
 };
 use nostr_lmdb::Scope;
+use nostr_relay_builder::{Error, RelayDatabase};
 use nostr_sdk::prelude::*;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
@@ -628,14 +627,13 @@ impl Groups {
     pub fn handle_delete_event(
         &self,
         event: Box<Event>,
-        authed_pubkey: &Option<PublicKey>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
             .ok_or_else(|| Error::notice("Group not found for this group content"))?;
 
-        let commands = group.delete_event_request(event, &self.relay_pubkey, authed_pubkey)?;
+        let commands = group.delete_event_request(event, &self.relay_pubkey)?;
         Ok(Self::update_scope_in_commands(commands, scope))
     }
 
@@ -644,7 +642,6 @@ impl Groups {
     pub fn handle_delete_group(
         &self,
         event: Box<Event>,
-        authed_pubkey: &Option<PublicKey>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
         let group = self
@@ -653,7 +650,7 @@ impl Groups {
 
         // Extract the group ID
         let group_id = group.key().1.clone();
-        let commands = group.delete_group_request(event, &self.relay_pubkey, authed_pubkey)?;
+        let commands = group.delete_group_request(event, &self.relay_pubkey)?;
         drop(group);
 
         // Remove using the composite key: (scope, group_id)
@@ -920,7 +917,7 @@ impl DerefMut for Groups {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nostr_database::RelayDatabase;
+    use nostr_relay_builder::RelayDatabase;
     use std::time::Instant;
     use tempfile::TempDir;
 
@@ -1630,7 +1627,10 @@ mod tests {
         // The last admin should not be able to leave
         let result = groups.handle_leave_request(leave_event, &scope);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "Cannot remove last admin");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Notice: Cannot remove last admin"
+        );
 
         // Verify admin is still in the group
         let group = groups.get_group(&scope, &group_id).unwrap();
