@@ -8,30 +8,53 @@ Implements [NIP-29: Relay-based Groups](https://github.com/nostr-protocol/nips/b
 
 ## Project Structure
 
-This is a Rust workspace with these main crates:
+This is a Rust workspace with three main crates:
 
+- **websocket_builder**: A low-level middleware-based WebSocket framework for building protocol servers.
+- **nostr_relay_builder**: A framework for building custom Nostr relays with pluggable business logic.
 - **groups_relay**: The main relay server implementing NIP-29 group chat functionality.
-- **websocket_builder**: A middleware-based WebSocket framework.
+
+## Architecture
+
+The project follows a layered architecture:
+
+```
+groups_relay (NIP-29 implementation)
+    ↓ uses
+nostr_relay_builder (Nostr protocol handling)
+    ↓ uses
+websocket_builder (WebSocket transport)
+```
 
 ## Key Features
 
 ### groups_relay
 
-- **Groups**:
+- **NIP-29 Groups**:
   - Support for managed and unmanaged groups
   - Group metadata management
-  - Event metrics and monitoring
+  - Member roles and permissions
+  - Join requests and invitations
+  
+- **Built on nostr_relay_builder**:
+  - Inherits all protocol support (NIPs 09, 40, 42, 70)
+  - Custom `GroupsRelayProcessor` for group-specific rules
 
-- **NIP-42 Auth**: Client authentication
-- **NIP-70**: Protected events
 - **Management UI**: Preact-based frontend for group administration
+
+### nostr_relay_builder
+
+- **Pluggable event processing** via `EventProcessor` trait
+- **Protocol middlewares**: NIPs 09, 40, 42, 70
+- **Multi-tenant support** via subdomain isolation
+- **Database abstraction** with LMDB backend
 
 ### websocket_builder
 
-- Middleware pipeline for message processing
-- Type-safe message conversion
-- Connection state management
-- Configurable channel sizing
+- **Middleware pipeline** for bidirectional message processing
+- **Type-safe message conversion**
+- **Connection state management**
+- **Backpressure handling**
 
 ## Development
 

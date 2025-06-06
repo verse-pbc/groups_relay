@@ -1,13 +1,10 @@
-use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
-use tokio_util::sync::CancellationToken;
 
 use crate::groups::group::Group;
-use crate::nostr_database::RelayDatabase;
-use crate::nostr_session_state::NostrConnectionState;
+use nostr_relay_builder::{NostrConnectionState, RelayDatabase};
 
 pub async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let tmp_dir = TempDir::new().unwrap();
@@ -38,17 +35,10 @@ pub async fn create_test_event(keys: &Keys, kind: u16, tags: Vec<Tag>) -> nostr_
 }
 
 pub fn create_test_state(pubkey: Option<nostr_sdk::PublicKey>) -> NostrConnectionState {
-    let token = CancellationToken::new();
-    NostrConnectionState {
-        challenge: None,
-        authed_pubkey: pubkey,
-        relay_url: RelayUrl::parse("ws://test.relay").expect("Invalid test relay URL"),
-        subscription_manager: None,
-        connection_token: token.clone(),
-        event_start_time: None,
-        event_kind: None,
-        subdomain: Scope::Default,
-    }
+    let mut state = NostrConnectionState::new("ws://test.relay".to_string())
+        .expect("Failed to create test state");
+    state.authed_pubkey = pubkey;
+    state
 }
 
 pub async fn create_test_group(admin_keys: &Keys) -> (Group, String) {

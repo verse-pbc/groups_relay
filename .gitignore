@@ -2,6 +2,8 @@
 /**/.*/ # ignore all dotted folders
 !/.gitignore  # except `gitignore` :)
 !crates/groups_relay/db/.gitkeep
+!/.claude/  # except Claude configuration
+!/.claude/**
 
 /target
 /crates/*/target
@@ -38,6 +40,10 @@ tasks.json
 tasks/ 
 flamegraph.svg
 db
+# Example database directories
+data/
+*.db/
+crates/nostr_relay_builder/examples/*.db/
 .claude/settings.local.json
 CLAUDE.local.md
 
@@ -49,3 +55,17 @@ CLAUDE.local.md
 
 # Local NDK for development
 ndk/
+
+# Coverage reports
+coverage/
+cobertura.xml
+lcov.info
+*.lcov
+tarpaulin-report.html
+
+# Test artifacts
+test_*.log
+*_output.log
+test_analysis_prompt.md
+server.log
+flow29_output.log

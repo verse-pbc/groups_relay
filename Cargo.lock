@@ -1217,6 +1217,7 @@ dependencies = [
  "nostr-database",
  "nostr-lmdb",
  "nostr-sdk",
+ "nostr_relay_builder",
  "pretty_assertions",
  "rand 0.8.5",
  "serde",
@@ -1885,29 +1886,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "load_tester"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "clap",
- "futures",
- "groups_relay",
- "metrics",
- "metrics-exporter-prometheus",
- "nostr-sdk",
- "rand 0.8.5",
- "scopeguard",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite 0.26.2",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "lock_api"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2159,6 +2137,37 @@ dependencies = [
  "nostr-relay-pool",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "nostr_relay_builder"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "axum-server",
+ "criterion",
+ "futures-util",
+ "nostr",
+ "nostr-database",
+ "nostr-lmdb",
+ "nostr-sdk",
+ "parking_lot",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "snafu",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tower 0.4.13",
+ "tower-http",
+ "tracing",
+ "tracing-futures",
+ "tracing-subscriber",
+ "uuid",
+ "websocket_builder",
 ]
 
 [[package]]

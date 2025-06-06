@@ -115,7 +115,7 @@ jobs:
 
       - name: Generate code coverage
         run: |
-          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
+          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --exclude-files "*/bin/*" --exclude-files "*/examples/*" --exclude-files "*/tests/*" --exclude-files "*/benches/*"
 
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v3
