@@ -3,7 +3,7 @@
 use crate::config::RelayConfig;
 use crate::database::RelayDatabase;
 use crate::error::Error;
-use crate::logic::EventProcessor;
+use crate::event_processor::EventProcessor;
 use crate::message_converter::NostrMessageConverter;
 use crate::middleware::RelayMiddleware;
 use crate::state::{GenericNostrConnectionFactory, NostrConnectionState};

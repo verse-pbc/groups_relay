@@ -10,11 +10,11 @@
 pub mod config;
 pub mod database;
 pub mod error;
-pub mod generic_builder;
+pub mod relay_builder;
 pub mod global_config;
 #[cfg(feature = "axum")]
 pub mod handlers;
-pub mod logic;
+pub mod event_processor;
 pub mod message_converter;
 pub mod middleware;
 pub mod middlewares;
@@ -28,10 +28,10 @@ pub mod utils;
 pub use config::{RelayConfig, ScopeConfig, WebSocketConfig};
 pub use database::{NostrDatabase, RelayDatabase};
 pub use error::{Error, Result};
-pub use generic_builder::{DefaultRelayWebSocketHandler, RelayBuilder, RelayWebSocketHandler};
+pub use relay_builder::{DefaultRelayWebSocketHandler, RelayBuilder, RelayWebSocketHandler};
 #[cfg(feature = "axum")]
 pub use handlers::{RelayHandlers, RelayInfo};
-pub use logic::{EventContext, EventProcessor, PublicRelayProcessor};
+pub use event_processor::{EventContext, EventProcessor, PublicRelayProcessor};
 pub use message_converter::NostrMessageConverter;
 pub use middleware::RelayMiddleware;
 pub use state::{

@@ -6,7 +6,7 @@
 
 use crate::database::RelayDatabase;
 use crate::error::Error;
-use crate::logic::{EventContext, EventProcessor};
+use crate::event_processor::{EventContext, EventProcessor};
 use crate::state::NostrConnectionState;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
