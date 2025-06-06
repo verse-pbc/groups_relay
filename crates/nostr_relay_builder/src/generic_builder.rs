@@ -26,7 +26,7 @@ use websocket_builder::{Middleware, WebSocketBuilder};
 ///
 /// # Example
 /// ```rust,no_run
-/// use nostr_relay_builder::{RelayBuilder, EventProcessor, RelayConfig};
+/// use nostr_relay_builder::{RelayBuilder, EventProcessor, EventContext, RelayConfig};
 /// use nostr_sdk::prelude::*;
 ///
 /// #[derive(Debug, Clone, Default)]
@@ -41,8 +41,8 @@ use websocket_builder::{Middleware, WebSocketBuilder};
 /// #     async fn handle_event(
 /// #         &self,
 /// #         event: nostr_sdk::Event,
-/// #         connection_id: &str,
-/// #         state: &mut nostr_relay_builder::NostrConnectionState<MyState>,
+/// #         custom_state: &mut MyState,
+/// #         context: EventContext<'_>,
 /// #     ) -> Result<Vec<nostr_relay_builder::StoreCommand>, nostr_relay_builder::Error> {
 /// #         Ok(vec![])
 /// #     }
