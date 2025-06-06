@@ -10,11 +10,13 @@ relay:
   db_path: "/app/db"
   # Number of parts in the base domain (e.g., example.com = 2, example.co.uk = 3)
   base_domain_parts: 2
+  # Default/maximum limit for database queries (REQ filters)
+  query_limit: 500
 
   # WebSocket settings
   websocket:
-    # Size of the channel for outbound messages (default: 1000)
-    channel_size: 1000
+    # Size of the channel for outbound messages per connection
+    channel_size: 100
     # Maximum time a connection can stay open (optional)
     # Uses humantime format (e.g., "1h", "30m", "24h")
     max_connection_time: "5m"

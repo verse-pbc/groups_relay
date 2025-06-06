@@ -20,6 +20,8 @@ pub struct RelaySettings {
     pub websocket: WebSocketSettings,
     #[serde(default = "default_base_domain_parts")]
     pub base_domain_parts: usize,
+    #[serde(default = "default_query_limit")]
+    pub query_limit: usize,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -46,6 +48,10 @@ fn default_max_connections() -> Option<usize> {
 
 fn default_base_domain_parts() -> usize {
     2 // Default base domain parts (e.g., example.com -> 2 parts)
+}
+
+fn default_query_limit() -> usize {
+    500 // Default/maximum limit for queries
 }
 
 impl RelaySettings {
@@ -133,6 +139,7 @@ pub struct Settings {
     pub websocket: WebSocketSettings,
     pub db_path: String,
     pub base_domain_parts: usize,
+    pub query_limit: usize,
 }
 
 pub use nostr_sdk::Keys;

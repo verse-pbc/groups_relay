@@ -1,6 +1,6 @@
 use crate::groups::NON_GROUP_ALLOWED_KINDS;
-use crate::nostr_session_state::NostrConnectionState;
 use async_trait::async_trait;
+use nostr_relay_builder::NostrConnectionState;
 use nostr_sdk::prelude::*;
 use tracing::{debug, warn};
 use websocket_builder::{InboundContext, Middleware, SendMessage};
@@ -130,7 +130,7 @@ impl Middleware for ValidationMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nostr_session_state::NostrConnectionState;
+    use nostr_relay_builder::NostrConnectionState;
     use std::borrow::Cow;
     use std::sync::Arc;
     use websocket_builder::InboundContext;
