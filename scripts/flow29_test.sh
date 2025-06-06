@@ -251,7 +251,7 @@ run_test() {
     echo "In closed group, this should be pending or rejected"
 
     run_step_or_fail 16 "Admin manually adds user as member (9000)" \
-        "nak event -k 9000 -t h='${GROUP_ID}' -t 'p=${THIRD_USER_PUBLIC_KEY};role=member' --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
+        "nak event -k 9000 -t h='${GROUP_ID}' -t p='${THIRD_USER_PUBLIC_KEY};member' --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
     echo "Relay should automatically update 39002"
 
     echo -e "\n=== Test Role-Based Permissions ==="
@@ -275,11 +275,11 @@ run_test() {
     fi
 
     run_step_or_fail 18 "Admin promotes user to admin role" \
-        "nak event -k 9000 -t h='${GROUP_ID}' -t 'p=${NEW_USER_PUBLIC_KEY};role=admin' --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
+        "nak event -k 9000 -t h='${GROUP_ID}' -t p='${NEW_USER_PUBLIC_KEY};admin' --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
     
-    # Wait for role change to be processed
-    echo "Waiting 1.5 seconds for role change to be processed..."
-    sleep 1.5
+    # Wait for role change to be processed and buffer to flush
+    echo "Waiting 2 seconds for role change to be processed and buffer to flush..."
+    sleep 2
 
     echo -e "\n=== Test Moderation Actions ==="
     MESSAGE_ID=$(nak req -k 9 -l 1 -t h="${GROUP_ID}" -fpa --auth --sec="${RELAY_PRIVATE_KEY}" "${RELAY_URL}" 2>/dev/null | jq -r '.id' || echo "")
