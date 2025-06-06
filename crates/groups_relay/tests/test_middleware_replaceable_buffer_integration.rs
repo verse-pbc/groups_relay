@@ -1,7 +1,7 @@
-use groups_relay::nostr_database::RelayDatabase;
-use groups_relay::subscription_manager::{StoreCommand, SubscriptionManager};
 use groups_relay::Groups;
+use groups_relay::RelayDatabase;
 use nostr_lmdb::Scope;
+use nostr_relay_builder::{StoreCommand, SubscriptionService};
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -24,13 +24,13 @@ async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
 }
 
 #[tokio::test]
-async fn test_rapid_metadata_edits_through_subscription_manager() {
+async fn test_rapid_metadata_edits_through_subscription_service() {
     let (_tmp_dir, database, admin_keys) = setup_test().await;
 
     // Create a subscription manager
     let (tx, _rx) = mpsc::channel(10);
-    let subscription_manager =
-        SubscriptionManager::new(database.clone(), MessageSender::new(tx, 0))
+    let subscription_service =
+        SubscriptionService::new(database.clone(), MessageSender::new(tx, 0))
             .await
             .unwrap();
 
@@ -64,7 +64,7 @@ async fn test_rapid_metadata_edits_through_subscription_manager() {
 
     // Send create commands through subscription manager to establish the group
     for command in create_commands {
-        subscription_manager
+        subscription_service
             .save_and_broadcast(command)
             .await
             .unwrap();
@@ -106,13 +106,13 @@ async fn test_rapid_metadata_edits_through_subscription_manager() {
     // Send both sets of commands through subscription manager rapidly
     // This should trigger the buffer for the 39000 events
     for command in edit1_commands {
-        subscription_manager
+        subscription_service
             .save_and_broadcast(command)
             .await
             .unwrap();
     }
     for command in edit2_commands {
-        subscription_manager
+        subscription_service
             .save_and_broadcast(command)
             .await
             .unwrap();

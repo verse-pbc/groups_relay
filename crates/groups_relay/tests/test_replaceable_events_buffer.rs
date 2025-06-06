@@ -1,6 +1,6 @@
-use groups_relay::nostr_database::RelayDatabase;
-use groups_relay::subscription_manager::{StoreCommand, SubscriptionManager};
+use groups_relay::RelayDatabase;
 use nostr_lmdb::Scope;
+use nostr_relay_builder::{StoreCommand, SubscriptionService};
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 use websocket_builder::MessageSender;
 
-async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys, SubscriptionManager) {
+async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys, SubscriptionService) {
     let tmp_dir = TempDir::new().unwrap();
     let admin_keys = Keys::generate();
     let database = Arc::new(
@@ -22,17 +22,17 @@ async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys, SubscriptionManager
 
     // Create a channel for outgoing messages (we won't use it in this test)
     let (tx, _rx) = mpsc::channel(10);
-    let subscription_manager =
-        SubscriptionManager::new(database.clone(), MessageSender::new(tx, 0))
+    let subscription_service =
+        SubscriptionService::new(database.clone(), MessageSender::new(tx, 0))
             .await
             .unwrap();
 
-    (tmp_dir, database, admin_keys, subscription_manager)
+    (tmp_dir, database, admin_keys, subscription_service)
 }
 
 #[tokio::test]
 async fn test_replaceable_events_buffer_deduplicates_same_second_events() {
-    let (_tmp_dir, database, admin_keys, subscription_manager) = setup_test().await;
+    let (_tmp_dir, database, admin_keys, subscription_service) = setup_test().await;
 
     let group_id = "test_group_buffer";
     let fixed_timestamp = Timestamp::now();
@@ -65,12 +65,12 @@ async fn test_replaceable_events_buffer_deduplicates_same_second_events() {
     );
 
     // Send both events to the subscription manager (they will be buffered)
-    subscription_manager
+    subscription_service
         .save_and_broadcast(StoreCommand::SaveUnsignedEvent(event1, Scope::Default))
         .await
         .unwrap();
 
-    subscription_manager
+    subscription_service
         .save_and_broadcast(StoreCommand::SaveUnsignedEvent(event2, Scope::Default))
         .await
         .unwrap();
@@ -154,7 +154,7 @@ async fn test_replaceable_events_buffer_deduplicates_same_second_events() {
 
 #[tokio::test]
 async fn test_non_replaceable_events_bypass_buffer() {
-    let (_tmp_dir, database, admin_keys, subscription_manager) = setup_test().await;
+    let (_tmp_dir, database, admin_keys, subscription_service) = setup_test().await;
 
     // Create a non-replaceable event (kind 1 - text note)
     let text_note = UnsignedEvent::new(
@@ -166,7 +166,7 @@ async fn test_non_replaceable_events_bypass_buffer() {
     );
 
     // Send the event
-    subscription_manager
+    subscription_service
         .save_and_broadcast(StoreCommand::SaveUnsignedEvent(text_note, Scope::Default))
         .await
         .unwrap();
@@ -195,7 +195,7 @@ async fn test_non_replaceable_events_bypass_buffer() {
 
 #[tokio::test]
 async fn test_signed_events_bypass_buffer() {
-    let (_tmp_dir, database, admin_keys, subscription_manager) = setup_test().await;
+    let (_tmp_dir, database, admin_keys, subscription_service) = setup_test().await;
 
     // Create a signed replaceable event
     let event = EventBuilder::new(Kind::Custom(39000), "")
@@ -210,7 +210,7 @@ async fn test_signed_events_bypass_buffer() {
     let mut broadcast_receiver = database.subscribe();
 
     // Send the signed event (should bypass buffer even though it's replaceable)
-    subscription_manager
+    subscription_service
         .save_and_broadcast(StoreCommand::SaveSignedEvent(
             Box::new(signed_event.clone()),
             Scope::Default,
@@ -221,9 +221,15 @@ async fn test_signed_events_bypass_buffer() {
     // Wait for the event to be broadcast (indicating it's been saved)
     let timeout = Duration::from_secs(2);
     let broadcast_result = tokio::time::timeout(timeout, broadcast_receiver.recv()).await;
-    assert!(broadcast_result.is_ok(), "Event should be broadcast within timeout");
+    assert!(
+        broadcast_result.is_ok(),
+        "Event should be broadcast within timeout"
+    );
     let received_event = broadcast_result.unwrap().unwrap();
-    assert_eq!(received_event.id, signed_event.id, "Broadcast should contain our event");
+    assert_eq!(
+        received_event.id, signed_event.id,
+        "Broadcast should contain our event"
+    );
 
     // Query for the event
     let events = database
@@ -244,7 +250,7 @@ async fn test_signed_events_bypass_buffer() {
 
 #[tokio::test]
 async fn test_different_scopes_are_separate_in_buffer() {
-    let (_tmp_dir, database, admin_keys, subscription_manager) = setup_test().await;
+    let (_tmp_dir, database, admin_keys, subscription_service) = setup_test().await;
 
     let group_id = "test_group_scopes";
     let timestamp = Timestamp::now();
@@ -273,7 +279,7 @@ async fn test_different_scopes_are_separate_in_buffer() {
     );
 
     // Send to different scopes
-    subscription_manager
+    subscription_service
         .save_and_broadcast(StoreCommand::SaveUnsignedEvent(
             event_scope1,
             Scope::Default,
@@ -282,7 +288,7 @@ async fn test_different_scopes_are_separate_in_buffer() {
         .unwrap();
 
     let named_scope = Scope::named("testscope").unwrap();
-    subscription_manager
+    subscription_service
         .save_and_broadcast(StoreCommand::SaveUnsignedEvent(
             event_scope2,
             named_scope.clone(),

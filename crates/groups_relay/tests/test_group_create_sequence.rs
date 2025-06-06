@@ -1,5 +1,6 @@
-use groups_relay::nostr_database::RelayDatabase;
+use groups_relay::RelayDatabase;
 use nostr_lmdb::Scope;
+use nostr_relay_builder::{StoreCommand, SubscriptionService};
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
@@ -29,7 +30,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
             .await
             .unwrap();
     let (tx, _rx) = tokio::sync::mpsc::channel(10);
-    let subscription_manager = groups_relay::subscription_manager::SubscriptionManager::new(
+    let subscription_service = SubscriptionService::new(
         database.clone(),
         websocket_builder::MessageSender::new(tx, 0),
     )
@@ -60,9 +61,9 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
             "Command {}: {:?}",
             i,
             match command {
-                groups_relay::subscription_manager::StoreCommand::SaveSignedEvent(event, _) =>
+                StoreCommand::SaveSignedEvent(event, _) =>
                     format!("SaveSignedEvent(kind={}, id={})", event.kind, event.id),
-                groups_relay::subscription_manager::StoreCommand::SaveUnsignedEvent(event, _) =>
+                StoreCommand::SaveUnsignedEvent(event, _) =>
                     format!("SaveUnsignedEvent(kind={}, id={:?})", event.kind, event.id),
                 _ => "Other".to_string(),
             }
@@ -71,7 +72,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
 
     // Execute the commands through the subscription manager (using the buffer)
     for command in create_commands {
-        subscription_manager
+        subscription_service
             .save_and_broadcast(command)
             .await
             .unwrap();
@@ -106,9 +107,9 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
             "Metadata Command {}: {:?}",
             i,
             match command {
-                groups_relay::subscription_manager::StoreCommand::SaveSignedEvent(event, _) =>
+                StoreCommand::SaveSignedEvent(event, _) =>
                     format!("SaveSignedEvent(kind={}, id={})", event.kind, event.id),
-                groups_relay::subscription_manager::StoreCommand::SaveUnsignedEvent(event, _) =>
+                StoreCommand::SaveUnsignedEvent(event, _) =>
                     format!("SaveUnsignedEvent(kind={}, id={:?})", event.kind, event.id),
                 _ => "Other".to_string(),
             }
@@ -118,7 +119,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
     // Execute the metadata commands through the subscription manager (using the buffer)
     println!("Executing metadata commands...");
     for command in metadata_commands {
-        subscription_manager
+        subscription_service
             .save_and_broadcast(command)
             .await
             .unwrap();
