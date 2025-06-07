@@ -16,6 +16,7 @@ COPY .cargo/config.toml .cargo/config.toml
 COPY Cargo.toml Cargo.lock ./
 COPY crates/groups_relay ./crates/groups_relay
 COPY crates/websocket_builder ./crates/websocket_builder
+COPY crates/nostr_relay_builder ./crates/nostr_relay_builder
 COPY crates/load_tester ./crates/load_tester
 
 # Build the relay binary in debug mode
