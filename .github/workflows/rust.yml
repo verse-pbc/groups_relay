@@ -106,12 +106,18 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-    container:
-      image: xd009642/tarpaulin:0.31.5
-      options: --security-opt seccomp=unconfined
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.86.0
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install tarpaulin
+        uses: taiki-e/install-action@cargo-tarpaulin
 
       - name: Generate code coverage
         run: |
