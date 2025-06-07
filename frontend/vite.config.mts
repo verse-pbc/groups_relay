@@ -19,19 +19,20 @@ export default defineConfig({
         warn(warning);
       },
       output: {
-        manualChunks: {
-          // Split NDK and its dependencies into a separate chunk
-          'ndk': [
-            '@nostr-dev-kit/ndk',
-            'nostr-tools',
-            'tseep'
-          ],
-          // Split other large dependencies
-          'vendor': [
-            'preact',
-            'localforage',
-            '@cashu/cashu-ts'
-          ]
+        manualChunks(id) {
+          // NDK and related packages
+          if (id.includes('@nostr-dev-kit/ndk') || 
+              id.includes('nostr-tools') || 
+              id.includes('tseep')) {
+            return 'ndk';
+          }
+          // Vendor packages
+          if (id.includes('node_modules') && 
+              (id.includes('preact') || 
+               id.includes('localforage') || 
+               id.includes('@cashu/cashu-ts'))) {
+            return 'vendor';
+          }
         }
       }
     }
