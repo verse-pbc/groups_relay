@@ -5,7 +5,7 @@
 /// produces the same results as the original Nip29Middleware.
 #[cfg(test)]
 mod tests {
-    use crate::relay_logic::groups_logic::GroupsRelayProcessor;
+    use crate::groups_event_processor::GroupsRelayProcessor;
     use crate::test_utils::{create_test_event, create_test_keys, setup_test};
     use crate::{Groups, StoreCommand};
     use nostr_lmdb::Scope;
@@ -95,7 +95,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&event, &mut (), non_member_context)
+            .can_see_event(&event, &(), non_member_context)
             .unwrap();
         assert!(can_see);
 
@@ -107,7 +107,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&event, &mut (), anon_context)
+            .can_see_event(&event, &(), anon_context)
             .unwrap();
         assert!(can_see);
     }
@@ -169,7 +169,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&event, &mut (), context)
+            .can_see_event(&event, &(), context)
             .unwrap();
         assert!(can_see);
     }
@@ -281,7 +281,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&content_event, &mut (), non_member_context)
+            .can_see_event(&content_event, &(), non_member_context)
             .unwrap();
         assert!(!can_see);
 
@@ -295,7 +295,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&content_event, &mut (), member_context)
+            .can_see_event(&content_event, &(), member_context)
             .unwrap();
         assert!(can_see);
     }
@@ -453,7 +453,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&content_event, &mut (), non_member_context)
+            .can_see_event(&content_event, &(), non_member_context)
             .unwrap();
         assert!(can_see);
 
@@ -465,7 +465,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&content_event, &mut (), anon_context)
+            .can_see_event(&content_event, &(), anon_context)
             .unwrap();
         assert!(can_see);
     }
@@ -741,7 +741,7 @@ mod tests {
         // Member should be able to see the event
         let can_see = middleware
             .processor()
-            .can_see_event(&group_event, &mut (), member_context)
+            .can_see_event(&group_event, &(), member_context)
             .unwrap();
         assert!(can_see, "Member should be able to see group events");
     }
@@ -817,7 +817,7 @@ mod tests {
         // Non-member should NOT be able to see private group events
         let can_see = middleware
             .processor()
-            .can_see_event(&group_event, &mut (), non_member_context)
+            .can_see_event(&group_event, &(), non_member_context)
             .unwrap();
         assert!(!can_see, "Non-member should not see private group events");
     }
@@ -868,7 +868,7 @@ mod tests {
         // Relay (admin in this case) should be able to see all events
         let can_see = middleware
             .processor()
-            .can_see_event(&group_event, &mut (), admin_context)
+            .can_see_event(&group_event, &(), admin_context)
             .unwrap();
         assert!(can_see, "Relay should be able to see all events");
     }

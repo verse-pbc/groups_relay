@@ -1,7 +1,7 @@
 //! Integration test to verify groups_relay works with nostr_relay_builder
 
 use groups_relay::{
-    config::Keys, groups::Groups, relay_logic::groups_logic::GroupsRelayProcessor, RelayDatabase,
+    config::Keys, groups::Groups, groups_event_processor::GroupsRelayProcessor, RelayDatabase,
 };
 use nostr_relay_builder::{AuthConfig, RelayBuilder, RelayConfig};
 use std::sync::Arc;

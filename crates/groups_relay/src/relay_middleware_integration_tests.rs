@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod integration_tests {
     use crate::groups::Groups;
-    use crate::relay_logic::groups_logic::GroupsRelayProcessor;
+    use crate::groups_event_processor::GroupsRelayProcessor;
     use crate::test_utils::*;
     use nostr_lmdb::Scope;
     use nostr_relay_builder::{
@@ -230,7 +230,7 @@ mod integration_tests {
         // Test visibility for admin
         let can_see = relay_middleware
             .processor()
-            .can_see_event(&content_event, &mut (), admin_context)
+            .can_see_event(&content_event, &(), admin_context)
             .unwrap();
         assert!(can_see);
 
@@ -243,7 +243,7 @@ mod integration_tests {
         };
         let can_see = relay_middleware
             .processor()
-            .can_see_event(&content_event, &mut (), member_context)
+            .can_see_event(&content_event, &(), member_context)
             .unwrap();
         assert!(can_see);
 
@@ -256,7 +256,7 @@ mod integration_tests {
         };
         let can_see = relay_middleware
             .processor()
-            .can_see_event(&content_event, &mut (), non_member_context)
+            .can_see_event(&content_event, &(), non_member_context)
             .unwrap();
         assert!(!can_see);
     }

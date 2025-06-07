@@ -1,5 +1,3 @@
-pub mod group;
-
 use crate::metrics;
 use crate::StoreCommand;
 use anyhow::Result;
@@ -7,7 +5,7 @@ use dashmap::{
     mapref::one::{Ref, RefMut},
     DashMap,
 };
-pub use group::{
+pub use crate::group::{
     Group, GroupError, GroupMember, GroupMetadata, GroupRole, Invite, ADDRESSABLE_EVENT_KINDS,
     KIND_GROUP_ADD_USER_9000, KIND_GROUP_ADMINS_39001, KIND_GROUP_CREATE_9007,
     KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_DELETE_9008, KIND_GROUP_DELETE_EVENT_9005,

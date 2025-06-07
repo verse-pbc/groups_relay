@@ -6,7 +6,7 @@ use groups_relay::groups::{
     KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006,
     KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022, NON_GROUP_ALLOWED_KINDS,
 };
-use groups_relay::middlewares::ValidationMiddleware;
+use groups_relay::validation_middleware::ValidationMiddleware;
 use nostr_relay_builder::NostrConnectionState;
 use nostr_sdk::prelude::*;
 use std::borrow::Cow;

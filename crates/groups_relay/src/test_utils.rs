@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
 
-use crate::groups::group::Group;
+use crate::group::Group;
 use nostr_relay_builder::{NostrConnectionState, RelayDatabase};
 
 pub async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {

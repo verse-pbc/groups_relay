@@ -1,13 +1,10 @@
 use crate::{
     app_state::HttpServerState, config, groups::Groups, handler, metrics,
-    middlewares::ValidationMiddleware, relay_logic::groups_logic::GroupsRelayProcessor,
+    validation_middleware::ValidationMiddleware, groups_event_processor::GroupsRelayProcessor,
     RelayDatabase,
 };
 use anyhow::Result;
-use axum::{
-    routing::get,
-    Router,
-};
+use axum::{routing::get, Router};
 use nostr_relay_builder::{
     AuthConfig, Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware, RelayBuilder,
     RelayConfig, RelayInfo, WebSocketConfig,
@@ -98,12 +95,12 @@ pub async fn run_server(
     // Build the relay handlers using the improved API
     let handlers = Arc::new(
         RelayBuilder::new(relay_config)
+            .with_cancellation_token(cancellation_token.clone())
+            .with_connection_counter(connection_counter.clone())
             .with_middleware(ValidationMiddleware::new(relay_keys.public_key))
             .with_middleware(Nip09Middleware::new(database.clone()))
             .with_middleware(Nip40ExpirationMiddleware::new())
             .with_middleware(Nip70Middleware)
-            .with_cancellation_token(cancellation_token.clone())
-            .with_connection_counter(connection_counter.clone())
             .build_handlers(groups_processor, relay_info)
             .await?,
     );
