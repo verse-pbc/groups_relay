@@ -36,7 +36,9 @@ export class GroupContent extends Component<GroupContentProps, GroupContentState
 
   async componentDidUpdate(prevProps: GroupContentProps) {
     if (prevProps.group.id !== this.props.group.id || 
-        prevProps.group.members !== this.props.group.members) {
+        prevProps.group.members !== this.props.group.members ||
+        // Also check when members array changes (for role updates)
+        JSON.stringify(prevProps.group.members) !== JSON.stringify(this.props.group.members)) {
       await this.checkAdminStatus()
     }
   }
@@ -44,8 +46,15 @@ export class GroupContent extends Component<GroupContentProps, GroupContentState
   async checkAdminStatus() {
     const user = await this.props.client.ndkInstance.signer?.user()
     if (user?.pubkey) {
+      // Check if user is a group admin
       const member = this.props.group.members.find(m => m.pubkey === user.pubkey)
-      const isAdmin = member?.roles.includes('Admin') || false
+      const isGroupAdmin = member?.roles.includes('Admin') || false
+      
+      // Check if user is the relay admin
+      const isRelayAdmin = await this.props.client.checkIsRelayAdmin()
+      
+      // User is admin if they're either a group admin or relay admin
+      const isAdmin = isGroupAdmin || isRelayAdmin
       this.setState({ isAdmin })
     }
   }

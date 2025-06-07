@@ -49,19 +49,33 @@ export class GroupInfo extends BaseComponent<GroupInfoProps, GroupInfoState> {
     const user = await this.props.client.ndkInstance.signer?.user();
     if (user?.pubkey) {
       const member = this.props.group.members.find(m => m.pubkey === user.pubkey);
-      const isAdmin = member?.roles.includes('Admin') || false;
+      const isGroupAdmin = member?.roles.includes('Admin') || false;
       const isMember = !!member;
+      
+      // Check if user is the relay admin
+      const isRelayAdmin = await this.props.client.checkIsRelayAdmin();
+      
+      // User is admin if they're either a group admin or relay admin
+      const isAdmin = isGroupAdmin || isRelayAdmin;
       this.setState({ isAdmin, isMember });
     }
   }
 
   async componentDidUpdate(prevProps: GroupInfoProps) {
-    if (prevProps.group.id !== this.props.group.id) {
+    if (prevProps.group.id !== this.props.group.id ||
+        // Also check when members array changes (for role updates)
+        JSON.stringify(prevProps.group.members) !== JSON.stringify(this.props.group.members)) {
       const user = await this.props.client.ndkInstance.signer?.user();
       if (user?.pubkey) {
         const member = this.props.group.members.find(m => m.pubkey === user.pubkey);
-        const isAdmin = member?.roles.includes('Admin') || false;
+        const isGroupAdmin = member?.roles.includes('Admin') || false;
         const isMember = !!member;
+        
+        // Check if user is the relay admin
+        const isRelayAdmin = await this.props.client.checkIsRelayAdmin();
+        
+        // User is admin if they're either a group admin or relay admin
+        const isAdmin = isGroupAdmin || isRelayAdmin;
         this.setState({ isAdmin, isMember });
       }
     }
