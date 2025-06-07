@@ -34,10 +34,10 @@ rand = "0.8"
 uuid = { version = "1.11", features = ["v4"] }
 
 # Optional dependencies for the built-in server
-axum = { version = "0.7", optional = true }
+axum = { workspace = true, optional = true }
 axum-server = { version = "0.6", optional = true }
-tower-http = { version = "0.6", features = ["cors", "fs"], optional = true }
-tower = { version = "0.4", optional = true }
+tower-http = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3.10"
@@ -45,7 +45,7 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 parking_lot = "0.12"
 # For server examples
-axum = "0.7"
+axum = { workspace = true }
 axum-server = "0.6"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 

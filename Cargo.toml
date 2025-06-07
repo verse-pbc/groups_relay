@@ -32,3 +32,6 @@ metrics-exporter-prometheus = "0.16.2"
 rand = "0.8.5"
 tokio-tungstenite = "0.26.1"
 heed = "=0.20.5"
+axum = { version = "0.7.9", features = ["ws", "http1"] }
+tower = { version = "0.4.13", features = ["util"] }
+tower-http = { version = "0.6.2", features = ["trace", "cors", "fs"] }

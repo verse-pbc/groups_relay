@@ -18,19 +18,19 @@ tracing-subscriber = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 rand = { workspace = true }
-thiserror = "1.0"
+thiserror = "2.0.12"
 indicatif = "0.17"
 
 tokio-util = { version = "0.7.1", features = ["rt"] }
 dashmap = "6.1.0"
-config = "0.13"
-axum = "0.7"
-axum-server = "0.6"
-strum = { version = "0.26.3", features = ["derive", "strum_macros"] }
+config = "0.15.11"
+axum = { workspace = true }
+axum-server = "0.6.0"
+strum = { version = "0.27.1", features = ["derive", "strum_macros"] }
 snafu = { version = "0.8.5", features = ["backtrace"] }
 console-subscriber = { version = "0.4.1", optional = true }
-tower-http = { version = "0.6.2", features = ["cors", "fs"] }
-tower = "0.5.2"
+tower-http = { workspace = true }
+tower = { workspace = true }
 nostr = { workspace = true, features = ["std"] }
 nostr-database = { git = "https://github.com/verse-pbc/nostr" }
 nostr-lmdb = { workspace = true }
@@ -42,7 +42,7 @@ tracing-futures = "0.2.5"
 console = ["dep:console-subscriber"]
 
 [dev-dependencies]
-criterion = { version = "0.5.1", features = ["async_tokio"] }
+criterion = { version = "0.6.0", features = ["async_tokio"] }
 futures-util = "0.3.31"
 pretty_assertions = "1.4.1"
 tempfile = "3.14.0"
