@@ -47,11 +47,20 @@ crates/nostr_relay_builder/examples/*.db/
 .claude/settings.local.json
 CLAUDE.local.md
 
-# AI coding assistant files (unused)
-.roo
+# AI coding assistant files
+.roo/
 .roomodes
 .windsurfrules
 .taskmasterconfig
+
+# Documentation files (local)
+prompt_plan.md
+spec.md
+
+# Database files
+*.mdb
+*_db/
+*_relay_db/
 
 # Local NDK for development
 ndk/
