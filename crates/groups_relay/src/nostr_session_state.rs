@@ -1,9 +1,6 @@
 use crate::error::Error;
 use crate::groups::Groups;
-use crate::handler::CURRENT_REQUEST_HOST;
-use crate::nostr_database::RelayDatabase;
-use crate::subdomain::extract_subdomain;
-use crate::{StoreCommand, SubscriptionManager};
+use nostr_relay_builder::{subdomain::extract_subdomain, RelayDatabase, SubscriptionService, state::CURRENT_REQUEST_HOST, StoreCommand};
 use anyhow::Result;
 use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
@@ -21,7 +18,7 @@ pub struct NostrConnectionState {
     pub relay_url: RelayUrl,
     pub challenge: Option<String>,
     pub authed_pubkey: Option<PublicKey>,
-    pub subscription_manager: Option<SubscriptionManager>,
+    pub subscription_manager: Option<SubscriptionService>,
     pub connection_token: CancellationToken,
     pub event_start_time: Option<Instant>,
     pub event_kind: Option<u16>,
@@ -73,7 +70,7 @@ impl NostrConnectionState {
     ) -> Result<(), Error> {
         debug!("Setting up connection",);
 
-        let connection = SubscriptionManager::new(database, sender)
+        let connection = SubscriptionService::new(database, sender)
             .await
             .map_err(|e| Error::Internal {
                 message: format!("Failed to create subscription manager: {}", e),
@@ -98,7 +95,10 @@ impl NostrConnectionState {
         for event in events {
             if let Err(e) = connection.save_and_broadcast(event).await {
                 error!("Failed to save event: {}", e);
-                return Err(e);
+                return Err(Error::Internal {
+                    message: format!("Failed to save event: {}", e),
+                    backtrace: Backtrace::capture(),
+                });
             }
         }
 
@@ -214,8 +214,8 @@ impl StateFactory<NostrConnectionState> for NostrConnectionFactory {
 mod tests {
     use super::*; // Import items from the parent module (NostrConnectionFactory, NostrConnectionState, etc.)
     use crate::groups::Groups;
-    use crate::handler::CURRENT_REQUEST_HOST; // To set the task-local
-    use crate::nostr_database::RelayDatabase;
+    use nostr_relay_builder::state::CURRENT_REQUEST_HOST; // To set the task-local
+    use nostr_relay_builder::RelayDatabase;
     use nostr_sdk::prelude::Keys; // Removed RelayUrl from here
     use std::sync::Arc;
     use tempfile::TempDir;

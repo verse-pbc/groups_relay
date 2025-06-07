@@ -1,5 +1,6 @@
 use anyhow::Result;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
 use nostr_sdk::{Event, EventBuilder, Keys};
 use std::time::Duration;
 use tokio::task::spawn_blocking;

@@ -1,6 +1,7 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
 use groups_relay::groups::Groups;
-use groups_relay::relay_logic::groups_logic::GroupsRelayProcessor;
+use groups_relay::groups_event_processor::GroupsRelayProcessor;
 use groups_relay::RelayDatabase;
 use nostr_relay_builder::{EventProcessor, EventContext, RelayConfig};
 use nostr_sdk::prelude::*;
@@ -150,7 +151,7 @@ fn bench_visibility_direct(c: &mut Criterion) {
                             relay_pubkey: &admin_keys.public_key(),
                         };
 
-                        black_box(processor.can_see_event(event, &mut (), context).await)
+                        black_box(processor.can_see_event(event, &(), context))
                     });
                 },
             );

@@ -109,7 +109,7 @@ where
         Self {
             ws_handler: Arc::new(ws_handler),
             relay_info,
-            cancellation_token: cancellation_token.unwrap_or_else(CancellationToken::new),
+            cancellation_token: cancellation_token.unwrap_or_default(),
             connection_counter,
             scope_config,
         }

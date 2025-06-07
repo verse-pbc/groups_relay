@@ -69,16 +69,14 @@ impl EventProcessor for ProductionProcessor {
         }
 
         // Check authentication for deletions
-        if event.kind == Kind::EventDeletion && self.require_auth_for_deletion {
-            if context.authed_pubkey.is_none() {
-                warn!(
-                    "Rejecting deletion event {} - authentication required",
-                    event.id
-                );
-                return Err(nostr_relay_builder::Error::restricted(
-                    "Authentication required for deletions",
-                ));
-            }
+        if event.kind == Kind::EventDeletion && self.require_auth_for_deletion && context.authed_pubkey.is_none() {
+            warn!(
+                "Rejecting deletion event {} - authentication required",
+                event.id
+            );
+            return Err(nostr_relay_builder::Error::restricted(
+                "Authentication required for deletions",
+            ));
         }
 
         info!(
@@ -330,7 +328,7 @@ async fn root_handler(
         || headers
             .get("accept")
             .and_then(|h| h.to_str().ok())
-            .map_or(false, |v| v == "application/nostr+json")
+            == Some("application/nostr+json")
     {
         // Handle with relay handlers
         state.handlers.axum_root_handler()(ws, connect_info, headers).await

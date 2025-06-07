@@ -363,7 +363,7 @@ async fn main() -> Result<()> {
                         || headers
                             .get("accept")
                             .and_then(|h| h.to_str().ok())
-                            .map_or(false, |v| v == "application/nostr+json")
+                            == Some("application/nostr+json")
                     {
                         handlers.axum_root_handler()(ws, connect_info, headers).await
                     } else {

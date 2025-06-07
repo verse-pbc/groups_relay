@@ -467,7 +467,7 @@ async fn main() -> Result<()> {
     // They require generic state support to work with UserSession
     let handlers = Arc::new(
         RelayBuilder::<UserSession>::new(config.clone())
-            .with_state_factory(|| UserSession::default())
+            .with_state_factory(UserSession::default)
             .build_handlers(processor, relay_info)
             .await?,
     );
@@ -484,7 +484,7 @@ async fn main() -> Result<()> {
                     || headers
                         .get("accept")
                         .and_then(|h| h.to_str().ok())
-                        .map_or(false, |v| v == "application/nostr+json")
+                        == Some("application/nostr+json")
                 {
                     handlers.axum_root_handler()(ws, connect_info, headers).await
                 } else {

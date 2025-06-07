@@ -58,8 +58,7 @@ pub async fn handle_root(
     if ws.is_some()
         || headers
             .get(axum::http::header::ACCEPT)
-            .and_then(|h| h.to_str().ok())
-            .map_or(false, |v| v == "application/nostr+json")
+            .and_then(|h| h.to_str().ok()) == Some("application/nostr+json")
     {
         // Handle with the relay handlers
         state.handlers.clone().axum_root_handler()(ws, ConnectInfo(addr), headers).await
