@@ -49,7 +49,20 @@ const Initialization = ({ onComplete }: InitializationProps) => {
       localStorage.setItem('nostr_key', key)
       onComplete(client)
     } catch (e) {
-      setError(e instanceof Error ? e : new Error('Failed to connect'))
+      console.error('Connection failed:', e)
+      let errorMessage = 'Failed to connect';
+      if (e instanceof Error) {
+        if (e.message.includes('timeout')) {
+          errorMessage = 'Connection timed out. Please check your network and try again.';
+        } else if (e.message.includes('auth failed')) {
+          errorMessage = 'Authentication failed. Please check your key and try again.';
+        } else if (e.message.includes('Main relay')) {
+          errorMessage = `Cannot connect to the groups relay at ${wsUrl}. Please try again.`;
+        } else {
+          errorMessage = e.message;
+        }
+      }
+      setError(new Error(errorMessage))
       setStatus('idle')
       // Clear stored key if connection fails
       localStorage.removeItem('nostr_key')

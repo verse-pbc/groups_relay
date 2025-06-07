@@ -17,11 +17,20 @@ This is the frontend for the Nostr Groups application, built with Preact and Typ
 pnpm install
 ```
 
-2. Configure environment variables:
+2. Configure environment variables (optional):
 
-The application uses environment variables to configure the WebSocket connection to the backend server. In development mode, these are set in `.env.development`.
+The application can auto-detect the WebSocket URL based on the current host, but you can override this by creating a `.env` file:
 
-- `VITE_WEBSOCKET_URL`: The URL of the WebSocket server (e.g., `ws://0.0.0.0:8080`)
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` to set:
+- `VITE_WEBSOCKET_URL`: The URL of the WebSocket server (e.g., `ws://localhost:3000`, `ws://example.local:8080`)
+
+If not set, the app will:
+- Use the current host for production deployments
+- Auto-detect common local development scenarios (example.local:8080, localhost:3000)
 
 ### Running in Development Mode
 

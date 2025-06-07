@@ -51,6 +51,7 @@ export class NostrGroupError extends Error {
 
 export class NostrClient {
   private ndk: NDK;
+  private profileNdk: NDK | null = null;
   readonly config: NostrClientConfig;
   private profileCache: Map<string, any> = new Map();
   private walletService: ICashuWalletService | null = null;
@@ -96,15 +97,13 @@ export class NostrClient {
         );
       }
 
-      // Single NDK instance with outbox model for all operations
+      // Single NDK instance - start with only the main relay to ensure proper connection
       this.ndk = new NDK({
         explicitRelayUrls: [
-          this.config.relayUrl,     // Group relay (current server)
-          "wss://relay.nos.social", // Public relays for discovery
-          "wss://purplepag.es"
+          this.config.relayUrl     // Group relay (current server) - connect to this first
         ],
-        enableOutboxModel: true,        // Enable outbox model for user relay discovery
-        autoConnectUserRelays: true,    // Automatically connect to user relays
+        enableOutboxModel: false,        // Disable initially to prevent connection race
+        autoConnectUserRelays: false,    // Disable initially to prevent connection race
         signer,
       });
 
@@ -879,6 +878,7 @@ export class NostrClient {
 
   async connect() {
     try {
+      console.log(`Connecting to relay: ${this.config.relayUrl}`);
       await this.ndk.connect();
       
       // Create wallet service immediately after connection
@@ -886,70 +886,120 @@ export class NostrClient {
         this.walletService = new CashuWalletService(this.ndk);
       }
 
+      // Wait specifically for the main relay to be ready
+      const mainRelayUrl = this.config.relayUrl;
+      
+      // Normalize URL by removing trailing slash
+      const normalizeUrl = (url: string) => url.replace(/\/$/, '');
+      const normalizedMainUrl = normalizeUrl(mainRelayUrl);
+      
+      // Wait a bit for relay to be added to pool
+      let attempts = 0;
+      let mainRelay: NDKRelay | undefined;
+      
+      while (!mainRelay && attempts < 20) {
+        mainRelay = Array.from(this.ndk.pool.relays.values()).find(
+          relay => normalizeUrl(relay.url) === normalizedMainUrl
+        );
+        
+        if (!mainRelay) {
+          // Wait 100ms and try again
+          await new Promise(resolve => setTimeout(resolve, 100));
+          attempts++;
+        }
+      }
+
+      if (!mainRelay) {
+        // List all relays in pool for debugging
+        const availableRelays = Array.from(this.ndk.pool.relays.values()).map(r => r.url);
+        console.error(`Main relay not found. Looking for: ${mainRelayUrl}, Available: ${availableRelays.join(', ')}`);
+        throw new Error(`Main relay ${mainRelayUrl} not found in pool after ${attempts} attempts`);
+      }
+
+      // Wait for the main relay to be ready
+      await new Promise<void>((resolve, reject) => {
+        // Check if already ready (status 5 = READY)
+        if (mainRelay.status === 5) {
+          resolve();
+          return;
+        }
+
+        const handleStatus = () => {
+          if (mainRelay.status === 5) {
+            cleanup();
+            resolve();
+          }
+        };
+
+        const handleError = (err: Error) => {
+          cleanup();
+          reject(err);
+        };
+
+        // Setup event listeners
+        mainRelay.on("authed", () => {
+          cleanup();
+          resolve();
+        });
+        mainRelay.on("disconnect", () =>
+          handleError(new Error("Main relay disconnected"))
+        );
+        mainRelay.on("auth:failed", (err) =>
+          handleError(new Error(`Main relay auth failed: ${err.message}`))
+        );
+
+        const interval = setInterval(handleStatus, 100);
+
+        const cleanup = () => {
+          clearInterval(interval);
+          mainRelay.removeAllListeners("authed");
+          mainRelay.removeAllListeners("disconnect");
+          mainRelay.removeAllListeners("auth:failed");
+        };
+
+        // Increase timeout for main relay
+        setTimeout(() => {
+          cleanup();
+          reject(
+            new Error("Connection timeout waiting for main relay authentication")
+          );
+        }, 10000); // 10 seconds for main relay
+      });
+
+      // Log all relay statuses
       const relays = Array.from(this.ndk.pool.relays.values());
-      const firstRelay = await Promise.race(
-        relays.map(
-          (relay) =>
-            new Promise<NDKRelay>((resolve, reject) => {
-              // Check if already ready (status 5 = READY)
-              if (relay.status === 5) {
-                resolve(relay);
-                return;
-              }
-
-              // Handle connection states
-              const handleStatus = () => {
-                if (relay.status === 5) {
-                  cleanup();
-                  resolve(relay);
-                }
-              };
-
-              // Handle errors
-              const handleError = (err: Error) => {
-                cleanup();
-                reject(err);
-              };
-
-              // Setup event listeners
-              relay.on("authed", () => {
-                cleanup();
-                resolve(relay);
-              });
-              relay.on("disconnect", () =>
-                handleError(new Error("Relay disconnected"))
-              );
-              relay.on("auth:failed", (err) =>
-                handleError(new Error(`Auth failed: ${err.message}`))
-              );
-
-              const interval = setInterval(handleStatus, 100);
-
-              const cleanup = () => {
-                clearInterval(interval);
-                relay.removeAllListeners("authed");
-                relay.removeAllListeners("disconnect");
-                relay.removeAllListeners("auth:failed");
-              };
-
-              setTimeout(() => {
-                cleanup();
-                reject(
-                  new Error("Connection timeout waiting for authentication")
-                );
-              }, 3000);
-            })
-        )
-      );
-
       console.log(
         "Connected to relays:",
         relays.map((r) => ({
           url: r.url,
-          status: r.status === firstRelay.status ? "ready" : r.status,
+          status: r.status,
           connected: r.connected,
+          isMainRelay: r.url === mainRelayUrl
         }))
       );
+
+      console.log("Main relay connected successfully");
+      
+      // Now create a separate NDK instance for profile fetching with public relays
+      try {
+        this.profileNdk = new NDK({
+          explicitRelayUrls: [
+            "wss://relay.damus.io",
+            "wss://relay.nos.social",
+            "wss://purplepag.es"
+          ],
+          enableOutboxModel: true,
+          autoConnectUserRelays: true,
+          signer: this.ndk.signer
+        });
+        
+        // Don't wait for profile NDK to connect - it's not critical
+        this.profileNdk.connect().catch(err => 
+          console.warn("Profile NDK connection failed, profiles may not load:", err)
+        );
+      } catch (err) {
+        console.warn("Failed to create profile NDK:", err);
+      }
     } catch (error) {
       throw new NostrGroupError(`Failed to connect: ${error}`);
     }
@@ -957,12 +1007,20 @@ export class NostrClient {
 
   async disconnect() {
     try {
-      // Close all relay connections from the single NDK instance
+      // Close all relay connections from the main NDK instance
       const relays = Array.from(this.ndk.pool.relays.values());
       await Promise.all(relays.map((relay) => relay.disconnect()));
 
       // Clear any subscriptions
       this.ndk.pool.removeAllListeners();
+      
+      // Disconnect profile NDK if it exists
+      if (this.profileNdk) {
+        const profileRelays = Array.from(this.profileNdk.pool.relays.values());
+        await Promise.all(profileRelays.map((relay) => relay.disconnect()));
+        this.profileNdk.pool.removeAllListeners();
+        this.profileNdk = null;
+      }
 
     } catch (error) {
       console.error("Error during disconnect:", error);
@@ -1129,7 +1187,8 @@ export class NostrClient {
       }
 
       const user = new NDKUser({ pubkey });
-      user.ndk = this.ndk; // Use the main NDK instance with outbox model
+      // Use profile NDK if available, otherwise fall back to main NDK
+      user.ndk = this.profileNdk || this.ndk;
       await user.fetchProfile();
 
       // Cache the profile
