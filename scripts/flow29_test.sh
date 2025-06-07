@@ -324,10 +324,10 @@ run_test() {
         
         # Verify message is deleted
         echo "Verifying message deletion..."
-        VERIFY_OUTPUT=$(nak req --limit 10 \
+        VERIFY_OUTPUT=$(timeout 5 nak req --limit 10 \
             -k 11 \
-            -t h:"$GROUP_ID" \
-            "$RELAY_URL" 2>&1)
+            -t h="${GROUP_ID}" \
+            "$RELAY_URL" 2>&1 || echo "TIMEOUT")
         
         if echo "$VERIFY_OUTPUT" | grep -q "$TEST_MESSAGE_ID"; then
             echo -e "${YELLOW}⚠️  Message may still exist (nak auth limitation)${NC}"
@@ -394,10 +394,10 @@ run_test() {
     
     # Verify group is deleted by trying to query metadata
     echo "Verifying group deletion..."
-    VERIFY_OUTPUT=$(nak req --limit 1 \
+    VERIFY_OUTPUT=$(timeout 5 nak req --limit 1 \
         -k 39000 \
-        -t d:"$GROUP_ID" \
-        "$RELAY_URL" 2>&1)
+        -t d="${GROUP_ID}" \
+        "$RELAY_URL" 2>&1 || echo "TIMEOUT")
     
     if echo "$VERIFY_OUTPUT" | grep -q "\"kind\":39000"; then
         echo -e "${YELLOW}⚠️  Group metadata may still exist (nak auth limitation)${NC}"
