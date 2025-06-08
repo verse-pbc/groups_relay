@@ -105,7 +105,7 @@ impl RelayDatabase {
 
                     match store_command {
                         StoreCommand::DeleteEvents(filter, _) => {
-                            info!(
+                            debug!(
                                 "Deleting events with filter: {:?} for scope: {:?}",
                                 filter, scope_clone
                             );
@@ -185,7 +185,7 @@ impl RelayDatabase {
         broadcast_sender: &broadcast::Sender<Box<Event>>,
         scope: &Scope,
     ) {
-        info!("Saving event: {} for scope: {:?}", event.as_json(), scope);
+        debug!("Saving event: {} for scope: {:?}", event.as_json(), scope);
 
         match env.scoped(scope) {
             Ok(scoped_view) => {

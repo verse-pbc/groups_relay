@@ -793,7 +793,7 @@ impl SubscriptionService {
                 if event.kind.is_replaceable() || event.kind.is_addressable() =>
             {
                 // Send replaceable/addressable unsigned events to the buffer
-                info!(
+                debug!(
                     "Buffering unsigned event: kind={}, scope={:?} (will be saved within 1 second)",
                     event.kind, scope
                 );
