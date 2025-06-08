@@ -1022,6 +1022,45 @@ export class NostrClient {
         this.profileNdk = null;
       }
 
+      // Clear profile cache
+      this.profileCache.clear();
+
+      // Dispose wallet service if it exists
+      if (this.walletService) {
+        this.walletService.dispose();
+        this.walletService = null;
+      }
+
+      // Clear localStorage entries (except nostr_key which is handled by main.tsx)
+      const keysToRemove = [
+        'temporarilyDeadRelays',
+        'cashu_transactions'
+      ];
+      
+      // Also clear any user-specific balance keys
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('cashu_balance_')) {
+          keysToRemove.push(key);
+        }
+      }
+      
+      keysToRemove.forEach(key => localStorage.removeItem(key));
+
+      // Clear localforage data
+      try {
+        await localforage.clear();
+      } catch (error) {
+        console.warn('Failed to clear localforage:', error);
+      }
+
+      // Clear relay failure tracking
+      this.relayFailures.clear();
+      this.temporarilyDeadRelays.clear();
+
+      // Reset storage initialization flag
+      this.storageInitialized = false;
+
     } catch (error) {
       console.error("Error during disconnect:", error);
       throw new NostrGroupError(`Failed to disconnect: ${error}`);

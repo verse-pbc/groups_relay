@@ -233,10 +233,30 @@ export class CashuWalletService implements ICashuWalletService {
       this.ndk.wallet = this.wallet;
       console.log("\u2705 Set up NDK wallet integration for existing wallet");
 
-      // Publish wallet metadata and nutzap config using NDK's built-in methods
-      await this.wallet.publish(); // Creates kind:17375 wallet metadata event
-      await this.wallet.backup(true); // Creates kind:375 backup event  
-      await this.publishNutzapConfig(); // Creates kind:10019 nutzap config event
+      // Only publish events if they don't exist or need updating
+      const user = await this.ndk.signer?.user();
+      if (user) {
+        // Always publish wallet metadata (kind 17375) as it's a replaceable event
+        await this.wallet.publish();
+        
+        // Check if we need a new backup
+        const hasRecentBackup = await this.hasRecentWalletBackup(user);
+        if (!hasRecentBackup) {
+          console.log("📦 Creating wallet backup (kind 375)");
+          await this.wallet.backup(true);
+        } else {
+          console.log("✅ Recent wallet backup exists, skipping");
+        }
+        
+        // Check if nutzap config needs updating
+        const needsConfigUpdate = await this.needsNutzapConfigUpdate(user);
+        if (needsConfigUpdate) {
+          console.log("🔧 Publishing nutzap config (kind 10019)");
+          await this.publishNutzapConfig();
+        } else {
+          console.log("✅ Nutzap config is up to date, skipping");
+        }
+      }
 
       return;
     }
@@ -294,9 +314,14 @@ export class CashuWalletService implements ICashuWalletService {
 
     console.log("Created new NIP-60 wallet");
 
-    // Publish wallet metadata and nutzap config using NDK's built-in methods
+    // For new wallets, always publish all events
+    console.log("📝 Publishing wallet metadata (kind 17375)");
     await this.wallet.publish(); // Creates kind:17375 wallet metadata event
+    
+    console.log("📦 Creating initial wallet backup (kind 375)");
     await this.wallet.backup(true); // Creates kind:375 backup event
+    
+    console.log("🔧 Publishing initial nutzap config (kind 10019)");
     await this.publishNutzapConfig(); // Creates kind:10019 nutzap config event
   }
 
@@ -2415,6 +2440,73 @@ export class CashuWalletService implements ICashuWalletService {
   }
 
   // Cleanup method
+  // Check if a recent wallet backup exists (kind 375)
+  private async hasRecentWalletBackup(user: NDKUser): Promise<boolean> {
+    try {
+      const filter = {
+        kinds: [375],
+        authors: [user.pubkey],
+        limit: 1
+      };
+      
+      const events = await this.ndk.fetchEvents(filter);
+      if (events.size === 0) return false;
+      
+      const latestBackup = Array.from(events)[0];
+      const backupAge = Date.now() / 1000 - latestBackup.created_at;
+      
+      // Consider backup recent if less than 24 hours old
+      return backupAge < 24 * 60 * 60;
+    } catch (error) {
+      console.error("Failed to check for wallet backup:", error);
+      return false;
+    }
+  }
+
+  // Check if nutzap config needs updating (kind 10019)
+  private async needsNutzapConfigUpdate(user: NDKUser): Promise<boolean> {
+    try {
+      const filter = {
+        kinds: [10019],
+        authors: [user.pubkey],
+        limit: 1
+      };
+      
+      const events = await this.ndk.fetchEvents(filter);
+      if (events.size === 0) return true; // No config exists, need to create
+      
+      const latestConfig = Array.from(events)[0];
+      
+      // Check if current wallet configuration matches the published config
+      const currentMints = this.wallet?.mints || [];
+      const currentP2pk = this.wallet?.p2pk;
+      
+      // Parse the existing config
+      const mintTags = latestConfig.tags.filter(tag => tag[0] === 'mint');
+      const publishedMints = mintTags.map(tag => tag[1]);
+      
+      const p2pkTag = latestConfig.tags.find(tag => tag[0] === 'pubkey');
+      const publishedP2pk = p2pkTag ? p2pkTag[1] : null;
+      
+      // Check if mints or p2pk have changed
+      const mintsChanged = !this.arraysEqual(currentMints.sort(), publishedMints.sort());
+      const p2pkChanged = currentP2pk !== publishedP2pk;
+      
+      return mintsChanged || p2pkChanged;
+    } catch (error) {
+      console.error("Failed to check nutzap config:", error);
+      return true; // Err on the side of updating
+    }
+  }
+
+  private arraysEqual(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
+
   dispose(): void {
     // Stop nutzap monitor
     if (this.nutzapMonitor) {
