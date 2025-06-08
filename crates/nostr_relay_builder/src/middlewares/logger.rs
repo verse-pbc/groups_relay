@@ -97,11 +97,7 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
                     })
                     .unwrap_or(false);
 
-                if is_relay_activity {
-                    info!("> EVENT kind {}: {}", event_kind_u16, event_json);
-                } else {
-                    info!("> EVENT kind {}", event_kind_u16);
-                }
+                debug!("> EVENT kind {}: {}", event_kind_u16, event_json);
 
                 ctx.state.event_start_time = Some(start_time);
                 ctx.state.event_kind = Some(event_kind_u16);
@@ -118,11 +114,7 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
                     .map(|relay_pk| ctx.state.authed_pubkey.as_ref() == Some(relay_pk))
                     .unwrap_or(false);
                 
-                if is_relay_activity {
-                    info!("> REQ {}: {}", sub_id_clone, filter_json_clone);
-                } else {
-                    info!("> REQ {}", sub_id_clone);
-                }
+                debug!("> REQ {}: {}", sub_id_clone, filter_json_clone);
             }
             Some(ClientMessage::ReqMultiFilter {
                 subscription_id,
@@ -131,11 +123,11 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
                 let sub_id_clone = subscription_id.clone();
                 let filters_json_clone =
                     filters.iter().map(|f| f.as_json()).collect::<Vec<String>>();
-                info!("> REQ {}: {:?}", sub_id_clone, filters_json_clone);
+                debug!("> REQ {}: {:?}", sub_id_clone, filters_json_clone);
             }
             Some(ClientMessage::Close(subscription_id)) => {
                 let sub_id_clone = subscription_id.clone();
-                info!("> CLOSE {}", sub_id_clone);
+                debug!("> CLOSE {}", sub_id_clone);
             }
             Some(ClientMessage::Auth(event)) => {
                 // AUTH events are always from the client trying to authenticate
@@ -144,12 +136,7 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
                     .map(|relay_pk| ctx.state.authed_pubkey.as_ref() == Some(relay_pk))
                     .unwrap_or(false);
                 
-                if is_relay_activity {
-                    let event_json_clone = event.as_ref().as_json();
-                    info!("> AUTH {}", event_json_clone);
-                } else {
-                    info!("> AUTH");
-                }
+                debug!("> AUTH {}", event.as_ref().as_json());
             }
             _ => {
                 let message_clone_for_debug = format!("{:?}", ctx.message);
@@ -198,12 +185,12 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
                                 handler.record_event_latency(kind as u32, latency_ms);
                             }
                         }
-                        info!(
+                        debug!(
                             "< OK {} {} {} took {:?}ms",
                             event_id_clone, status_clone, message_clone, latency_ms
                         );
                     } else {
-                        info!("< OK {} {} {}", event_id_clone, status_clone, message_clone);
+                        debug!("< OK {} {} {}", event_id_clone, status_clone, message_clone);
                     }
                 }
                 RelayMessage::Event {
@@ -213,31 +200,19 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
                     let sub_id_clone = subscription_id.clone();
                     let event_json_clone = event.as_ref().as_json();
                     
-                    // Check if this is relay activity (relay-authored event OR authenticated as relay)
-                    let is_relay_activity = self.relay_pubkey.as_ref()
-                        .map(|relay_pk| {
-                            &event.as_ref().pubkey == relay_pk || 
-                            ctx.state.authed_pubkey.as_ref() == Some(relay_pk)
-                        })
-                        .unwrap_or(false);
-                    
-                    if is_relay_activity {
-                        info!("< EVENT {} {}", sub_id_clone, event_json_clone);
-                    } else {
-                        info!("< EVENT {} kind {}", sub_id_clone, event.as_ref().kind.as_u16());
-                    }
+                    debug!("< EVENT {} {}", sub_id_clone, event_json_clone);
                 }
                 RelayMessage::Notice(message) => {
                     let message_clone = message.clone();
-                    info!("< NOTICE {}", message_clone);
+                    debug!("< NOTICE {}", message_clone);
                 }
                 RelayMessage::EndOfStoredEvents(subscription_id) => {
                     let sub_id_clone = subscription_id.clone();
-                    info!("< EOSE {}", sub_id_clone);
+                    debug!("< EOSE {}", sub_id_clone);
                 }
                 RelayMessage::Auth { challenge } => {
                     let challenge_clone = challenge.clone();
-                    info!("< AUTH {}", challenge_clone);
+                    debug!("< AUTH {}", challenge_clone);
                 }
                 _ => {
                     let msg_clone_for_debug = format!("{:?}", ctx.message);
@@ -297,7 +272,7 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
         );
         let _guard = connection_span.enter();
 
-        info!("Connected to relay");
+        debug!("Connected to relay");
         if let Some(handler) = &self.metrics_handler {
             handler.increment_active_connections();
         }

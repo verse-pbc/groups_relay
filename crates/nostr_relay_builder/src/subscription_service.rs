@@ -223,7 +223,7 @@ impl SubscriptionService {
         };
 
         service.start_database_subscription_task()?;
-        info!("Subscription service created successfully");
+        debug!("Subscription service created successfully");
         Ok(service)
     }
 
@@ -288,7 +288,7 @@ impl SubscriptionService {
                         }
                     }
                 }
-                info!("Subscription task stopped");
+                debug!("Subscription task stopped");
             }
             .instrument(task_span),
         );
@@ -853,7 +853,7 @@ impl SubscriptionService {
         if remaining_subs > 0 {
             // TODO: Add metrics support
         }
-        info!(
+        debug!(
             "Cleaned up subscription service with {} remaining subscriptions",
             remaining_subs
         );

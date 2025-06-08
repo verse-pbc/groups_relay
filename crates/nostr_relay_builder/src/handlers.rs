@@ -26,7 +26,7 @@ impl ConnectionCounter {
     fn new(counter: Option<Arc<AtomicUsize>>) -> Self {
         if let Some(ref c) = counter {
             let prev = c.fetch_add(1, Ordering::Relaxed);
-            info!("New connection. Total active connections: {}", prev + 1);
+            debug!("New connection. Total active connections: {}", prev + 1);
         }
         Self { counter }
     }
@@ -36,7 +36,7 @@ impl Drop for ConnectionCounter {
     fn drop(&mut self) {
         if let Some(ref c) = self.counter {
             let prev = c.fetch_sub(1, Ordering::Relaxed);
-            info!("Connection closed. Total active connections: {}", prev - 1);
+            debug!("Connection closed. Total active connections: {}", prev - 1);
         }
     }
 }
@@ -247,7 +247,7 @@ where
                     };
 
                     // Log the upgrade request with real IP and subdomain
-                    info!(
+                    debug!(
                         "WebSocket upgrade requested from {}{} at root path",
                         real_ip, display_info
                     );
