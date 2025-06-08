@@ -22,7 +22,6 @@ pub trait LoggerMetricsHandler: Send + Sync + std::fmt::Debug {
 #[derive(Debug)]
 pub struct LoggerMiddleware<T = ()> {
     metrics_handler: Option<Box<dyn LoggerMetricsHandler>>,
-    relay_pubkey: Option<PublicKey>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -36,7 +35,6 @@ impl<T> LoggerMiddleware<T> {
     pub fn new() -> Self {
         Self {
             metrics_handler: None,
-            relay_pubkey: None,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -44,15 +42,6 @@ impl<T> LoggerMiddleware<T> {
     pub fn with_metrics(metrics_handler: Box<dyn LoggerMetricsHandler>) -> Self {
         Self {
             metrics_handler: Some(metrics_handler),
-            relay_pubkey: None,
-            _phantom: std::marker::PhantomData,
-        }
-    }
-    
-    pub fn with_relay_pubkey(relay_pubkey: PublicKey) -> Self {
-        Self {
-            metrics_handler: None,
-            relay_pubkey: Some(relay_pubkey),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -89,14 +78,6 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
                 let event_json = event.as_ref().as_json();
                 let start_time = Instant::now();
 
-                // Check if this is relay activity or relay-authored event
-                let is_relay_activity = self.relay_pubkey.as_ref()
-                    .map(|relay_pk| {
-                        &event.as_ref().pubkey == relay_pk || 
-                        ctx.state.authed_pubkey.as_ref() == Some(relay_pk)
-                    })
-                    .unwrap_or(false);
-
                 debug!("> EVENT kind {}: {}", event_kind_u16, event_json);
 
                 ctx.state.event_start_time = Some(start_time);
@@ -108,11 +89,6 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
             }) => {
                 let sub_id_clone = subscription_id.clone();
                 let filter_json_clone = filter.as_json();
-                
-                // Check if this is relay activity
-                let is_relay_activity = self.relay_pubkey.as_ref()
-                    .map(|relay_pk| ctx.state.authed_pubkey.as_ref() == Some(relay_pk))
-                    .unwrap_or(false);
                 
                 debug!("> REQ {}: {}", sub_id_clone, filter_json_clone);
             }
@@ -130,12 +106,6 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
                 debug!("> CLOSE {}", sub_id_clone);
             }
             Some(ClientMessage::Auth(event)) => {
-                // AUTH events are always from the client trying to authenticate
-                // Only show full details if already authenticated as relay
-                let is_relay_activity = self.relay_pubkey.as_ref()
-                    .map(|relay_pk| ctx.state.authed_pubkey.as_ref() == Some(relay_pk))
-                    .unwrap_or(false);
-                
                 debug!("> AUTH {}", event.as_ref().as_json());
             }
             _ => {

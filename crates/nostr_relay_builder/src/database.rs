@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::spawn_blocking;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use tracing_futures::Instrument;
 
 /// A Nostr relay database that wraps NostrLMDB with async operations and event broadcasting
