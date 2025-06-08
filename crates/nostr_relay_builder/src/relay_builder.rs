@@ -205,7 +205,7 @@ where
         }
 
         // Add standard middlewares that should always be present
-        builder = builder.with_middleware(crate::middlewares::LoggerMiddleware::new());
+        builder = builder.with_middleware(crate::middlewares::LoggerMiddleware::with_relay_pubkey(self.config.keys.public_key()));
         builder = builder.with_middleware(crate::middlewares::ErrorHandlingMiddleware::new());
 
         // Add NIP-42 authentication middleware if enabled
