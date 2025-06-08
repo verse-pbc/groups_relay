@@ -138,8 +138,18 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
                 info!("> CLOSE {}", sub_id_clone);
             }
             Some(ClientMessage::Auth(event)) => {
-                let event_json_clone = event.as_ref().as_json();
-                info!("> AUTH {}", event_json_clone);
+                // AUTH events are always from the client trying to authenticate
+                // Only show full details if already authenticated as relay
+                let is_relay_activity = self.relay_pubkey.as_ref()
+                    .map(|relay_pk| ctx.state.authed_pubkey.as_ref() == Some(relay_pk))
+                    .unwrap_or(false);
+                
+                if is_relay_activity {
+                    let event_json_clone = event.as_ref().as_json();
+                    info!("> AUTH {}", event_json_clone);
+                } else {
+                    info!("> AUTH");
+                }
             }
             _ => {
                 let message_clone_for_debug = format!("{:?}", ctx.message);
@@ -203,12 +213,15 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
                     let sub_id_clone = subscription_id.clone();
                     let event_json_clone = event.as_ref().as_json();
                     
-                    // Check if this is a relay-authored event
-                    let is_relay_event = self.relay_pubkey.as_ref()
-                        .map(|relay_pk| &event.as_ref().pubkey == relay_pk)
+                    // Check if this is relay activity (relay-authored event OR authenticated as relay)
+                    let is_relay_activity = self.relay_pubkey.as_ref()
+                        .map(|relay_pk| {
+                            &event.as_ref().pubkey == relay_pk || 
+                            ctx.state.authed_pubkey.as_ref() == Some(relay_pk)
+                        })
                         .unwrap_or(false);
                     
-                    if is_relay_event {
+                    if is_relay_activity {
                         info!("< EVENT {} {}", sub_id_clone, event_json_clone);
                     } else {
                         info!("< EVENT {} kind {}", sub_id_clone, event.as_ref().kind.as_u16());
