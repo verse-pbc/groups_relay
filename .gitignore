@@ -78,3 +78,29 @@ test_*.log
 test_analysis_prompt.md
 server.log
 flow29_output.log
+test_results/
+
+# Profiling and performance artifacts
+flamegraph*.svg
+flamegraph*.txt
+flamegraph_*
+cargo-flamegraph.*
+*.trace
+*.stacks
+profiling_results/
+perf.data
+perf.data.old
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# macOS specific
+.DS_Store
+._*
+
+# Build artifacts with debug info
+# (target/ is already included above)
