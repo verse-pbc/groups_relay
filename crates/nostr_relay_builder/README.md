@@ -295,7 +295,7 @@ This crate provides two ways to customize your relay:
 1. **EventProcessor** (recommended) - High-level API for business logic
 2. **Middleware** - Low-level API for protocol extensions
 
-See the [Middleware Guide](src/middleware_guide.md) for detailed comparison and when to use each.
+See the [Middleware Guide](docs/middleware_guide.md) for detailed comparison and when to use each.
 
 ## EventProcessor Trait
 
