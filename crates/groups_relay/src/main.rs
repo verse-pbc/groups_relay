@@ -42,13 +42,17 @@ struct Args {
     auth_url: Option<String>,
 }
 
-fn setup_tracing() {
+fn setup_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     use tracing_subscriber::{fmt, EnvFilter};
 
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,groups_relay=debug,websocket_builder=debug"));
 
+    // Create non-blocking stdout writer
+    let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stdout());
+
     fmt()
+        .with_writer(non_blocking)
         .with_env_filter(env_filter)
         .with_timer(fmt::time::SystemTime)
         .with_target(true)
@@ -58,11 +62,14 @@ fn setup_tracing() {
         .with_line_number(false)
         .with_level(true)
         .init();
+
+    guard // Return the guard to keep it alive
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    setup_tracing();
+    // Keep the guard alive for the entire program duration
+    let _guard = setup_tracing();
 
     let args = Args::parse();
     let config = config::Config::new(&args.config_dir).context("Failed to load configuration")?;

@@ -15,6 +15,7 @@ futures = { workspace = true }
 clap = { workspace = true }
 nostr-sdk = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-appender = "0.2"
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 rand = { workspace = true }
