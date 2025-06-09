@@ -179,50 +179,58 @@ export class CashuWalletService implements ICashuWalletService {
     this.userPubkey = user.pubkey;
 
     // Check for existing wallet
-    const existingWallet = await this.fetchExistingWallet(user);
-    if (existingWallet) {
+    const { wallet: existingWallet, hasDecryptionError } = await this.fetchExistingWallet(user);
+    
+    if (hasDecryptionError) {
+      console.warn("⚠️ Found existing wallet events but cannot decrypt them");
+      console.warn("⚠️ This might mean the wallet belongs to a different key");
+      console.warn("⚠️ Creating a new wallet instead...");
+    }
+    
+    if (existingWallet && !hasDecryptionError) {
+      // Only use the existing wallet if there are no decryption errors
       this.wallet = existingWallet;
       console.log("Restored existing NIP-60 wallet");
       console.log("Wallet mints:", this.wallet.mints);
-      // Log which mints we have and their order
-      if (this.wallet.mints && this.wallet.mints.length > 0) {
-        console.log("Available mints for transactions:");
-        this.wallet.mints.forEach((mint, index) => {
-          console.log(`  ${index + 1}. ${mint}`);
-        });
-      }
-
-      await this.wallet.start();
-
-      // Wait for the wallet to be ready
-      await new Promise<void>((resolve) => {
-        this.wallet!.once("ready", () => {
-          resolve();
-        });
-
-        // If wallet is already ready, resolve immediately
-        if (
-          this.wallet!.status !== NDKWalletStatus.LOADING &&
-          this.wallet!.status !== NDKWalletStatus.INITIAL
-        ) {
-          resolve();
+        // Log which mints we have and their order
+        if (this.wallet.mints && this.wallet.mints.length > 0) {
+          console.log("Available mints for transactions:");
+          this.wallet.mints.forEach((mint, index) => {
+            console.log(`  ${index + 1}. ${mint}`);
+          });
         }
-      });
 
-      // Set up NDK's wallet integration for automatic zapper usage
-      this.ndk.wallet = this.wallet;
-      console.log("\u2705 Set up NDK wallet integration for automatic zapper usage");
+        await this.wallet.start();
 
-      await this.updateBalance();
+        // Wait for the wallet to be ready
+        await new Promise<void>((resolve) => {
+          this.wallet!.once("ready", () => {
+            resolve();
+          });
 
-      // Load transaction history from NIP-60
-      await this.loadTransactionHistory();
+          // If wallet is already ready, resolve immediately
+          if (
+            this.wallet!.status !== NDKWalletStatus.LOADING &&
+            this.wallet!.status !== NDKWalletStatus.INITIAL
+          ) {
+            resolve();
+          }
+        });
 
-      // Start nutzap monitoring
-      await this.ensureNutzapMonitor();
+        // Set up NDK's wallet integration for automatic zapper usage
+        this.ndk.wallet = this.wallet;
+        console.log("\u2705 Set up NDK wallet integration for automatic zapper usage");
 
-      // Check if wallet has P2PK key, if not, add one
-      if (this.wallet.privkeys.size === 0) {
+        await this.updateBalance();
+
+        // Load transaction history from NIP-60
+        await this.loadTransactionHistory();
+
+        // Start nutzap monitoring
+        await this.ensureNutzapMonitor();
+
+        // Check if wallet has P2PK key, if not, add one
+        if (this.wallet.privkeys.size === 0) {
         console.log("🔧 Existing wallet lacks P2PK key, adding one...");
         await this.addP2PKKeyToExistingWallet();
       } else {
@@ -257,9 +265,9 @@ export class CashuWalletService implements ICashuWalletService {
         } else {
           console.log("✅ Nutzap config is up to date, skipping");
         }
-      }
 
-      return;
+        return;
+      }
     }
 
     // Create new wallet
@@ -278,10 +286,17 @@ export class CashuWalletService implements ICashuWalletService {
 
     // Note: walletNdk is now owned by the wallet and will be cleaned up when wallet is disposed
 
-    if (mints && mints.length > 0) {
-      for (const mint of mints) {
-        this.wallet.mints = [...(this.wallet.mints || []), mint];
-      }
+    // Use provided mints or default mints
+    const defaultMints = [
+      "https://mint.minibits.cash/Bitcoin",
+      "https://mint.coinos.io",
+      "https://mint.0xchat.com"
+    ];
+    
+    const mintsToUse = (mints && mints.length > 0) ? mints : defaultMints;
+    
+    for (const mint of mintsToUse) {
+      this.wallet.mints = [...(this.wallet.mints || []), mint];
     }
 
     await this.wallet.start();
@@ -301,27 +316,17 @@ export class CashuWalletService implements ICashuWalletService {
       }
     });
 
-    if (mints && mints.length > 0) {
-      // Set mints on the wallet first
-      this.wallet.mints = mints;
-      // Let NDK handle wallet metadata creation
-      await this.wallet.publish(); // Creates kind:17375 wallet metadata event
-      await this.wallet.backup(true); // Creates kind:375 backup event
-    }
+    // Always publish wallet events since we now have mints (either provided or defaults)
+    await this.wallet.publish(); // Creates kind:17375 wallet metadata event
+    await this.wallet.backup(true); // Creates kind:375 backup event
 
     // Update balance and start monitoring
     await this.updateBalance();
     await this.ensureNutzapMonitor();
 
     console.log("Created new NIP-60 wallet");
-
-    // For new wallets, always publish all events
-    console.log("📝 Publishing wallet metadata (kind 17375)");
-    await this.wallet.publish(); // Creates kind:17375 wallet metadata event
     
-    console.log("📦 Creating initial wallet backup (kind 375)");
-    await this.wallet.backup(true); // Creates kind:375 backup event
-    
+    // Publish nutzap config for new wallet
     console.log("🔧 Publishing initial nutzap config (kind 10019)");
     await this.publishNutzapConfig(); // Creates kind:10019 nutzap config event
   }
@@ -1421,7 +1426,7 @@ export class CashuWalletService implements ICashuWalletService {
 
   private async fetchExistingWallet(
     user: NDKUser
-  ): Promise<NDKCashuWallet | null> {
+  ): Promise<{ wallet: NDKCashuWallet | null; hasDecryptionError?: boolean }> {
     try {
       // Get user's relays - this is critical for wallet functionality
       const userRelays = await this.getUserRelays(user.pubkey);
@@ -1444,8 +1449,9 @@ export class CashuWalletService implements ICashuWalletService {
         // Continue anyway - some relays might be connected
       }
 
-      // Fetch NIP-60 wallet events (kinds 17375, 7375, 7376)
-      const walletEventKinds = [17375, 7375, 7376];
+      // Fetch NIP-60 wallet events (kinds 17375, 375, 7375, 7376)
+      // Include kind 375 (wallet backup) to recover private keys if main wallet event can't be decrypted
+      const walletEventKinds = [17375, 375, 7375, 7376];
       const filter = {
         kinds: walletEventKinds,
         authors: [user.pubkey],
@@ -1456,7 +1462,7 @@ export class CashuWalletService implements ICashuWalletService {
       const events = await userNdk.fetchEvents(filter);
 
       if (events.size === 0) {
-        return null;
+        return { wallet: null };
       }
 
       console.log(`📦 Found ${events.size} NIP-60 wallet events`);
@@ -1469,26 +1475,55 @@ export class CashuWalletService implements ICashuWalletService {
       const walletMints = new Set<string>();
       const tokenMints = new Set<string>(); // Track mints from tokens separately
       let tokenCount = 0;
+      let hasDecryptionError = false;
+      let hasWalletMetadata = false;
+      let hasSuccessfulBackup = false;
 
       for (const event of events) {
-        if (event.kind === 17375) {
-          // Wallet metadata event - extract mints from tags and P2PK private key from content
+        if (event.kind === 17375 || event.kind === 375) {
+          if (event.kind === 17375) {
+            hasWalletMetadata = true;
+          }
+          // Wallet metadata event (17375) or backup event (375) - extract mints from tags and P2PK private key from content
           const mintTags = event.tags.filter(
             (tag) => tag[0] === "mint" && tag[1]
           );
 
-          // Try to decrypt the wallet metadata to get the P2PK private key
+          // Try to decrypt the wallet metadata/backup to get the P2PK private key
           try {
             await event.decrypt();
             if (event.content) {
-              const metadata = JSON.parse(event.content);
+              // Backup events might have content as an array of tags
+              let metadata: any;
+              if (Array.isArray(event.content)) {
+                // Convert array format to object format
+                metadata = {};
+                for (const tag of event.content) {
+                  if (tag[0] === 'privkey') metadata.privkey = tag[1];
+                  if (tag[0] === 'mint' && !mintTags.some(t => t[1] === tag[1])) {
+                    // Add mints from content if not already in tags
+                    walletMints.add(tag[1]);
+                  }
+                }
+              } else {
+                metadata = JSON.parse(event.content);
+              }
+              
               if (metadata.privkey) {
                 // P2PK management is now handled by NDK wallet automatically
-                console.log("🔑 Found P2PK private key in wallet metadata (NDK will manage this)");
+                console.log(`🔑 Found P2PK private key in ${event.kind === 375 ? 'wallet backup' : 'wallet metadata'} (NDK will manage this)`);
+                if (event.kind === 375) {
+                  console.log("💾 Successfully decrypted wallet backup event - can recover wallet");
+                  hasSuccessfulBackup = true;
+                }
               }
             }
           } catch (err) {
-            console.warn("⚠️ Could not decrypt wallet metadata:", err);
+            console.warn(`⚠️ Could not decrypt ${event.kind === 375 ? 'wallet backup' : 'wallet metadata'}:`, err);
+            if (event.kind === 17375) {
+              hasDecryptionError = true;
+            }
+            // Don't set hasDecryptionError for backup events - we'll try to use them if main wallet fails
           }
           // Only add mints from wallet metadata, not from tokens
           mintTags.forEach((tag) => walletMints.add(tag[1]));
@@ -1529,6 +1564,7 @@ export class CashuWalletService implements ICashuWalletService {
               // Log proof amounts for debugging
             } catch (err) {
               console.warn(`⚠️ Could not decrypt/parse token event:`, err);
+              hasDecryptionError = true;
             }
           }
         }
@@ -1574,13 +1610,26 @@ export class CashuWalletService implements ICashuWalletService {
         }
       });
 
+      // Check if we have decryption errors that prevent wallet usage
+      if (hasDecryptionError && hasWalletMetadata && !hasSuccessfulBackup) {
+        console.warn("⚠️ Found wallet events but cannot decrypt them and no backup available - wallet may belong to a different key");
+        // Return null to trigger new wallet creation
+        return { wallet: null, hasDecryptionError: true };
+      }
+
+      // If we couldn't decrypt the main wallet metadata but have a successful backup, we can still use the wallet
+      if (hasDecryptionError && hasSuccessfulBackup) {
+        console.log("🔑 Main wallet metadata cannot be decrypted but backup is available - wallet can be recovered");
+        // The wallet should still be functional since NDK processed the backup event
+      }
+
       // Don't auto-update wallet metadata - respect user's mint choices
       // Metadata should only be updated when user explicitly adds/removes mints
 
-      return wallet;
+      return { wallet, hasDecryptionError: hasDecryptionError && !hasSuccessfulBackup };
     } catch (error) {
       console.error("Failed to fetch existing wallet:", error);
-      return null;
+      return { wallet: null };
     }
   }
 
@@ -2289,20 +2338,58 @@ export class CashuWalletService implements ICashuWalletService {
       // Create a promise for this fetch to prevent duplicate requests
       const fetchPromise = (async () => {
         try {
-          // Use NDK's user.getZapInfo which properly handles outbox relay discovery for kind:10019
-          const user = new NDKUser({ pubkey });
-          user.ndk = this.ndk;
-          
-          const zapInfo = await user.getZapInfo();
-          const nip61Info = zapInfo.get('nip61');
-          
           let result: NDKCashuMintList | null = null;
-          if (nip61Info && 'mints' in nip61Info) {
-            // Create NDKCashuMintList from the discovered info
-            result = new NDKCashuMintList(this.ndk);
-            result.mints = (nip61Info as any).mints || [];
-            result.relays = (nip61Info as any).relays || [];
-            result.p2pk = (nip61Info as any).p2pk || '';
+
+          // First, try the outbox model approach
+          try {
+            // Use NDK's user.getZapInfo which properly handles outbox relay discovery for kind:10019
+            const user = new NDKUser({ pubkey });
+            user.ndk = this.ndk;
+            
+            const zapInfo = await user.getZapInfo();
+            const nip61Info = zapInfo.get('nip61');
+            
+            if (nip61Info && 'mints' in nip61Info) {
+              // Create NDKCashuMintList from the discovered info
+              result = new NDKCashuMintList(this.ndk);
+              result.mints = (nip61Info as any).mints || [];
+              result.relays = (nip61Info as any).relays || [];
+              result.p2pk = (nip61Info as any).p2pk || '';
+              console.log(`✅ Found kind:10019 for ${pubkey.slice(0,8)}... via outbox model`);
+            }
+          } catch (outboxError) {
+            console.warn(`⚠️ Outbox model failed for ${pubkey.slice(0,8)}..., trying direct fetch:`, outboxError);
+          }
+
+          // If outbox model failed or returned null, try direct fetch from current relays
+          if (!result) {
+            const filter = {
+              kinds: [10019],
+              authors: [pubkey],
+              limit: 1
+            };
+
+            const events = await this.ndk.fetchEvents(filter);
+            if (events.size > 0) {
+              const event = Array.from(events)[0];
+              
+              // Parse the event to create NDKCashuMintList
+              result = new NDKCashuMintList(this.ndk);
+              
+              // Extract relays
+              const relayTags = event.tags.filter(tag => tag[0] === 'relay' && tag[1]);
+              result.relays = relayTags.map(tag => tag[1]);
+              
+              // Extract mints
+              const mintTags = event.tags.filter(tag => tag[0] === 'mint' && tag[1]);
+              result.mints = mintTags.map(tag => tag[1]);
+              
+              // Extract P2PK
+              const p2pkTag = event.tags.find(tag => tag[0] === 'pubkey' && tag[1]);
+              result.p2pk = p2pkTag ? p2pkTag[1] : '';
+              
+              console.log(`✅ Found kind:10019 for ${pubkey.slice(0,8)}... via direct fetch`);
+            }
           }
 
           // Cache the result (even if null, to avoid repeated lookups)

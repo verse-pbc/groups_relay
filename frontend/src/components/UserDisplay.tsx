@@ -163,9 +163,12 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       // Convert npub to hex if needed
       const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
 
+      console.log('🔍 [UserDisplay] Starting compatibility check for:', hexPubkey);
+
       // Use gossip model to check compatibility
       const walletService = client.getWalletService();
       if (!walletService) {
+        console.error('❌ [UserDisplay] Wallet service not available');
         this.setState({ 
           canSendNutzap: false,
           incompatibilityReason: "Wallet service not available"
@@ -183,7 +186,7 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
         incompatibilityReason: compatibility.reason
       })
       
-      console.log('🔍 Recipient compatibility check:', {
+      console.log('🔍 [UserDisplay] Recipient compatibility result:', {
         pubkey: hexPubkey.slice(0, 8) + '...',
         canSend: compatibility.canSend,
         compatibleBalance: compatibility.compatibleBalance,
