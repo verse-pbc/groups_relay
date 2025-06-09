@@ -13,7 +13,7 @@
 use anyhow::Result;
 use axum::{response::IntoResponse, routing::get, Router};
 use nostr_relay_builder::{
-    EventContext, EventProcessor, Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware,
+    CryptoWorker, EventContext, EventProcessor, Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware,
     RelayBuilder, RelayConfig, RelayInfo, Result as RelayResult, StoreCommand, WebSocketConfig,
 };
 use nostr_sdk::prelude::*;
@@ -152,12 +152,13 @@ async fn main() -> Result<()> {
         icon: None,
     };
 
-    // Create database for middleware
-    let database = config.create_database()?;
-
     // Create cancellation token for graceful shutdown
     let cancellation_token = CancellationToken::new();
     let shutdown_token = cancellation_token.clone();
+
+    // Create crypto worker and database for middleware
+    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(config.keys.clone()), cancellation_token.clone()));
+    let database = config.create_database(crypto_worker)?;
 
     let handlers = Arc::new(
         RelayBuilder::new(config.clone())

@@ -20,7 +20,7 @@ use axum::{
 };
 use nostr_relay_builder::{
     middlewares::{Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware},
-    EventContext, EventProcessor, RelayBuilder, RelayConfig, RelayInfo, Result as RelayResult,
+    CryptoWorker, EventContext, EventProcessor, RelayBuilder, RelayConfig, RelayInfo, Result as RelayResult,
     StoreCommand, WebSocketConfig,
 };
 use nostr_sdk::prelude::*;
@@ -394,8 +394,9 @@ async fn main() -> Result<()> {
     let cancellation_token = CancellationToken::new();
     let connection_counter = Arc::new(AtomicUsize::new(0));
 
-    // Create database for middleware
-    let database = config.create_database()?;
+    // Create crypto worker and database for middleware
+    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(keys.clone()), cancellation_token.clone()));
+    let database = config.create_database(crypto_worker)?;
 
     // Build relay handlers with all production features
     let handlers = Arc::new(

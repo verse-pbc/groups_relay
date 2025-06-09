@@ -12,13 +12,14 @@ use anyhow::Result;
 use axum::{response::IntoResponse, routing::get, Router};
 use nostr_relay_builder::{
     middlewares::{Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware},
-    AuthConfig, EventContext, EventProcessor, RelayBuilder, RelayConfig, RelayInfo,
+    AuthConfig, CryptoWorker, EventContext, EventProcessor, RelayBuilder, RelayConfig, RelayInfo,
     Result as RelayResult, StoreCommand,
 };
 use nostr_sdk::prelude::*;
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 /// Different access control strategies
@@ -176,7 +177,7 @@ async fn main() -> Result<()> {
     let config = RelayConfig::new(
         "ws://localhost:8080",
         "./data/private_relay", // Database directory
-        keys,
+        keys.clone(),
     )
     .with_auth(AuthConfig {
         relay_url: "ws://localhost:8080".to_string(),
@@ -274,8 +275,10 @@ async fn main() -> Result<()> {
         icon: None,
     };
 
-    // Create database for middleware
-    let database = config.create_database()?;
+    // Create crypto worker and database for middleware
+    let cancellation_token = CancellationToken::new();
+    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(keys.clone()), cancellation_token));
+    let database = config.create_database(crypto_worker)?;
 
     // Build the relay handlers
     let handlers = Arc::new(

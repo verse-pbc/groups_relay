@@ -12,8 +12,8 @@ use anyhow::Result;
 use axum::{response::IntoResponse, routing::get, Router};
 use nostr_relay_builder::{
     middlewares::{Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware},
-    EventContext, EventProcessor, RelayBuilder, RelayConfig, RelayInfo, Result as RelayResult,
-    StoreCommand,
+    CryptoWorker, EventContext, EventProcessor, RelayBuilder, RelayConfig, RelayInfo, 
+    Result as RelayResult, StoreCommand,
 };
 use nostr_sdk::prelude::*;
 use std::collections::HashMap;
@@ -22,6 +22,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 /// Tenant configuration
@@ -336,8 +337,10 @@ async fn main() -> Result<()> {
     let connection_counter = Arc::new(AtomicUsize::new(0));
     let metrics_counter = connection_counter.clone();
 
-    // Create database for middleware
-    let database = config.create_database()?;
+    // Create crypto worker and database for middleware
+    let cancellation_token = CancellationToken::new();
+    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(keys.clone()), cancellation_token));
+    let database = config.create_database(crypto_worker)?;
 
     // Build the relay handlers with connection counting
     let handlers = Arc::new(
