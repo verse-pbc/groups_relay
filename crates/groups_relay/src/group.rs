@@ -1665,7 +1665,7 @@ impl Group {
             return Ok(true);
         }
 
-        warn!(
+        debug!(
             "User {} is not a member, cannot see event {}, kind {}",
             authed_pubkey, event.id, event.kind
         );

@@ -170,6 +170,25 @@ impl RelayConfig {
         self
     }
 
+    /// Enable subdomain-based scopes, automatically determining base domain parts from URL
+    pub fn with_subdomains_from_url(mut self, relay_url: &str) -> Self {
+        // Extract host from URL
+        let host = url::Url::parse(relay_url)
+            .ok()
+            .and_then(|u| u.host_str().map(|s| s.to_string()))
+            .unwrap_or_default();
+        
+        // Count the number of parts in the base domain
+        let base_domain_parts = if host.is_empty() || host == "localhost" || host.parse::<std::net::IpAddr>().is_ok() {
+            2 // Default for invalid hosts
+        } else {
+            host.split('.').count()
+        };
+        
+        self.scope_config = ScopeConfig::subdomain(base_domain_parts);
+        self
+    }
+
     /// Enable NIP-42 authentication
     pub fn with_auth(mut self, auth_config: crate::middlewares::AuthConfig) -> Self {
         self.enable_auth = true;

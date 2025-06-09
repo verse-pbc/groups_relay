@@ -123,8 +123,21 @@ pub async fn handle_subdomains(State(state): State<Arc<ServerState>>) -> impl In
 pub async fn handle_config(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     debug!("Handling config request");
 
+    // Extract host from relay URL and count parts
+    let base_domain_parts = nostr_sdk::Url::parse(&state.relay_url)
+        .ok()
+        .and_then(|u| u.host_str().map(|s| s.to_string()))
+        .map(|host| {
+            if host == "localhost" || host.parse::<std::net::IpAddr>().is_ok() {
+                2 // Default for localhost/IP
+            } else {
+                host.split('.').count()
+            }
+        })
+        .unwrap_or(2);
+
     Json(ConfigResponse {
-        base_domain_parts: state.base_domain_parts,
+        base_domain_parts,
     })
 }
 

@@ -215,8 +215,7 @@ where
                     .auth_config
                     .clone()
                     .unwrap_or_else(|| crate::middlewares::AuthConfig {
-                        auth_url: self.config.relay_url.clone(),
-                        base_domain_parts: 2,
+                        relay_url: self.config.relay_url.clone(),
                         validate_subdomains: matches!(
                             self.config.scope_config,
                             crate::config::ScopeConfig::Subdomain { .. }

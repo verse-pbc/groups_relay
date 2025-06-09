@@ -5,11 +5,8 @@ relay:
   # pubkey is 385c3a6ec0b9d57a4330dbd6284989be5bd00e41c535f9ca39b6ae7c521b81cd
   relay_secret_key: "6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e"
   local_addr: "0.0.0.0:8080"
-  auth_url: "ws://example.local:8080"
   relay_url: "ws://example.local:8080"
   db_path: "/app/db"
-  # Number of parts in the base domain (e.g., example.com = 2, example.co.uk = 3)
-  base_domain_parts: 2
   # Default/maximum limit for database queries (REQ filters)
   query_limit: 500
 

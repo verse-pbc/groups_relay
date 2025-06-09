@@ -1,6 +1,5 @@
 # Local development relay configuration
 relay:
-  auth_url: "ws://example.local:8080"
   db_path: "./db"
 
   # WebSocket settings for testing limits

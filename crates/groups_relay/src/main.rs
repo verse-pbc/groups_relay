@@ -36,10 +36,6 @@ struct Args {
     /// Override source address
     #[arg(short, long)]
     local_addr: Option<String>,
-
-    /// Override authentication URL
-    #[arg(short, long)]
-    auth_url: Option<String>,
 }
 
 fn setup_tracing() -> tracing_appender::non_blocking::WorkerGuard {
@@ -80,11 +76,9 @@ async fn main() -> Result<()> {
     let mut settings = config::Settings {
         relay_url: relay_settings.relay_url.clone(),
         local_addr: relay_settings.local_addr.clone(),
-        auth_url: relay_settings.auth_url.clone(),
         admin_keys: vec![],
         websocket: relay_settings.websocket.clone(),
         db_path: relay_settings.db_path.clone(),
-        base_domain_parts: relay_settings.base_domain_parts,
         query_limit: relay_settings.query_limit,
     };
 
@@ -96,15 +90,9 @@ async fn main() -> Result<()> {
         settings.local_addr = local_addr;
     }
 
-    if let Some(auth_url) = args.auth_url {
-        settings.auth_url = auth_url;
-    }
-
-    // Validate URLs
+    // Validate URL
     let _relay_url = RelayUrl::parse(&settings.relay_url)
         .unwrap_or_else(|_| panic!("Invalid relay_url scheme: {}", settings.relay_url));
-    let _auth_url = RelayUrl::parse(&settings.auth_url)
-        .unwrap_or_else(|_| panic!("Invalid auth_url scheme: {}", settings.auth_url));
 
     let relay_keys = relay_settings.relay_keys()?;
     let database = Arc::new(RelayDatabase::new(

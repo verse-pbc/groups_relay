@@ -14,12 +14,9 @@ pub struct RelaySettings {
     pub relay_secret_key: String,
     pub local_addr: String,
     pub relay_url: String,
-    pub auth_url: String,
     pub db_path: String,
     #[serde(default)]
     pub websocket: WebSocketSettings,
-    #[serde(default = "default_base_domain_parts")]
-    pub base_domain_parts: usize,
     #[serde(default = "default_query_limit")]
     pub query_limit: usize,
 }
@@ -46,10 +43,6 @@ fn default_max_connections() -> Option<usize> {
     Some(1000) // Default max connections
 }
 
-fn default_base_domain_parts() -> usize {
-    2 // Default base domain parts (e.g., example.com -> 2 parts)
-}
-
 fn default_query_limit() -> usize {
     500 // Default/maximum limit for queries
 }
@@ -62,10 +55,6 @@ impl RelaySettings {
 
     pub fn relay_url(&self) -> Result<RelayUrl, anyhow::Error> {
         Ok(RelayUrl::parse(&self.relay_url)?)
-    }
-
-    pub fn auth_url(&self) -> Result<RelayUrl, anyhow::Error> {
-        Ok(RelayUrl::parse(&self.auth_url)?)
     }
 }
 
@@ -134,11 +123,9 @@ impl Config {
 pub struct Settings {
     pub relay_url: String,
     pub local_addr: String,
-    pub auth_url: String,
     pub admin_keys: Vec<String>,
     pub websocket: WebSocketSettings,
     pub db_path: String,
-    pub base_domain_parts: usize,
     pub query_limit: usize,
 }
 

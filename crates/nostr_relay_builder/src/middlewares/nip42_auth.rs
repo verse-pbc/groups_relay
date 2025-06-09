@@ -19,10 +19,7 @@ use websocket_builder::{
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
     /// The relay's URL used for auth validation
-    pub auth_url: String,
-    /// Number of domain parts that constitute the base domain
-    /// For example, with 2: "sub.example.com" -> base is "example.com"
-    pub base_domain_parts: usize,
+    pub relay_url: String,
     /// Whether subdomain validation is enabled
     pub validate_subdomains: bool,
 }
@@ -30,8 +27,7 @@ pub struct AuthConfig {
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            auth_url: String::new(),
-            base_domain_parts: 2,
+            relay_url: String::new(),
             validate_subdomains: true,
         }
     }
@@ -52,10 +48,10 @@ impl<T> Nip42Middleware<T> {
         }
     }
 
-    /// Create middleware with just auth URL, using defaults for other settings
-    pub fn with_url(auth_url: String) -> Self {
+    /// Create middleware with just relay URL, using defaults for other settings
+    pub fn with_url(relay_url: String) -> Self {
         Self::new(AuthConfig {
-            auth_url,
+            relay_url,
             ..Default::default()
         })
     }
@@ -70,17 +66,17 @@ impl<T> Nip42Middleware<T> {
 
     // Check if the auth event's relay URL is valid for the current connection
     fn validate_relay_url(&self, client_relay_url: &str, connection_scope: &Scope) -> bool {
-        debug!(target: "auth", "Validating relay URL - client: {}, auth: {}, connection_scope: {:?}",
-              client_relay_url, self.config.auth_url, connection_scope);
+        debug!(target: "auth", "Validating relay URL - client: {}, relay: {}, connection_scope: {:?}",
+              client_relay_url, self.config.relay_url, connection_scope);
 
         // For localhost or IP addresses, require exact match
         if client_relay_url.contains("localhost")
             || client_relay_url.contains("127.0.0.1")
-            || self.config.auth_url.contains("localhost")
-            || self.config.auth_url.contains("127.0.0.1")
+            || self.config.relay_url.contains("localhost")
+            || self.config.relay_url.contains("127.0.0.1")
         {
             let exact_match = client_relay_url.trim_end_matches('/')
-                == self.config.auth_url.trim_end_matches('/');
+                == self.config.relay_url.trim_end_matches('/');
             debug!(target: "auth", "Localhost/IP match result: {}", exact_match);
             return exact_match;
         }
@@ -94,40 +90,37 @@ impl<T> Nip42Middleware<T> {
             }
         };
 
-        let auth_host = match self.extract_host_from_url(&self.config.auth_url) {
+        let relay_host = match self.extract_host_from_url(&self.config.relay_url) {
             Some(host) => host,
             None => {
-                debug!(target: "auth", "Failed to extract host from auth URL: {}", self.config.auth_url);
+                debug!(target: "auth", "Failed to extract host from relay URL: {}", self.config.relay_url);
                 return false;
             }
         };
 
-        debug!(target: "auth", "Extracted hosts - client: {}, auth: {}", client_host, auth_host);
+        debug!(target: "auth", "Extracted hosts - client: {}, relay: {}", client_host, relay_host);
 
         // Extract parts from hosts
         let client_parts: Vec<&str> = client_host.split('.').collect();
-        let auth_parts: Vec<&str> = auth_host.split('.').collect();
+        let relay_parts: Vec<&str> = relay_host.split('.').collect();
 
-        // Extract base domains based on the number of parts configured for base_domain_parts
-        let client_base_start = if client_parts.len() > self.config.base_domain_parts {
-            client_parts.len() - self.config.base_domain_parts
-        } else {
-            0
-        };
+        // The base domain is determined by the relay URL's number of parts
+        let base_domain_parts = relay_parts.len();
 
-        let auth_base_start = if auth_parts.len() > self.config.base_domain_parts {
-            auth_parts.len() - self.config.base_domain_parts
+        // Extract base domains
+        let client_base_start = if client_parts.len() >= base_domain_parts {
+            client_parts.len() - base_domain_parts
         } else {
             0
         };
 
         let client_base = client_parts[client_base_start..].join(".");
-        let auth_base = auth_parts[auth_base_start..].join(".");
+        let relay_base = relay_parts.join(".");
 
-        debug!(target: "auth", "Base domains - client: {}, auth: {}", client_base, auth_base);
+        debug!(target: "auth", "Base domains - client: {}, relay: {}", client_base, relay_base);
 
         // Base domains must match
-        if client_base != auth_base {
+        if client_base != relay_base {
             debug!(target: "auth", "Base domain mismatch");
             return false;
         }
@@ -144,7 +137,7 @@ impl<T> Nip42Middleware<T> {
         } = connection_scope
         {
             // Extract subdomain from client's relay URL
-            let client_subdomain = extract_subdomain(&client_host, self.config.base_domain_parts);
+            let client_subdomain = extract_subdomain(&client_host, base_domain_parts);
 
             debug!(target: "auth", "Comparing subdomains - connection: {}, client: {:?}",
                    conn_subdomain, client_subdomain);
@@ -156,7 +149,7 @@ impl<T> Nip42Middleware<T> {
             }
         } else {
             // If no specific subdomain in connection (Scope::Default), ensure client URL has no subdomain
-            let client_subdomain = extract_subdomain(&client_host, self.config.base_domain_parts);
+            let client_subdomain = extract_subdomain(&client_host, base_domain_parts);
             client_subdomain.is_none()
         }
     }
@@ -298,7 +291,7 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for Nip42Mid
                             error!(
                                 target: "auth",
                                 "[{}] Relay URL mismatch for AUTH. Expected domain matching '{}'{}. Got '{}'. Event ID: {}.",
-                                conn_id_err, self.config.auth_url, subdomain_msg, client_relay_url, auth_event_id
+                                conn_id_err, self.config.relay_url, subdomain_msg, client_relay_url, auth_event_id
                             );
 
                             ctx.send_message(RelayMessage::ok(
