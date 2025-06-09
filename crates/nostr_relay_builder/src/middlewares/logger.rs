@@ -5,23 +5,14 @@ use anyhow::Result;
 use async_trait::async_trait;
 use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
-use std::time::Instant;
 use tracing::{debug, info, info_span};
 use websocket_builder::{
     ConnectionContext, DisconnectContext, InboundContext, Middleware, OutboundContext,
 };
 
-/// Trait for handling metrics in logger middleware
-pub trait LoggerMetricsHandler: Send + Sync + std::fmt::Debug {
-    fn record_event_latency(&self, kind: u32, latency_ms: f64);
-    fn increment_active_connections(&self);
-    fn decrement_active_connections(&self);
-}
-
 /// Middleware that logs all incoming and outgoing messages
 #[derive(Debug)]
 pub struct LoggerMiddleware<T = ()> {
-    metrics_handler: Option<Box<dyn LoggerMetricsHandler>>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -34,14 +25,6 @@ impl<T> Default for LoggerMiddleware<T> {
 impl<T> LoggerMiddleware<T> {
     pub fn new() -> Self {
         Self {
-            metrics_handler: None,
-            _phantom: std::marker::PhantomData,
-        }
-    }
-
-    pub fn with_metrics(metrics_handler: Box<dyn LoggerMetricsHandler>) -> Self {
-        Self {
-            metrics_handler: Some(metrics_handler),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -76,12 +59,8 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
             Some(ClientMessage::Event(event)) => {
                 let event_kind_u16 = event.as_ref().kind.as_u16();
                 let event_json = event.as_ref().as_json();
-                let start_time = Instant::now();
 
                 debug!("> EVENT kind {}: {}", event_kind_u16, event_json);
-
-                ctx.state.event_start_time = Some(start_time);
-                ctx.state.event_kind = Some(event_kind_u16);
             }
             Some(ClientMessage::Req {
                 subscription_id,
@@ -148,20 +127,7 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
                     let status_clone = *status;
                     let message_clone = message.clone();
 
-                    if let Some(start_time) = ctx.state.event_start_time.take() {
-                        let latency_ms = start_time.elapsed().as_secs_f64() * 1000.0;
-                        if let Some(kind) = ctx.state.event_kind.take() {
-                            if let Some(handler) = &self.metrics_handler {
-                                handler.record_event_latency(kind as u32, latency_ms);
-                            }
-                        }
-                        debug!(
-                            "< OK {} {} {} took {:?}ms",
-                            event_id_clone, status_clone, message_clone, latency_ms
-                        );
-                    } else {
-                        debug!("< OK {} {} {}", event_id_clone, status_clone, message_clone);
-                    }
+                    debug!("< OK {} {} {}", event_id_clone, status_clone, message_clone);
                 }
                 RelayMessage::Event {
                     subscription_id,
@@ -215,9 +181,6 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
         let _guard = connection_span.enter();
 
         info!("Disconnected from relay");
-        if let Some(handler) = &self.metrics_handler {
-            handler.decrement_active_connections();
-        }
 
         // Continue with the middleware chain
         ctx.next().await
@@ -243,9 +206,6 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
         let _guard = connection_span.enter();
 
         debug!("Connected to relay");
-        if let Some(handler) = &self.metrics_handler {
-            handler.increment_active_connections();
-        }
 
         // Continue with the middleware chain
         ctx.next().await
