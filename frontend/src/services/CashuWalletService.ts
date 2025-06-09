@@ -77,6 +77,7 @@ export interface IMintOperations {
 export interface IWalletInitialization {
   initializeWallet(mints?: string[]): Promise<void>;
   isInitialized(): boolean;
+  dispose(): void;
 }
 
 // Transaction types
