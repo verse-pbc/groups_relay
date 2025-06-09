@@ -6,6 +6,7 @@
 
 use crate::database::RelayDatabase;
 use crate::error::Error;
+use crate::metrics::SubscriptionMetricsHandler;
 use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
 use std::borrow::Cow;
@@ -178,7 +179,7 @@ impl ReplaceableEventsBuffer {
 }
 
 /// Unified subscription service handling both active subscriptions and REQ processing
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SubscriptionService {
     database: Arc<RelayDatabase>,
     subscription_sender: mpsc::UnboundedSender<SubscriptionMessage>,
@@ -186,12 +187,35 @@ pub struct SubscriptionService {
     local_subscription_count: Arc<AtomicUsize>,
     task_token: CancellationToken,
     replaceable_event_queue: mpsc::UnboundedSender<(UnsignedEvent, Scope)>,
+    metrics_handler: Option<Arc<dyn SubscriptionMetricsHandler>>,
+}
+
+impl std::fmt::Debug for SubscriptionService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SubscriptionService")
+            .field("database", &self.database)
+            .field("subscription_sender", &self.subscription_sender)
+            .field("outgoing_sender", &self.outgoing_sender)
+            .field("local_subscription_count", &self.local_subscription_count)
+            .field("task_token", &self.task_token)
+            .field("replaceable_event_queue", &self.replaceable_event_queue)
+            .field("metrics_handler", &self.metrics_handler.is_some())
+            .finish()
+    }
 }
 
 impl SubscriptionService {
     pub async fn new(
         database: Arc<RelayDatabase>,
         outgoing_sender: MessageSender<RelayMessage<'static>>,
+    ) -> Result<Self, Error> {
+        Self::new_with_metrics(database, outgoing_sender, None).await
+    }
+
+    pub async fn new_with_metrics(
+        database: Arc<RelayDatabase>,
+        outgoing_sender: MessageSender<RelayMessage<'static>>,
+        metrics_handler: Option<Arc<dyn SubscriptionMetricsHandler>>,
     ) -> Result<Self, Error> {
         let local_subscription_count = Arc::new(AtomicUsize::new(0));
         let task_token = CancellationToken::new();
@@ -211,6 +235,7 @@ impl SubscriptionService {
             outgoing_sender.clone(),
             local_subscription_count.clone(),
             task_token.clone(),
+            metrics_handler.clone(),
         )?;
 
         let service = Self {
@@ -220,6 +245,7 @@ impl SubscriptionService {
             local_subscription_count,
             task_token,
             replaceable_event_queue,
+            metrics_handler,
         };
 
         service.start_database_subscription_task()?;
@@ -231,6 +257,7 @@ impl SubscriptionService {
         mut outgoing_sender: MessageSender<RelayMessage<'static>>,
         local_subscription_count: Arc<AtomicUsize>,
         task_token: CancellationToken,
+        metrics_handler: Option<Arc<dyn SubscriptionMetricsHandler>>,
     ) -> Result<mpsc::UnboundedSender<SubscriptionMessage>, Error> {
         let (subscription_sender, mut subscription_receiver) = mpsc::unbounded_channel();
 
@@ -254,11 +281,17 @@ impl SubscriptionService {
                                 Some(SubscriptionMessage::Add(subscription_id, filters)) => {
                                     subscriptions.insert(subscription_id.clone(), filters);
                                     local_subscription_count.fetch_add(1, Ordering::SeqCst);
+                                    if let Some(handler) = &metrics_handler {
+                                        handler.increment_active_subscriptions();
+                                    }
                                     debug!("Subscription {} added", subscription_id);
                                 }
                                 Some(SubscriptionMessage::Remove(subscription_id)) => {
                                     if subscriptions.remove(&subscription_id).is_some() {
                                         local_subscription_count.fetch_sub(1, Ordering::SeqCst);
+                                        if let Some(handler) = &metrics_handler {
+                                            handler.decrement_active_subscriptions(1);
+                                        }
                                         debug!("Subscription {} removed", subscription_id);
                                     }
                                 }
@@ -851,7 +884,9 @@ impl SubscriptionService {
         let remaining_subs = self.local_subscription_count.swap(0, Ordering::SeqCst);
 
         if remaining_subs > 0 {
-            // TODO: Add metrics support
+            if let Some(handler) = &self.metrics_handler {
+                handler.decrement_active_subscriptions(remaining_subs);
+            }
         }
         debug!(
             "Cleaned up subscription service with {} remaining subscriptions",

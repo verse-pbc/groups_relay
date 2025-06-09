@@ -1,5 +1,7 @@
 use crate::{
     app_state::HttpServerState, config, groups::Groups, handler, metrics,
+    metrics_handler::PrometheusSubscriptionMetricsHandler,
+    sampled_metrics_handler::SampledMetricsHandler,
     validation_middleware::ValidationMiddleware, groups_event_processor::GroupsRelayProcessor,
     RelayDatabase,
 };
@@ -92,6 +94,8 @@ pub async fn run_server(
         RelayBuilder::new(relay_config)
             .with_cancellation_token(cancellation_token.clone())
             .with_connection_counter(connection_counter.clone())
+            .with_metrics(SampledMetricsHandler::new(10))
+            .with_subscription_metrics(PrometheusSubscriptionMetricsHandler)
             .with_middleware(ValidationMiddleware::new(relay_keys.public_key))
             .with_middleware(Nip09Middleware::new(database.clone()))
             .with_middleware(Nip40ExpirationMiddleware::new())

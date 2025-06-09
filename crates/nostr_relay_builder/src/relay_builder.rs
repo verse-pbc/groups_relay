@@ -1,9 +1,12 @@
 //! RelayBuilder for constructing Nostr relays with custom state
 
 use crate::config::RelayConfig;
+use crate::crypto_worker::CryptoWorker;
 use crate::database::RelayDatabase;
 use crate::error::Error;
 use crate::event_processor::EventProcessor;
+use crate::metrics::SubscriptionMetricsHandler;
+use crate::middlewares::MetricsHandler;
 use crate::message_converter::NostrMessageConverter;
 use crate::middleware::RelayMiddleware;
 use crate::state::{GenericNostrConnectionFactory, NostrConnectionState};
@@ -75,6 +78,10 @@ pub struct RelayBuilder<T = ()> {
     cancellation_token: Option<CancellationToken>,
     /// Optional connection counter for metrics
     connection_counter: Option<Arc<AtomicUsize>>,
+    /// Optional metrics handler for the relay
+    metrics_handler: Option<Arc<dyn MetricsHandler>>,
+    /// Optional subscription metrics handler
+    subscription_metrics_handler: Option<Arc<dyn SubscriptionMetricsHandler>>,
     _phantom: PhantomData<T>,
 }
 
@@ -90,6 +97,8 @@ where
             state_factory: None,
             cancellation_token: None,
             connection_counter: None,
+            metrics_handler: None,
+            subscription_metrics_handler: None,
             _phantom: PhantomData,
         }
     }
@@ -118,6 +127,26 @@ where
         self
     }
 
+    /// Set a metrics handler for the relay
+    #[must_use]
+    pub fn with_metrics<M>(mut self, handler: M) -> Self
+    where
+        M: MetricsHandler + 'static,
+    {
+        self.metrics_handler = Some(Arc::new(handler));
+        self
+    }
+
+    /// Set a subscription metrics handler
+    #[must_use]
+    pub fn with_subscription_metrics<M>(mut self, handler: M) -> Self
+    where
+        M: SubscriptionMetricsHandler + 'static,
+    {
+        self.subscription_metrics_handler = Some(Arc::new(handler));
+        self
+    }
+
     /// Transform the builder to use a different state type
     pub fn with_custom_state<U>(self) -> RelayBuilder<U>
     where
@@ -129,6 +158,8 @@ where
             state_factory: None,
             cancellation_token: self.cancellation_token,
             connection_counter: self.connection_counter,
+            metrics_handler: None,
+            subscription_metrics_handler: None,
             _phantom: PhantomData,
         }
     }
@@ -187,7 +218,20 @@ where
         // Set the global query limit
         crate::global_config::set_query_limit(self.config.query_limit);
 
-        let database = self.config.create_database()?;
+        // Set the global subscription metrics handler if provided
+        if let Some(handler) = self.subscription_metrics_handler.clone() {
+            crate::global_metrics::set_subscription_metrics_handler(handler);
+        }
+
+        // Create the crypto worker for signing and verification
+        let cancellation_token = self.cancellation_token.clone()
+            .unwrap_or_else(|| CancellationToken::new());
+        let crypto_worker = Arc::new(CryptoWorker::new(
+            Arc::new(self.config.keys.clone()),
+            cancellation_token.clone(),
+        ));
+
+        let database = self.config.create_database(crypto_worker.clone())?;
         let custom_middlewares = std::mem::take(&mut self.middlewares);
         let connection_factory = self.build_connection_factory(database.clone())?;
 
@@ -207,6 +251,13 @@ where
         // Add standard middlewares that should always be present
         builder = builder.with_middleware(crate::middlewares::LoggerMiddleware::new());
         builder = builder.with_middleware(crate::middlewares::ErrorHandlingMiddleware::new());
+        
+        // Add metrics middleware if handler is provided
+        if let Some(metrics_handler) = self.metrics_handler.clone() {
+            builder = builder.with_arc_middleware(Arc::new(
+                crate::middlewares::MetricsMiddleware::with_arc_handler(metrics_handler)
+            ));
+        }
 
         // Add NIP-42 authentication middleware if enabled
         if self.config.enable_auth {
@@ -225,8 +276,8 @@ where
                 builder.with_middleware(crate::middlewares::Nip42Middleware::new(auth_config));
         }
 
-        // Add event verification middleware
-        builder = builder.with_middleware(crate::middlewares::EventVerifierMiddleware::new());
+        // Add event verification middleware with crypto worker
+        builder = builder.with_middleware(crate::middlewares::EventVerifierMiddleware::new(crypto_worker.clone()));
 
         // Add custom middlewares
         for middleware in custom_middlewares {
