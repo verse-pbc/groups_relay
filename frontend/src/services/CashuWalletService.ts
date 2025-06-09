@@ -509,17 +509,9 @@ export class CashuWalletService implements ICashuWalletService {
       const ourMints = this.getMintsWithBalance(minAmount);
       const compatibleMints = ourMints.filter(mint => recipientMints.includes(mint));
       
-      const canSend = compatibleBalance >= minAmount;
-      
-      if (!canSend && compatibleMints.length === 0) {
-        return {
-          canSend: false,
-          compatibleBalance,
-          compatibleMints,
-          recipientMints,
-          reason: "No compatible mints - recipient accepts different mints than you have"
-        };
-      }
+      // With allowIntramintFallback enabled, we can always send as long as we have balance
+      const totalBalance = await this.getBalance();
+      const canSend = totalBalance >= minAmount;
       
       if (!canSend) {
         return {
@@ -527,7 +519,7 @@ export class CashuWalletService implements ICashuWalletService {
           compatibleBalance,
           compatibleMints,
           recipientMints,
-          reason: `Insufficient balance in compatible mints (need ${minAmount}, have ${compatibleBalance})`
+          reason: `Insufficient balance (need ${minAmount}, have ${totalBalance})`
         };
       }
 
@@ -881,31 +873,25 @@ export class CashuWalletService implements ICashuWalletService {
             ...payment,
             mints: mintsToUse,
             p2pk: recipientP2PK,
+            allowIntramintFallback: true,
           };
           
           const result = await this.wallet!.cashuPay(finalPayment);
 
           if (!result || !result.proofs || result.proofs.length === 0) {
-            const recipientPubkey = payment.recipientPubkey || pubkey;
-            const ourMintBalances = await this.getMintBalances();
-            const recipientMints = await this.getRecipientAcceptedMints(recipientPubkey);
-            const ourMints = Object.keys(ourMintBalances);
-            const compatibleMints = ourMints.filter(m => recipientMints.includes(m));
+            const totalBalance = await this.getBalance();
             
-            if (compatibleMints.length === 0) {
+            if (totalBalance < amount) {
               throw new Error(
-                `Failed to create nutzap: No compatible mints found.\n\n` +
-                `Your mints: ${ourMints.length > 0 ? ourMints.join(', ') : 'None'}\n` +
-                `Recipient accepts: ${recipientMints.length > 0 ? recipientMints.join(', ') : 'None'}\n\n` +
-                `Add one of the recipient's mints to send nutzaps to them.`
+                `Failed to create nutzap: Insufficient balance.\n\n` +
+                `Needed: ${amount} sats\n` +
+                `Available: ${totalBalance} sats`
               );
             } else {
-              const compatibleBalances = compatibleMints.map(m => `${ourMintBalances[m]} sats from ${m}`).join(', ');
               throw new Error(
-                `Failed to create nutzap: Compatible mints available but payment failed.\n\n` +
-                `Compatible balances: ${compatibleBalances}\n` +
-                `Needed: ${amount} sats\n\n` +
-                `This might be due to insufficient balance in compatible mints or mint connectivity issues.`
+                `Failed to create nutzap: Payment failed.\n\n` +
+                `This might be due to mint connectivity issues or temporary problems.\n` +
+                `Please try again.`
               );
             }
           }
@@ -1090,6 +1076,7 @@ export class CashuWalletService implements ICashuWalletService {
             ...payment,
             mints: mintsToUse,
             p2pk: recipientP2PK,
+            allowIntramintFallback: true,
           };
           
           const result = await this.wallet!.cashuPay(finalPayment);
