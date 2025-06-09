@@ -13,7 +13,7 @@ The `nostr_relay_builder` provides two ways to customize relay behavior:
 `EventProcessor` is a specialized trait that handles your relay's business logic. Behind the scenes, it's wrapped in a `RelayMiddleware` that handles all the complex protocol details for you.
 
 ### Custom State Support
-The framework now supports custom per-connection state through `GenericEventProcessor<T>`:
+The framework now supports custom per-connection state through `EventProcessor<T>`:
 
 ```rust
 // Define custom state
@@ -23,8 +23,8 @@ struct MyState {
     reputation: u32,
 }
 
-// Use GenericEventProcessor with your state type
-impl GenericEventProcessor<MyState> for MyProcessor {
+// Use EventProcessor with your state type
+impl EventProcessor<MyState> for MyProcessor {
     async fn handle_event(
         &self,
         event: Event,
@@ -113,15 +113,15 @@ Use `Middleware` when you need to:
    - `ErrorHandlingMiddleware` - Graceful error handling
    - Metrics collection
 
-### Generic Middleware for Custom State
-When using custom state, use the generic versions of middleware:
+### Middleware with Custom State
+All middleware work seamlessly with custom state:
 
 ```rust
 // For relays with custom state
-let builder = GenericRelayBuilder::<MyState>::new(config)
-    .with_middleware(GenericLoggerMiddleware::<MyState>::new())
-    .with_middleware(GenericErrorHandlingMiddleware::<MyState>::new())
-    .with_middleware(GenericEventVerifierMiddleware::<MyState>::new());
+let builder = RelayBuilder::<MyState>::new(config)
+    .with_middleware(LoggerMiddleware::new())
+    .with_middleware(ErrorHandlingMiddleware::new())
+    .with_middleware(EventVerifierMiddleware::new(crypto_worker));
 ```
 
 ### Example:
@@ -260,7 +260,7 @@ impl Middleware for CustomNipMiddleware {
 
 ## Migration Guide: Adding Custom State
 
-### From EventProcessor to GenericEventProcessor
+### Using EventProcessor with Custom State
 
 If you have an existing `EventProcessor` implementation and want to add custom state:
 
@@ -286,7 +286,7 @@ impl EventProcessor for MyProcessor {
 }
 
 // After
-impl GenericEventProcessor<MyCustomState> for MyProcessor {
+impl EventProcessor<MyCustomState> for MyProcessor {
     async fn handle_event(
         &self,
         event: Event,
@@ -305,10 +305,10 @@ impl GenericEventProcessor<MyCustomState> for MyProcessor {
 let builder = RelayBuilder::new(config);
 
 // After
-let builder = GenericRelayBuilder::<MyCustomState>::new(config)
+let builder = RelayBuilder::<MyCustomState>::new(config)
     .with_state_factory(|| MyCustomState::default());
 ```
 
 ### Backward Compatibility
 
-The original `EventProcessor` trait is still supported and is equivalent to `GenericEventProcessor<()>`. Existing code continues to work without changes.
+The `EventProcessor` trait supports both stateless (`EventProcessor<()>`) and stateful (`EventProcessor<T>`) implementations. Existing stateless code continues to work without changes.

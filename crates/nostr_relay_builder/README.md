@@ -118,7 +118,7 @@ let config = RelayConfig::new("wss://relay.example.com", "./relay.db", keys)
 The relay builder supports custom per-connection state, allowing you to track application-specific data:
 
 ```rust
-use nostr_relay_builder::{GenericRelayBuilder, GenericEventProcessor, NostrConnectionState};
+use nostr_relay_builder::{RelayBuilder, EventProcessor, NostrConnectionState};
 
 // Define your custom state
 #[derive(Debug, Clone, Default)]
@@ -128,12 +128,12 @@ struct ConnectionMetrics {
     user_reputation: u32,
 }
 
-// Implement GenericEventProcessor with your state type
+// Implement EventProcessor with your state type
 #[derive(Debug)]
 struct MetricsProcessor;
 
 #[async_trait::async_trait]
-impl GenericEventProcessor<ConnectionMetrics> for MetricsProcessor {
+impl EventProcessor<ConnectionMetrics> for MetricsProcessor {
     async fn handle_event(
         &self,
         event: Event,
@@ -158,7 +158,7 @@ impl GenericEventProcessor<ConnectionMetrics> for MetricsProcessor {
 }
 
 // Build relay with custom state
-let builder = GenericRelayBuilder::<ConnectionMetrics>::new(config)
+let builder = RelayBuilder::<ConnectionMetrics>::new(config)
     .with_state_factory(|| ConnectionMetrics::default())
     .build_handler(MetricsProcessor)
     .await?;
@@ -407,7 +407,7 @@ See the `examples/` directory for complete, runnable relay implementations:
 
 ### Custom State Examples
 
-- **`generic_processor_demo.rs`** - Basic demonstration of GenericEventProcessor
+- **`custom_state_relay.rs`** - Demonstration of EventProcessor with custom state
   - Shows how to use custom state for rate limiting
   - Per-connection event counting
   - Progressive authentication requirements
@@ -417,7 +417,7 @@ See the `examples/` directory for complete, runnable relay implementations:
   - Event metrics by kind
   - Content filtering with state tracking
 
-- **`generic_builder_demo.rs`** - Using GenericRelayBuilder
+- **`custom_state_relay.rs`** - Using RelayBuilder with custom state
   - Connection statistics tracking
   - Session duration monitoring
   - Custom state initialization
