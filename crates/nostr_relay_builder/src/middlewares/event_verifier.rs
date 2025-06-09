@@ -1,32 +1,30 @@
 //! Event verification middleware
 
+use crate::crypto_worker::CryptoWorker;
 use crate::state::NostrConnectionState;
 use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use std::borrow::Cow;
-use tokio::task::spawn_blocking;
+use std::sync::Arc;
 use websocket_builder::{InboundContext, Middleware, OutboundContext, SendMessage};
 
 /// Middleware that verifies event signatures and basic validity
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct EventVerifierMiddleware<T = ()> {
+    crypto_worker: Arc<CryptoWorker>,
     _phantom: std::marker::PhantomData<T>,
 }
 
 impl<T> EventVerifierMiddleware<T> {
-    pub fn new() -> Self {
+    pub fn new(crypto_worker: Arc<CryptoWorker>) -> Self {
         Self {
+            crypto_worker,
             _phantom: std::marker::PhantomData,
         }
     }
 }
 
-impl<T> Default for EventVerifierMiddleware<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 #[async_trait]
 impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for EventVerifierMiddleware<T> {
@@ -42,11 +40,9 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for EventVer
             let event_id = event_cow.id;
             let event_to_verify: Event = event_cow.as_ref().clone();
 
-            let verify_result = spawn_blocking(move || event_to_verify.verify()).await;
-
-            let verification_failed = match verify_result {
-                Ok(Ok(())) => false,
-                Ok(Err(_)) => true,
+            // Use the crypto worker for verification
+            let verification_failed = match self.crypto_worker.verify_event(event_to_verify).await {
+                Ok(()) => false,
                 Err(_) => true,
             };
 
@@ -76,8 +72,15 @@ mod tests {
     use std::borrow::Cow;
     use std::sync::Arc;
     use websocket_builder::InboundContext;
+    use tokio_util::sync::CancellationToken;
 
-    fn create_middleware_chain() -> Vec<
+    fn create_crypto_worker() -> Arc<CryptoWorker> {
+        let keys = Arc::new(Keys::generate());
+        let cancellation_token = CancellationToken::new();
+        Arc::new(CryptoWorker::new(keys, cancellation_token))
+    }
+
+    fn create_middleware_chain(crypto_worker: Arc<CryptoWorker>) -> Vec<
         Arc<
             dyn Middleware<
                 State = NostrConnectionState<()>,
@@ -86,7 +89,7 @@ mod tests {
             >,
         >,
     > {
-        vec![Arc::new(EventVerifierMiddleware::<()>::new())]
+        vec![Arc::new(EventVerifierMiddleware::<()>::new(crypto_worker))]
     }
 
     async fn create_signed_event() -> (Keys, Event) {
@@ -102,7 +105,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_valid_event_signature() {
-        let chain = create_middleware_chain();
+        let crypto_worker = create_crypto_worker();
+        let chain = create_middleware_chain(crypto_worker);
         let mut state = create_test_state();
         let (_, event) = create_signed_event().await;
 
@@ -121,7 +125,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_event_signature() {
-        let chain = create_middleware_chain();
+        let crypto_worker = create_crypto_worker();
+        let chain = create_middleware_chain(crypto_worker);
         let mut state = create_test_state();
         let (_, mut event) = create_signed_event().await;
         let keys2 = Keys::generate();
@@ -147,7 +152,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_non_event_message_passes_through() {
-        let chain = create_middleware_chain();
+        let crypto_worker = create_crypto_worker();
+        let chain = create_middleware_chain(crypto_worker);
         let mut state = create_test_state();
 
         let mut ctx = InboundContext::new(
@@ -167,7 +173,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_auth_message_passes_through() {
-        let chain = create_middleware_chain();
+        let crypto_worker = create_crypto_worker();
+        let chain = create_middleware_chain(crypto_worker);
         let mut state = create_test_state();
         let (_, auth_event) = create_signed_event().await;
 

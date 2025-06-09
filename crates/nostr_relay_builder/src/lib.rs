@@ -8,14 +8,17 @@
 //! - Database abstraction
 
 pub mod config;
+pub mod crypto_worker;
 pub mod database;
 pub mod error;
 pub mod relay_builder;
 pub mod global_config;
+pub mod global_metrics;
 #[cfg(feature = "axum")]
 pub mod handlers;
 pub mod event_processor;
 pub mod message_converter;
+pub mod metrics;
 pub mod middleware;
 pub mod middlewares;
 pub mod state;
@@ -39,11 +42,11 @@ pub use state::{
     NostrConnectionState,
 };
 pub use subscription_service::{StoreCommand, SubscriptionService};
+pub use crypto_worker::{CryptoWorker, CryptoWorkerMetricsSnapshot};
 
 // Re-export commonly used middlewares
 pub use middlewares::{
     AuthConfig, ClientMessageId, ErrorHandlingMiddleware, EventVerifierMiddleware,
-    GenericErrorHandlingMiddleware, GenericEventVerifierMiddleware, GenericLoggerMiddleware,
-    LoggerMetricsHandler, LoggerMiddleware, Nip09Middleware, Nip40ExpirationMiddleware,
+    LoggerMiddleware, Nip09Middleware, Nip40ExpirationMiddleware,
     Nip42Middleware, Nip70Middleware,
 };

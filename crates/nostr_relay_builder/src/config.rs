@@ -1,5 +1,6 @@
 //! Configuration options for the relay builder
 
+use crate::crypto_worker::CryptoWorker;
 use crate::database::RelayDatabase;
 use crate::error::Error;
 use nostr_lmdb::Scope;
@@ -148,11 +149,11 @@ impl RelayConfig {
         }
     }
 
-    /// Create database instance from configuration
-    pub fn create_database(&self) -> Result<Arc<RelayDatabase>, Error> {
+    /// Create database instance from configuration with a provided crypto worker
+    pub fn create_database(&self, crypto_worker: Arc<CryptoWorker>) -> Result<Arc<RelayDatabase>, Error> {
         match &self.database {
             DatabaseConfig::Path(path) => {
-                Ok(Arc::new(RelayDatabase::new(path, self.keys.clone())?))
+                Ok(Arc::new(RelayDatabase::new(path, crypto_worker)?))
             }
             DatabaseConfig::Instance(db) => Ok(db.clone()),
         }

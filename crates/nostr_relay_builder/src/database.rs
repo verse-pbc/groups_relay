@@ -1,8 +1,8 @@
 //! Database abstraction for Nostr relays
 
+use crate::crypto_worker::CryptoWorker;
 use crate::error::Error;
 use crate::subscription_service::StoreCommand;
-use crate::utils::get_blocking_runtime;
 use nostr_database::nostr::{Event, Filter};
 use nostr_database::Events;
 use nostr_lmdb::{NostrLMDB, Scope};
@@ -10,7 +10,6 @@ use nostr_sdk::prelude::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
-use tokio::task::spawn_blocking;
 use tracing::{debug, error};
 use tracing_futures::Instrument;
 
@@ -22,6 +21,8 @@ pub struct RelayDatabase {
     db_path: PathBuf,
     broadcast_sender: broadcast::Sender<Box<Event>>,
     store_sender: mpsc::UnboundedSender<StoreCommand>,
+    #[allow(dead_code)]
+    crypto_worker: Arc<CryptoWorker>,
 }
 
 impl RelayDatabase {
@@ -29,8 +30,8 @@ impl RelayDatabase {
     ///
     /// # Arguments
     /// * `db_path_param` - Path where the database should be stored
-    /// * `keys` - Keys for signing unsigned events
-    pub fn new(db_path_param: impl AsRef<std::path::Path>, keys: Keys) -> Result<Self, Error> {
+    /// * `crypto_worker` - Crypto worker for signing unsigned events
+    pub fn new(db_path_param: impl AsRef<std::path::Path>, crypto_worker: Arc<CryptoWorker>) -> Result<Self, Error> {
         let db_path = db_path_param.as_ref().to_path_buf();
 
         // Ensure database directory exists
@@ -71,13 +72,13 @@ impl RelayDatabase {
             db_path: db_path.clone(),
             broadcast_sender: broadcast_sender.clone(),
             store_sender,
+            crypto_worker: Arc::clone(&crypto_worker),
         };
 
         // Spawn background task to process store commands
-        let keys_arc = Arc::new(keys);
         Self::spawn_store_processor(
             store_receiver,
-            keys_arc,
+            Arc::clone(&crypto_worker),
             Arc::clone(&relay_db.env),
             broadcast_sender,
         );
@@ -88,7 +89,7 @@ impl RelayDatabase {
     /// Spawn the background task that processes store commands
     fn spawn_store_processor(
         mut store_receiver: mpsc::UnboundedReceiver<StoreCommand>,
-        keys: Arc<Keys>,
+        crypto_worker: Arc<CryptoWorker>,
         env_clone: Arc<NostrLMDB>,
         broadcast_sender: broadcast::Sender<Box<Event>>,
     ) {
@@ -141,15 +142,9 @@ impl RelayDatabase {
                             }
                         }
                         StoreCommand::SaveUnsignedEvent(unsigned_event, _) => {
-                            let keys_clone = Arc::clone(&keys);
-                            let sign_result = spawn_blocking(move || {
-                                get_blocking_runtime()
-                                    .block_on(keys_clone.sign_event(unsigned_event))
-                            })
-                            .await;
-
-                            match sign_result {
-                                Ok(Ok(event)) => match get_processor_env(&scope_clone) {
+                            // Use the crypto worker for signing
+                            match crypto_worker.sign_event(unsigned_event).await {
+                                Ok(event) => match get_processor_env(&scope_clone) {
                                     Ok(env) => {
                                         Self::handle_signed_event(
                                             env,
@@ -163,11 +158,8 @@ impl RelayDatabase {
                                         error!("Failed to get env for unsigned event: {:?}", e)
                                     }
                                 },
-                                Ok(Err(e)) => {
-                                    error!("Error signing unsigned event: {:?}", e);
-                                }
                                 Err(e) => {
-                                    error!("Spawn blocking task failed: {:?}", e);
+                                    error!("Error signing unsigned event: {}", e);
                                 }
                             }
                         }
