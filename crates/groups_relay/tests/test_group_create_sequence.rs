@@ -1,19 +1,22 @@
 use groups_relay::RelayDatabase;
 use nostr_lmdb::Scope;
-use nostr_relay_builder::{StoreCommand, SubscriptionService};
+use nostr_relay_builder::{StoreCommand, SubscriptionService, crypto_worker::CryptoWorker};
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
+use tokio_util::sync::CancellationToken;
 
 async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let admin_keys = Keys::generate();
+    let cancellation_token = CancellationToken::new();
+    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(admin_keys.clone()), cancellation_token));
     let database = Arc::new(
         RelayDatabase::new(
             tmp_dir.path().join("test.db").to_string_lossy().to_string(),
-            admin_keys.clone(),
+            crypto_worker,
         )
         .unwrap(),
     );

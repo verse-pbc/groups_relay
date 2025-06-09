@@ -3,10 +3,11 @@ use std::hint::black_box;
 use groups_relay::groups::Groups;
 use groups_relay::groups_event_processor::GroupsRelayProcessor;
 use groups_relay::RelayDatabase;
-use nostr_relay_builder::{EventProcessor, EventContext, RelayConfig};
+use nostr_relay_builder::{EventProcessor, EventContext, RelayConfig, crypto_worker::CryptoWorker};
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
+use tokio_util::sync::CancellationToken;
 
 /// Create a test database and groups instance
 async fn setup_bench() -> (tempfile::TempDir, Arc<RelayDatabase>, Arc<Groups>, Keys) {
@@ -14,8 +15,10 @@ async fn setup_bench() -> (tempfile::TempDir, Arc<RelayDatabase>, Arc<Groups>, K
     let db_path = tmp_dir.path().join("bench_db");
 
     let admin_keys = Keys::generate();
+    let cancellation_token = CancellationToken::new();
+    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(admin_keys.clone()), cancellation_token));
     let database =
-        Arc::new(RelayDatabase::new(db_path.to_str().unwrap(), admin_keys.clone()).unwrap());
+        Arc::new(RelayDatabase::new(db_path.to_str().unwrap(), crypto_worker).unwrap());
 
     let groups = Arc::new(
         Groups::load_groups(database.clone(), admin_keys.public_key())

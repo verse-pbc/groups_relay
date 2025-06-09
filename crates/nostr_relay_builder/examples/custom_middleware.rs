@@ -3,15 +3,16 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use nostr_relay_builder::{
-    EventContext, EventProcessor, Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware,
-    NostrConnectionState, RelayBuilder, RelayConfig, RelayDatabase, Result as RelayResult,
-    StoreCommand, WebSocketConfig,
+    CryptoWorker, EventContext, EventProcessor, Nip09Middleware, Nip40ExpirationMiddleware, 
+    Nip70Middleware, NostrConnectionState, RelayBuilder, RelayConfig, RelayDatabase, 
+    Result as RelayResult, StoreCommand, WebSocketConfig,
 };
 use nostr_sdk::prelude::*;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use tracing_subscriber::{fmt, EnvFilter};
 use websocket_builder::{InboundContext, Middleware, SendMessage};
@@ -162,8 +163,10 @@ async fn main() -> Result<()> {
         max_connection_time: Some(3600), // 1 hour max connection time
     };
 
-    // Create the database first
-    let database = Arc::new(RelayDatabase::new("./data/custom_relay.db", keys.clone())?);
+    // Create the crypto worker and database
+    let cancellation_token = CancellationToken::new();
+    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(keys.clone()), cancellation_token));
+    let database = Arc::new(RelayDatabase::new("./data/custom_relay.db", crypto_worker)?);
 
     let config = RelayConfig::new("wss://localhost:8080", database.clone(), keys)
         .with_websocket_config(websocket_config);

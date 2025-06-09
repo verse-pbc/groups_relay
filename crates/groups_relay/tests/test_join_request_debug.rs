@@ -1,9 +1,10 @@
 use groups_relay::groups::{Groups, KIND_GROUP_CREATE_9007, KIND_GROUP_CREATE_INVITE_9009, KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_ADD_USER_9000, KIND_GROUP_MEMBERS_39002};
-use nostr_relay_builder::{RelayDatabase, StoreCommand};
+use nostr_relay_builder::{RelayDatabase, StoreCommand, crypto_worker::CryptoWorker};
 use nostr_sdk::prelude::*;
 use nostr_lmdb::Scope;
 use std::sync::Arc;
 use tempfile::TempDir;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
 async fn test_join_request_generates_correct_events() {
@@ -12,10 +13,12 @@ async fn test_join_request_generates_correct_events() {
     let admin_keys = Keys::generate();
     let user_keys = Keys::generate();
     
+    let cancellation_token = CancellationToken::new();
+    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(admin_keys.clone()), cancellation_token));
     let db = Arc::new(
         RelayDatabase::new(
             temp_dir.path().join("test.db").to_string_lossy().to_string(),
-            admin_keys.clone(),
+            crypto_worker,
         )
         .unwrap(),
     );

@@ -7,6 +7,8 @@ pub mod groups;
 pub mod groups_event_processor;
 pub mod handler;
 pub mod metrics;
+pub mod metrics_handler;
+pub mod sampled_metrics_handler;
 pub mod nostr_session_state;
 pub mod validation_middleware;
 #[cfg(test)]

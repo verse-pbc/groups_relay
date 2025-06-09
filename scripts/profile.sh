@@ -262,7 +262,12 @@ echo ""
 
 # Clean up
 echo -e "${BLUE}Cleaning up...${NC}"
-rm -rf cargo-flamegraph.trace cargo-flamegraph.stacks 2>/dev/null || true
+# Force remove old traces (may require sudo)
+if [ -d "cargo-flamegraph.trace" ]; then
+    echo "Removing old trace directory..."
+    sudo rm -rf cargo-flamegraph.trace 2>/dev/null || rm -rf cargo-flamegraph.trace 2>/dev/null || true
+fi
+rm -rf cargo-flamegraph.stacks 2>/dev/null || true
 pkill -f groups_relay || true
 sleep 1
 

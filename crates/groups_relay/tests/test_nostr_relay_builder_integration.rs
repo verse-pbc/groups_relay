@@ -3,9 +3,10 @@
 use groups_relay::{
     config::Keys, groups::Groups, groups_event_processor::GroupsRelayProcessor, RelayDatabase,
 };
-use nostr_relay_builder::{AuthConfig, RelayBuilder, RelayConfig};
+use nostr_relay_builder::{AuthConfig, RelayBuilder, RelayConfig, crypto_worker::CryptoWorker};
 use std::sync::Arc;
 use tempfile::TempDir;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
 async fn test_groups_relay_with_nostr_relay_builder() -> anyhow::Result<()> {
@@ -14,9 +15,11 @@ async fn test_groups_relay_with_nostr_relay_builder() -> anyhow::Result<()> {
     let db_path = temp_dir.path().join("test.db");
 
     let keys = Keys::generate();
+    let cancellation_token = CancellationToken::new();
+    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(keys.clone()), cancellation_token));
 
     // groups_relay's database is used for groups management
-    let groups_database = Arc::new(RelayDatabase::new(&db_path, keys.clone())?);
+    let groups_database = Arc::new(RelayDatabase::new(&db_path, crypto_worker)?);
 
     let groups = Arc::new(Groups::load_groups(groups_database.clone(), keys.public_key()).await?);
 
@@ -27,8 +30,7 @@ async fn test_groups_relay_with_nostr_relay_builder() -> anyhow::Result<()> {
     )
     .with_subdomains(2)
     .with_auth(AuthConfig {
-        auth_url: "wss://test.groups.relay".to_string(),
-        base_domain_parts: 2,
+        relay_url: "wss://test.groups.relay".to_string(),
         validate_subdomains: true,
     });
 

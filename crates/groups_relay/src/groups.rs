@@ -915,9 +915,10 @@ impl DerefMut for Groups {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr_relay_builder::RelayDatabase;
+    use nostr_relay_builder::{RelayDatabase, crypto_worker::CryptoWorker};
     use std::time::Instant;
     use tempfile::TempDir;
+    use tokio_util::sync::CancellationToken;
 
     const TEST_GROUP_ID: &str = "test_group_123";
 
@@ -935,6 +936,8 @@ mod tests {
 
     async fn create_test_groups_with_db(admin_keys: &Keys) -> Groups {
         let temp_dir = TempDir::new().unwrap();
+        let cancellation_token = CancellationToken::new();
+        let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(admin_keys.clone()), cancellation_token));
         let db = Arc::new(
             RelayDatabase::new(
                 temp_dir
@@ -942,7 +945,7 @@ mod tests {
                     .join("test.db")
                     .to_string_lossy()
                     .to_string(),
-                admin_keys.clone(),
+                crypto_worker,
             )
             .unwrap(),
         );

@@ -115,11 +115,21 @@ impl<T> NostrConnectionState<T> {
     ) -> Result<(), Error> {
         debug!("Setting up connection");
 
-        let service = SubscriptionService::new(database, sender)
-            .await
-            .map_err(|e| {
-                Error::internal(format!("Failed to create subscription service: {}", e))
-            })?;
+        let metrics_handler = crate::global_metrics::get_subscription_metrics_handler();
+        
+        let service = if let Some(handler) = metrics_handler {
+            SubscriptionService::new_with_metrics(database, sender, Some(handler))
+                .await
+                .map_err(|e| {
+                    Error::internal(format!("Failed to create subscription service: {}", e))
+                })?
+        } else {
+            SubscriptionService::new(database, sender)
+                .await
+                .map_err(|e| {
+                    Error::internal(format!("Failed to create subscription service: {}", e))
+                })?
+        };
         self.subscription_service = Some(service);
 
         debug!("Connection setup complete");

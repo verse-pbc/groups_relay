@@ -15,8 +15,10 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use groups_relay::{config, groups::Groups, server, RelayDatabase};
+use nostr_relay_builder::crypto_worker::CryptoWorker;
 use nostr_sdk::RelayUrl;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -95,13 +97,16 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| panic!("Invalid relay_url scheme: {}", settings.relay_url));
 
     let relay_keys = relay_settings.relay_keys()?;
+    let cancellation_token = CancellationToken::new();
+    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(relay_keys.clone()), cancellation_token));
     let database = Arc::new(RelayDatabase::new(
         settings.db_path.clone(),
-        relay_keys.clone(),
+        crypto_worker,
     )?);
     let groups =
         Arc::new(Groups::load_groups(Arc::clone(&database), relay_keys.public_key()).await?);
 
+    
     server::run_server(settings, relay_keys, database, groups).await?;
 
     Ok(())

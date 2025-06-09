@@ -179,8 +179,7 @@ async fn main() -> Result<()> {
         keys,
     )
     .with_auth(AuthConfig {
-        auth_url: "ws://localhost:8080".to_string(),
-        base_domain_parts: 2,
+        relay_url: "ws://localhost:8080".to_string(),
         validate_subdomains: false,
     });
 

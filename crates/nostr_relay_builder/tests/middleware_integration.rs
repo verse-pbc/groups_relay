@@ -2,11 +2,12 @@
 
 use async_trait::async_trait;
 use nostr_relay_builder::{
-    Error, EventContext, EventProcessor, NostrConnectionState, RelayDatabase, RelayMiddleware,
-    StoreCommand,
+    CryptoWorker, Error, EventContext, EventProcessor, NostrConnectionState, RelayDatabase, 
+    RelayMiddleware, StoreCommand,
 };
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 /// Test implementation of EventProcessor
 #[derive(Debug, Clone)]
@@ -113,7 +114,9 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let db_path = tmp_dir.path();
         let keys = Keys::generate();
-        let database = Arc::new(RelayDatabase::new(db_path, keys.clone()).unwrap());
+        let cancellation_token = CancellationToken::new();
+        let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(keys.clone()), cancellation_token));
+        let database = Arc::new(RelayDatabase::new(db_path, crypto_worker).unwrap());
         (database, keys, tmp_dir)
     }
 
