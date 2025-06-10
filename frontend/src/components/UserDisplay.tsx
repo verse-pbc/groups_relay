@@ -48,6 +48,9 @@ interface UserDisplayState {
 export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
   private copyTimeout: number | null = null;
   private unsubscribeBalance: (() => void) | null = null;
+  private compatibilityCheckTimer: number | null = null;
+  private compatibilityCheckAttempts: number = 0;
+  private unsubscribeWalletInit: (() => void) | null = null;
 
   state = {
     showNutzapModal: false,
@@ -79,6 +82,13 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       this.unsubscribeBalance = client.onBalanceUpdate((balance) => {
         this.setState({ walletBalance: balance });
       });
+      
+      // Subscribe to wallet initialization
+      this.unsubscribeWalletInit = client.onWalletInitialized(() => {
+        console.log('💰 [UserDisplay] Wallet initialized, checking compatibility');
+        this.compatibilityCheckAttempts = 0; // Reset attempts
+        this.checkRecipientCompatibility();
+      });
     }
     
     // Fetch user profile
@@ -102,10 +112,10 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       if (profileData.has10019 !== undefined) {
         // Pre-fetched profile data available, but we still need full compatibility check
         // since has10019 just means they have the config, not that we're compatible
-        setTimeout(() => this.checkRecipientCompatibility(), TIMEOUTS.COMPATIBILITY_CHECK_DELAY);
+        this.scheduleCompatibilityCheck();
       } else {
         // Check compatibility if not pre-fetched
-        setTimeout(() => this.checkRecipientCompatibility(), TIMEOUTS.COMPATIBILITY_CHECK_DELAY);
+        this.scheduleCompatibilityCheck();
       }
     } else if (client) {
       // Fallback to fetching profile if not pre-fetched
@@ -120,14 +130,34 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
         this.setState({ displayName })
       }
       
-      // Check if we can send nutzaps to this recipient with a small delay to ensure relay is ready
-      setTimeout(() => this.checkRecipientCompatibility(), TIMEOUTS.COMPATIBILITY_CHECK_DELAY);
+      // Check if we can send nutzaps to this recipient
+      this.scheduleCompatibilityCheck();
     }
   }
 
   componentDidUpdate(prevProps: UserDisplayProps) {
     // Re-check if pubkey changes
     if (prevProps.pubkey !== this.props.pubkey) {
+      this.compatibilityCheckAttempts = 0; // Reset attempts for new user
+      this.checkRecipientCompatibility();
+    }
+    
+    // Also re-check if wallet balance changed (indicating wallet state change)
+    if (prevProps.walletBalance !== this.props.walletBalance && this.props.walletBalance !== undefined) {
+      // Clear recipient's cache and re-check when our balance changes
+      // This helps when recipient might have added mints
+      const { pubkey, client } = this.props;
+      const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey;
+      const walletService = client.getWalletService();
+      if (walletService && hexPubkey) {
+        walletService.clearUser10019Cache(hexPubkey);
+        this.checkRecipientCompatibility();
+      }
+    }
+    
+    // Re-check if wallet initialization status changes
+    if (prevProps.hasWalletBalance !== this.props.hasWalletBalance && this.props.hasWalletBalance) {
+      console.log('💰 [UserDisplay] Wallet balance status changed, re-checking compatibility');
       this.checkRecipientCompatibility();
     }
   }
@@ -139,9 +169,17 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
     if (this.unsubscribeBalance) {
       this.unsubscribeBalance();
     }
+    // Unsubscribe from wallet init
+    if (this.unsubscribeWalletInit) {
+      this.unsubscribeWalletInit();
+    }
     // Clear copy timeout
     if (this.copyTimeout) {
       window.clearTimeout(this.copyTimeout)
+    }
+    // Clear compatibility check timer
+    if (this.compatibilityCheckTimer) {
+      window.clearTimeout(this.compatibilityCheckTimer)
     }
   }
 
@@ -156,6 +194,19 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
     }
   }
 
+  // Schedule compatibility check with retry logic
+  scheduleCompatibilityCheck = () => {
+    // Clear any existing timer
+    if (this.compatibilityCheckTimer) {
+      window.clearTimeout(this.compatibilityCheckTimer);
+    }
+    
+    // Schedule the check
+    this.compatibilityCheckTimer = window.setTimeout(() => {
+      this.checkRecipientCompatibility();
+    }, TIMEOUTS.COMPATIBILITY_CHECK_DELAY);
+  }
+
   // Check if target user has a kind:10019 event (nutzap config)
   checkRecipientCompatibility = async () => {
     try {
@@ -164,6 +215,31 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
 
       console.log('🔍 [UserDisplay] Starting compatibility check for:', hexPubkey);
+      console.log('  npub:', pubkey);
+      console.log('  Attempt:', this.compatibilityCheckAttempts + 1);
+
+      // Check if wallet is initialized first
+      if (!client.isWalletInitialized()) {
+        console.log('⏳ [UserDisplay] Wallet not initialized yet, will retry...');
+        
+        // Retry up to 10 times with exponential backoff
+        if (this.compatibilityCheckAttempts < 10) {
+          this.compatibilityCheckAttempts++;
+          const delay = Math.min(1000 * Math.pow(1.5, this.compatibilityCheckAttempts), 10000);
+          console.log(`⏳ [UserDisplay] Scheduling retry #${this.compatibilityCheckAttempts} in ${delay}ms`);
+          
+          this.compatibilityCheckTimer = window.setTimeout(() => {
+            this.checkRecipientCompatibility();
+          }, delay);
+        } else {
+          console.error('❌ [UserDisplay] Wallet initialization timeout after 10 attempts');
+          this.setState({ 
+            canSendNutzap: false,
+            incompatibilityReason: "Wallet initialization timeout"
+          });
+        }
+        return;
+      }
 
       // Use gossip model to check compatibility
       const walletService = client.getWalletService();
@@ -188,11 +264,16 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       
       console.log('🔍 [UserDisplay] Recipient compatibility result:', {
         pubkey: hexPubkey.slice(0, 8) + '...',
+        npub: pubkey,
         canSend: compatibility.canSend,
         compatibleBalance: compatibility.compatibleBalance,
         compatibleMints: compatibility.compatibleMints,
+        recipientMints: compatibility.recipientMints,
         reason: compatibility.reason
       })
+      
+      // Reset attempts counter on success
+      this.compatibilityCheckAttempts = 0;
       
     } catch (error) {
       console.error('Failed to check recipient compatibility:', error)
@@ -212,10 +293,7 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       console.log('🔍 UserDisplay.fetchWalletBalance() called from nutzap modal')
       console.log('  Target pubkey:', hexPubkey.slice(0, 8) + '...')
       console.log('  Compatible mints:', this.state.compatibleMints)
-
-      // Get compatible balance for this recipient
-      const totalBalance = this.state.compatibleBalance
-      console.log('  Compatible balance:', totalBalance)
+      console.log('  Compatible balance (for modal display):', this.state.compatibleBalance)
       
       // Get compatible mint balances only
       const walletService = client.getWalletService()
@@ -231,14 +309,16 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
         const selectedMint = sortedMints.length > 0 ? sortedMints[0][0] : ''
         console.log('  Auto-selected mint:', selectedMint)
 
+        // IMPORTANT: Keep walletBalance as the compatible balance for this modal
+        // This is what the user can actually send to this recipient
         this.setState({
-          walletBalance: totalBalance,
+          walletBalance: this.state.compatibleBalance, // Use stored compatible balance
           mintBalances: compatibleMintBalances,
           selectedMint
         })
       } else {
         this.setState({
-          walletBalance: totalBalance,
+          walletBalance: this.state.compatibleBalance, // Use stored compatible balance
           mintBalances: {},
           selectedMint: ''
         })
@@ -287,20 +367,16 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       // No timeout needed - the CashuWalletService now handles this with NDK zapper events
       await client.sendNutzap(hexPubkey, sats, undefined, this.props.groupId);
 
-      // SUCCESS - Update balance optimistically (without re-fetching from mints)
-      const currentBalance = this.state.walletBalance
-      const newBalance = Math.max(0, currentBalance - sats)
-
-      // Update balance and notify other components
+      // SUCCESS - Close modal and refresh balance
       this.setState({
         showNutzapModal: false,
         amount: '',
         comment: '',
-        error: null,
-        walletBalance: newBalance
+        error: null
       })
 
-      client.notifyBalanceUpdate(newBalance)
+      // Don't update compatible balance as total balance - let the wallet service handle the actual balance update
+      // The balance callbacks will update the UI with the correct total balance
 
       if (onSendNutzap) onSendNutzap()
     } catch (error) {
@@ -443,7 +519,7 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
             <button
               disabled
               class="shrink-0 p-1.5 text-gray-500 bg-gray-500/10 rounded opacity-50 cursor-not-allowed"
-              title={this.state.incompatibilityReason || "Cannot send nutzap to this user"}
+              title={this.state.incompatibilityReason || "Unable to send nutzap"}
             >
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -477,7 +553,7 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
               <div class="space-y-4">
                 <div>
                   <label class="block text-sm text-[var(--color-text-secondary)] mb-1">
-                    Available Mints
+                    Compatible Mints
                   </label>
                   <div class="text-xs text-[var(--color-text-tertiary)] space-y-1">
                     {Object.entries(this.state.mintBalances).map(([mint, balance]) => (
@@ -489,7 +565,7 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
                     ))}
                   </div>
                   <p class="text-xs text-[var(--color-text-tertiary)] mt-2">
-                    Note: The wallet will automatically select the best mint for this transaction.
+                    You can send up to <span class="text-[#f7931a] font-medium">₿{this.state.walletBalance.toLocaleString()} sats</span> from compatible mints.
                   </p>
                 </div>
 
@@ -505,12 +581,8 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
                     class="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent transition-all"
                     disabled={sending}
                   />
-                  <p class="text-xs text-[var(--color-text-tertiary)] mt-1 flex items-center gap-1">
-                    Total balance: <span class="text-[#f7931a] font-medium">₿{this.state.walletBalance.toLocaleString()} sats</span>
-                    {/* Debug output */}
-                    {this.state.walletBalance === 0 && (
-                      <span class="text-red-400 text-xs ml-2">(DEBUG: Balance is 0 in modal)</span>
-                    )}
+                  <p class="text-xs text-[var(--color-text-tertiary)] mt-1">
+                    Available: <span class="text-[#f7931a] font-medium">₿{this.state.walletBalance.toLocaleString()} sats</span>
                   </p>
                 </div>
 

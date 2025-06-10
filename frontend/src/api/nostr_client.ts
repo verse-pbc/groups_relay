@@ -50,12 +50,13 @@ export class NostrGroupError extends Error {
 }
 
 export class NostrClient {
-  private ndk: NDK;
-  private profileNdk: NDK | null = null;
+  private groupsNdk: NDK;
+  private globalNdk: NDK | null = null;
   readonly config: NostrClientConfig;
   private profileCache: Map<string, any> = new Map();
   private walletService: ICashuWalletService | null = null;
   private storageInitialized = false;
+  private walletInitCallbacks: Set<() => void> = new Set();
 
   constructor(key: string, config?: Partial<NostrClientConfig>) {
     try {
@@ -97,32 +98,32 @@ export class NostrClient {
         );
       }
 
-      // Single NDK instance - start with only the main relay to ensure proper connection
-      this.ndk = new NDK({
+      // Groups NDK - only for group relay operations
+      this.groupsNdk = new NDK({
         explicitRelayUrls: [
           this.config.relayUrl     // Group relay (current server) - connect to this first
         ],
-        enableOutboxModel: false,        // Disable initially to prevent connection race
-        autoConnectUserRelays: false,    // Disable initially to prevent connection race
+        enableOutboxModel: false,        // Groups don't need outbox model
+        autoConnectUserRelays: false,    // Groups operations are local only
         signer,
       });
 
-      this.ndk.pool.on("relay:connect", (relay: NDKRelay) => {
-        relay.authPolicy = NDKRelayAuthPolicies.signIn({ ndk: this.ndk });
+      this.groupsNdk.pool.on("relay:connect", (relay: NDKRelay) => {
+        relay.authPolicy = NDKRelayAuthPolicies.signIn({ ndk: this.groupsNdk });
       });
 
-      // Add error tracking for NDK instance
-      this.ndk.pool.on('relay:disconnect', (relay: NDKRelay) => {
+      // Add error tracking for groups NDK instance
+      this.groupsNdk.pool.on('relay:disconnect', (relay: NDKRelay) => {
         // Normal disconnections should trigger reconnection, not be counted as failures
         this.markRelayAsDead(relay.url, false);
       });
       
       // Track flapping relays (frequently connecting/disconnecting)
-      this.ndk.pool.on('flapping', (relay: NDKRelay) => {
+      this.groupsNdk.pool.on('flapping', (relay: NDKRelay) => {
         this.markRelayAsDead(relay.url, true, new Error('Relay is flapping'));
       });
 
-      this.ndk.pool.on('relay:auth', (relay: NDKRelay, _challenge: string) => {
+      this.groupsNdk.pool.on('relay:auth', (relay: NDKRelay, _challenge: string) => {
         // Auth challenge received - set up auth failure detection
         const authTimeout = setTimeout(() => {
           this.markRelayAsDead(relay.url, true, new Error('Auth timeout'));
@@ -176,7 +177,7 @@ export class NostrClient {
   }
 
   get ndkInstance(): NDK {
-    return this.ndk;
+    return this.groupsNdk;
   }
 
 
@@ -208,6 +209,72 @@ export class NostrClient {
   }
 
 
+  // Ensure globalNdk is connected
+  private async ensureGlobalNdk(): Promise<NDK> {
+    // If globalNdk exists and is connected, return it
+    if (this.globalNdk) {
+      // Check if at least one relay is connected
+      const relays = Array.from(this.globalNdk.pool.relays.values());
+      const hasConnectedRelay = relays.some(relay => relay.status === 1);
+      if (hasConnectedRelay) {
+        return this.globalNdk;
+      }
+      
+      // Wait a bit for connection if no relays are connected yet
+      console.log("Waiting for globalNdk to connect...");
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Check again
+      const hasConnectedRelayAfterWait = Array.from(this.globalNdk.pool.relays.values()).some(relay => relay.status === 1);
+      if (hasConnectedRelayAfterWait) {
+        return this.globalNdk;
+      }
+    }
+    
+    // Fallback to groupsNdk
+    console.warn("GlobalNdk not ready, falling back to groupsNdk");
+    return this.groupsNdk;
+  }
+  
+  // Ensure a specific relay is authenticated
+  // private async ensureRelayAuthenticated(ndk: NDK, relayUrl: string): Promise<void> {
+  //   const relay = Array.from(ndk.pool.relays.values()).find(r => 
+  //     r.url.includes(relayUrl) || r.url.includes('localhost') || r.url.includes('example.local')
+  //   );
+    
+  //   if (!relay) {
+  //     console.warn(`Relay ${relayUrl} not found in pool`);
+  //     return;
+  //   }
+    
+  //   // Check if already ready (status 5 seems to indicate authenticated)
+  //   if (relay.status === 5) {
+  //     console.log(`Relay ${relayUrl} already ready/authenticated`);
+  //     return;
+  //   }
+    
+  //   // Wait for authentication
+  //   console.log(`Waiting for relay ${relayUrl} to authenticate...`);
+  //   await new Promise<void>((resolve) => {
+  //     const timeout = setTimeout(() => {
+  //       console.warn(`Authentication timeout for ${relayUrl}`);
+  //       resolve();
+  //     }, 3000);
+      
+  //     relay.once('authed', () => {
+  //       console.log(`Relay ${relayUrl} authenticated`);
+  //       clearTimeout(timeout);
+  //       resolve();
+  //     });
+      
+  //     // If already ready, resolve immediately
+  //     if (relay.status === 5) {
+  //       clearTimeout(timeout);
+  //       resolve();
+  //     }
+  //   });
+  // }
+
   // Wallet methods
   async initializeWallet(mints?: string[]): Promise<void> {
     try {
@@ -218,10 +285,26 @@ export class NostrClient {
       
       // Initialize wallet service if not already done
       if (!this.walletService) {
-        this.walletService = new CashuWalletService(this.ndk);
+        // Ensure globalNdk is connected before creating wallet service
+        const ndkForWallet = await this.ensureGlobalNdk();
+        console.log("Creating wallet service with NDK instance:", ndkForWallet === this.globalNdk ? "globalNdk" : "groupsNdk");
+        this.walletService = new CashuWalletService(ndkForWallet);
+      } else {
+        // Clear kind:10019 cache when re-initializing wallet (e.g., user switch)
+        this.walletService.clearUser10019Cache();
       }
       
       await this.walletService.initializeWallet(mints);
+      
+      // Notify any listeners that wallet is now initialized
+      this.walletInitCallbacks.forEach(callback => {
+        try {
+          callback();
+        } catch (err) {
+          console.error('Error in wallet init callback:', err);
+        }
+      });
+      this.walletInitCallbacks.clear();
     } catch (error) {
       throw new NostrGroupError(
         error instanceof Error ? error.message : String(error),
@@ -233,29 +316,11 @@ export class NostrClient {
   // Fetch existing NIP-60 wallet from user's relays
   async fetchNIP60Wallet(): Promise<any> {
     try {
-      const user = await this.ndk.signer?.user();
+      const user = await this.groupsNdk.signer?.user();
       if (!user) return null;
 
-      // First get user's relay list to know where to look
-      const userRelays = await this.getUserRelays(user.pubkey);
-      
-      // Create a temporary NDK instance with user's relays
-      const userNdk = new NDK({
-        explicitRelayUrls: userRelays,
-        signer: this.ndk.signer
-      });
-      
-      // Connect with timeout
-      const connectPromise = userNdk.connect();
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Connection timeout")), 3000)
-      );
-      
-      try {
-        await Promise.race([connectPromise, timeoutPromise]);
-      } catch (err) {
-        // Continue anyway - some relays might be connected
-      }
+      // Use globalNdk which has outbox model enabled
+      // It will automatically discover and use the user's preferred relays
 
       // Fetch NIP-60 wallet events (kinds 17375, 7375, 7376)
       const walletEventKinds = [17375, 7375, 7376];
@@ -265,8 +330,8 @@ export class NostrClient {
         limit: 100
       };
 
-      // Fetch from user's relays
-      const events = await userNdk.fetchEvents(filter);
+      // Fetch from user's relays using globalNdk with outbox model
+      const events = await (this.globalNdk || this.groupsNdk).fetchEvents(filter);
       
       if (events.size === 0) {
         return null;
@@ -381,6 +446,21 @@ export class NostrClient {
   
   isWalletInitialized(): boolean {
     return this.walletService?.isInitialized() ?? false;
+  }
+  
+  // Subscribe to wallet initialization
+  onWalletInitialized(callback: () => void): () => void {
+    // If already initialized, call immediately
+    if (this.isWalletInitialized()) {
+      callback();
+      return () => {}; // No-op unsubscribe
+    }
+    
+    // Otherwise add to callbacks
+    this.walletInitCallbacks.add(callback);
+    return () => {
+      this.walletInitCallbacks.delete(callback);
+    };
   }
 
 
@@ -531,7 +611,7 @@ export class NostrClient {
   getCachedBalance(): number {
     // Create wallet service if needed (to access cached balance)
     if (!this.walletService) {
-      this.walletService = new CashuWalletService(this.ndk);
+      this.walletService = new CashuWalletService(this.globalNdk || this.groupsNdk);
     }
     return this.walletService.getCachedBalance();
   }
@@ -540,7 +620,7 @@ export class NostrClient {
   getCachedBalanceForUser(userPubkey: string): number {
     // Create wallet service if needed
     if (!this.walletService) {
-      this.walletService = new CashuWalletService(this.ndk);
+      this.walletService = new CashuWalletService(this.globalNdk || this.groupsNdk);
     }
     return this.walletService.loadCachedBalanceForUser(userPubkey);
   }
@@ -549,7 +629,7 @@ export class NostrClient {
   onBalanceUpdate(callback: (balance: number) => void): () => void {
     // Create wallet service if needed (to enable subscriptions)
     if (!this.walletService) {
-      this.walletService = new CashuWalletService(this.ndk);
+      this.walletService = new CashuWalletService(this.globalNdk || this.groupsNdk);
     }
     return this.walletService.onBalanceUpdate(callback);
   }
@@ -577,12 +657,12 @@ export class NostrClient {
     return this.walletService.checkAndClaimTokens(mintUrl, quote);
   }
 
-  async meltToLightning(invoice: string): Promise<{ paid: boolean; preimage?: string; fee?: number; error?: string }> {
+  async meltToLightning(invoice: string, selectedMint?: string): Promise<{ paid: boolean; preimage?: string; fee?: number; error?: string }> {
     if (!this.walletService) {
       throw new Error("Wallet not initialized");
     }
     
-    return this.walletService.meltToLightning(invoice);
+    return this.walletService.meltToLightning(invoice, selectedMint);
   }
 
 
@@ -608,18 +688,86 @@ export class NostrClient {
       limit: 1
     };
     
-    // Fetch event with timeout
-    const fetchPromise = this.ndk.fetchEvents(filter);
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Event fetch timeout")), 5000)
-    );
+    // Try to fetch event from both NDK instances (global and groups)
+    // Group events might only exist on the local relay
+    let event: any = null;
     
-    const events = await Promise.race([fetchPromise, timeoutPromise]) as Set<any>;
-    if (events.size === 0) {
-      throw new Error('Event not found');
+    // First try globalNdk
+    try {
+      const ndkToUse = await this.ensureGlobalNdk();
+      const fetchPromise = ndkToUse.fetchEvents(filter);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Timeout")), 2000)
+      );
+      
+      const events = await Promise.race([fetchPromise, timeoutPromise]) as Set<any>;
+      if (events.size > 0) {
+        event = Array.from(events)[0];
+      }
+    } catch (err) {
+      console.log('Event not found on global relays, trying local relay...');
     }
     
-    const event = Array.from(events)[0];
+    // If not found, try groupsNdk (local relay) using subscription approach
+    if (!event) {
+      try {
+        console.log('Trying to fetch from local relay using subscription...');
+        
+        // Check current authentication status
+        const localRelay = Array.from(this.groupsNdk.pool.relays.values()).find(r => 
+          r.url.includes('localhost') || r.url.includes('example.local') || r.url.includes('8080')
+        );
+        
+        if (localRelay) {
+          console.log(`Local relay status before fetch: ${localRelay.status}, connected: ${localRelay.connected}`);
+        }
+        
+        // Use subscription approach which handles auth better
+        const sub = this.groupsNdk.subscribe(filter, { 
+          closeOnEose: true,
+          groupable: false 
+        });
+        
+        // Wait for event with timeout
+        event = await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            console.log('Subscription timeout reached');
+            sub.stop();
+            resolve(null);
+          }, 5000); // Increased timeout to allow for auth
+          
+          sub.on('event', (e: any) => {
+            console.log('Received event via subscription');
+            clearTimeout(timeout);
+            sub.stop();
+            resolve(e);
+          });
+          
+          sub.on('eose', () => {
+            console.log('Received EOSE without event');
+            clearTimeout(timeout);
+            sub.stop();
+            resolve(null);
+          });
+        });
+        
+        // If still no event but relay got authenticated during subscription, try fetchEvents
+        if (!event && localRelay && localRelay.status >= 5) {
+          console.log('Relay authenticated during subscription, trying fetchEvents...');
+          const events = await this.groupsNdk.fetchEvents(filter);
+          if (events.size > 0) {
+            event = Array.from(events)[0];
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching from local relay:', err);
+      }
+    }
+    
+    if (!event) {
+      throw new Error('Event not found - make sure the event exists on accessible relays');
+    }
+    
     const authorPubkey = event.pubkey;
     
     // If nutzapRelays not provided, fetch the author's 10019 event to get their nutzap relays
@@ -628,7 +776,8 @@ export class NostrClient {
       nutzapRelays = event10019 ? this.walletService!.parseNutzapRelays(event10019) : null;
     }
 
-    await this.walletService.sendNutzapToEvent(eventId, amount, mint, nutzapRelays, groupId);
+    // Pass the event object to wallet service since it might not have access to local relay
+    await this.walletService.sendNutzapToEvent(eventId, amount, mint, nutzapRelays, groupId, event);
   }
 
 
@@ -647,12 +796,12 @@ export class NostrClient {
 
   // Public methods for fetching events and subscribing
   async fetchEvents(filter: any): Promise<any[]> {
-    const events = await this.ndk.fetchEvents(filter)
+    const events = await this.groupsNdk.fetchEvents(filter)
     return Array.from(events)
   }
 
   async subscribe(filter: any, options?: any): Promise<any> {
-    return this.ndk.subscribe(filter, options)
+    return this.groupsNdk.subscribe(filter, options)
   }
 
   // Minimal list of relays that are persistently problematic (DNS failures, etc)
@@ -724,8 +873,8 @@ export class NostrClient {
     console.log(`🔄 Attempting to reconnect to ${relayUrl}`);
     
     try {
-      // Find the relay in our single NDK pool and attempt reconnection
-      const relay = this.ndk.pool.relays.get(relayUrl);
+      // Find the relay in our groups NDK pool and attempt reconnection
+      const relay = this.groupsNdk.pool.relays.get(relayUrl);
       
       if (relay && relay.status !== 1) { // Not connected
         await this.connectToRelay(relay);
@@ -836,7 +985,7 @@ export class NostrClient {
         limit: 1
       };
       
-      const events = await this.ndk.fetchEvents(filter);
+      const events = await this.groupsNdk.fetchEvents(filter);
       if (events.size === 0) {
         const fallbackRelays = ["wss://relay.damus.io", "wss://relay.nos.social", "wss://relay.primal.net"];
         return this.filterHealthyRelays(fallbackRelays);
@@ -879,12 +1028,9 @@ export class NostrClient {
   async connect() {
     try {
       console.log(`Connecting to relay: ${this.config.relayUrl}`);
-      await this.ndk.connect();
+      await this.groupsNdk.connect();
       
-      // Create wallet service immediately after connection
-      if (!this.walletService) {
-        this.walletService = new CashuWalletService(this.ndk);
-      }
+      // Don't create wallet service here - it will be created when needed with proper NDK instance
 
       // Wait specifically for the main relay to be ready
       const mainRelayUrl = this.config.relayUrl;
@@ -898,7 +1044,7 @@ export class NostrClient {
       let mainRelay: NDKRelay | undefined;
       
       while (!mainRelay && attempts < 20) {
-        mainRelay = Array.from(this.ndk.pool.relays.values()).find(
+        mainRelay = Array.from(this.groupsNdk.pool.relays.values()).find(
           relay => normalizeUrl(relay.url) === normalizedMainUrl
         );
         
@@ -911,7 +1057,7 @@ export class NostrClient {
 
       if (!mainRelay) {
         // List all relays in pool for debugging
-        const availableRelays = Array.from(this.ndk.pool.relays.values()).map(r => r.url);
+        const availableRelays = Array.from(this.groupsNdk.pool.relays.values()).map(r => r.url);
         console.error(`Main relay not found. Looking for: ${mainRelayUrl}, Available: ${availableRelays.join(', ')}`);
         throw new Error(`Main relay ${mainRelayUrl} not found in pool after ${attempts} attempts`);
       }
@@ -967,7 +1113,7 @@ export class NostrClient {
       });
 
       // Log all relay statuses
-      const relays = Array.from(this.ndk.pool.relays.values());
+      const relays = Array.from(this.groupsNdk.pool.relays.values());
       console.log(
         "Connected to relays:",
         relays.map((r) => ({
@@ -980,25 +1126,30 @@ export class NostrClient {
 
       console.log("Main relay connected successfully");
       
-      // Now create a separate NDK instance for profile fetching with public relays
+      // Now create a separate NDK instance for all non-group operations with public relays
       try {
-        this.profileNdk = new NDK({
+        this.globalNdk = new NDK({
           explicitRelayUrls: [
-            "wss://relay.damus.io",
-            "wss://relay.nos.social",
-            "wss://purplepag.es"
+            this.config.relayUrl,      // Include local relay for complete coverage
+            "wss://relay.damus.io",   // Popular relay
+            "wss://relay.nos.social",  // NOS relay
+            "wss://purplepag.es",      // Profile relay
+            "wss://relay.primal.net",  // Primal relay
+            "wss://nos.lol"            // Popular relay
           ],
           enableOutboxModel: true,
           autoConnectUserRelays: true,
-          signer: this.ndk.signer
+          signer: this.groupsNdk.signer
         });
         
-        // Don't wait for profile NDK to connect - it's not critical
-        this.profileNdk.connect().catch(err => 
-          console.warn("Profile NDK connection failed, profiles may not load:", err)
-        );
+        // Connect global NDK in the background
+        this.globalNdk.connect().then(() => {
+          console.log("Global NDK connected successfully");
+        }).catch(err => {
+          console.warn("Global NDK connection failed, some features may not work:", err);
+        });
       } catch (err) {
-        console.warn("Failed to create profile NDK:", err);
+        console.warn("Failed to create global NDK:", err);
       }
     } catch (error) {
       throw new NostrGroupError(`Failed to connect: ${error}`);
@@ -1007,19 +1158,19 @@ export class NostrClient {
 
   async disconnect() {
     try {
-      // Close all relay connections from the main NDK instance
-      const relays = Array.from(this.ndk.pool.relays.values());
+      // Close all relay connections from the groups NDK instance
+      const relays = Array.from(this.groupsNdk.pool.relays.values());
       await Promise.all(relays.map((relay) => relay.disconnect()));
 
       // Clear any subscriptions
-      this.ndk.pool.removeAllListeners();
+      this.groupsNdk.pool.removeAllListeners();
       
-      // Disconnect profile NDK if it exists
-      if (this.profileNdk) {
-        const profileRelays = Array.from(this.profileNdk.pool.relays.values());
-        await Promise.all(profileRelays.map((relay) => relay.disconnect()));
-        this.profileNdk.pool.removeAllListeners();
-        this.profileNdk = null;
+      // Disconnect global NDK if it exists
+      if (this.globalNdk) {
+        const globalRelays = Array.from(this.globalNdk.pool.relays.values());
+        await Promise.all(globalRelays.map((relay) => relay.disconnect()));
+        this.globalNdk.pool.removeAllListeners();
+        this.globalNdk = null;
       }
 
       // Clear profile cache
@@ -1074,7 +1225,7 @@ export class NostrClient {
   ) {
     try {
       // Ensure we have a relay in READY state (status 5)
-      const readyRelays = Array.from(this.ndk.pool.relays.values()).filter(
+      const readyRelays = Array.from(this.groupsNdk.pool.relays.values()).filter(
         (r) => r.status === 5
       );
 
@@ -1085,7 +1236,7 @@ export class NostrClient {
         );
       }
 
-      const ndkEvent = new NDKEvent(this.ndk);
+      const ndkEvent = new NDKEvent(this.groupsNdk);
       ndkEvent.kind = kind;
       ndkEvent.tags = tags;
       ndkEvent.content = content;
@@ -1227,7 +1378,7 @@ export class NostrClient {
 
       const user = new NDKUser({ pubkey });
       // Use profile NDK if available, otherwise fall back to main NDK
-      user.ndk = this.profileNdk || this.ndk;
+      user.ndk = this.globalNdk || this.groupsNdk;
       await user.fetchProfile();
 
       // Cache the profile

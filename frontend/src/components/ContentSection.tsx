@@ -173,8 +173,8 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
         })
       }
 
-      // Use the shared NDK instance with outbox model + kind 10019 relay union
-      const ndk = (this.props.client as any).ndk
+      // Use the globalNdk instance which has outbox model enabled for nutzap discovery
+      const ndk = (this.props.client as any).globalNdk || (this.props.client as any).groupsNdk
       const uniqueAuthorPubkeys = [...new Set(this.props.group.content?.map(item => item.pubkey) || [])]
       
       console.log('🔍 Fetching nutzaps using outbox model + kind:10019 relays for event authors (recipients):', uniqueAuthorPubkeys)
@@ -182,14 +182,16 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       
       // First, let NDK discover relays for the event authors (nutzap recipients)
       // by fetching their relay lists, which will populate the outbox tracker
-      await Promise.all(uniqueAuthorPubkeys.map(async (pubkey) => {
-        try {
-          const user = ndk.getUser({ pubkey })
-          await user.fetchProfile() // This will trigger relay discovery for this user
-        } catch (err) {
-          console.debug('Could not fetch profile for relay discovery:', pubkey, err)
-        }
-      }))
+      if (ndk) {
+        await Promise.all(uniqueAuthorPubkeys.map(async (pubkey) => {
+          try {
+            const user = ndk.getUser({ pubkey })
+            await user.fetchProfile() // This will trigger relay discovery for this user
+          } catch (err) {
+            console.debug('Could not fetch profile for relay discovery:', pubkey, err)
+          }
+        }))
+      }
       
       console.log('🔍 Found kind:10019 nutzap relays:', Array.from(allNutzapRelays))
       
@@ -201,9 +203,13 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
       
       // First: Get nutzaps from outbox model (kind 10002/kind 3 relays)
       console.log('🔍 Step 1: Fetching via outbox model')
-      const outboxEvents = await ndk.fetchEvents(filter)
-      outboxEvents.forEach((event: any) => eventsSet.add(event))
-      console.log('🔍 Found', outboxEvents.size, 'nutzaps via outbox model')
+      if (ndk) {
+        const outboxEvents = await ndk.fetchEvents(filter)
+        outboxEvents.forEach((event: any) => eventsSet.add(event))
+        console.log('🔍 Found', outboxEvents.size, 'nutzaps via outbox model')
+      } else {
+        console.warn('⚠️ NDK not available for nutzap fetching')
+      }
       
       // Second: Get nutzaps from kind:10019 relays (NIP-61 compliance)
       if (allNutzapRelays.size > 0) {
@@ -675,7 +681,7 @@ export class ContentSection extends BaseComponent<ContentSectionProps, ContentSe
                               disabled
                               class="text-[11px] opacity-0 group-hover:opacity-100 text-gray-500 
                                      transition-all duration-150 flex items-center p-1 cursor-not-allowed opacity-50"
-                              title={this.state.authorCompatibility.get(item.pubkey)?.reason || "Cannot send nutzap to this user"}
+                              title={this.state.authorCompatibility.get(item.pubkey)?.reason || "Unable to send nutzap"}
                             >
                               <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                 <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>

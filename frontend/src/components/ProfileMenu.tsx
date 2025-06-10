@@ -20,6 +20,8 @@ interface ProfileMenuState {
   isRelayAdmin: boolean;
   cashuBalance: number;
   showWalletModal: boolean;
+  mintCount: number;
+  walletLoading: boolean;
 }
 
 export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
@@ -32,7 +34,9 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
     userPubkey: null,
     isRelayAdmin: false,
     cashuBalance: 0,
-    showWalletModal: false
+    showWalletModal: false,
+    mintCount: 0,
+    walletLoading: true
   };
 
   componentDidMount() {
@@ -42,9 +46,17 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
 
     // Subscribe to balance updates IMMEDIATELY on mount
     console.log('🔔 [PROFILE] Subscribing to balance updates IMMEDIATELY');
-    this.unsubscribeBalance = this.props.client.onBalanceUpdate((balance) => {
+    this.unsubscribeBalance = this.props.client.onBalanceUpdate(async (balance) => {
       console.log('🔔 [PROFILE] Balance update received:', balance);
       this.setState({ cashuBalance: balance });
+      
+      // Also refresh mint count when balance updates
+      try {
+        const mints = await this.props.client.getCashuMints();
+        this.setState({ mintCount: mints.length });
+      } catch (err) {
+        console.warn('Failed to refresh mint count on balance update:', err);
+      }
     });
     console.log('🔔 [PROFILE] Subscription complete');
 
@@ -82,16 +94,29 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
         try {
           await this.props.client.initializeWallet();
           console.log('🔔 [PROFILE] Wallet initialized successfully');
+          
+          // Get mint count after initialization
+          const mints = await this.props.client.getCashuMints();
+          this.setState({ mintCount: mints.length, walletLoading: false });
         } catch (err) {
           console.warn('🔔 [PROFILE] Failed to initialize wallet:', err);
+          this.setState({ walletLoading: false });
         }
+      } else {
+        // Wallet already initialized, get mint count
+        const mints = await this.props.client.getCashuMints();
+        this.setState({ mintCount: mints.length, walletLoading: false });
       }
 
-      // Fetch fresh balance after user is loaded
+      // Fetch fresh balance and mint count after user is loaded
       try {
-        const balance = await this.props.client.getCashuBalance();
+        const [balance, mints] = await Promise.all([
+          this.props.client.getCashuBalance(),
+          this.props.client.getCashuMints()
+        ]);
         console.log('🔔 [PROFILE] Fresh balance fetched:', balance);
-        this.setState({ cashuBalance: balance });
+        console.log('🔔 [PROFILE] Mint count:', mints.length);
+        this.setState({ cashuBalance: balance, mintCount: mints.length });
       } catch (err) {
         console.warn('🔔 [PROFILE] Failed to fetch fresh balance:', err);
       }
@@ -179,20 +204,28 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
             hideNutzap={!window.location.search.includes('selfnutzap')}
           />
           
-          {/* Show total balance */}
+          {/* Show total balance or CTA */}
           <div class="flex items-center gap-2 text-sm">
-            <div class="text-[#f7931a] font-semibold flex items-center gap-1">
-              {(() => {
-                const totalBalance = this.state.cashuBalance;
-                return totalBalance > 0 ? (
-                  <>
-                    <span class="text-sm">₿</span>
-                    {totalBalance.toLocaleString()}
-                    <span class="text-xs font-normal">sats</span>
-                  </>
-                ) : null;
-              })()}
-            </div>
+            {this.state.walletLoading ? (
+              <div class="text-[var(--color-text-tertiary)] text-sm">
+                Loading...
+              </div>
+            ) : this.state.mintCount === 0 ? (
+              <button
+                onClick={() => {
+                  this.setState({ showMenu: false, showWalletModal: true });
+                }}
+                class="text-purple-400 hover:text-purple-300 font-semibold text-sm transition-colors"
+              >
+                Add Mints →
+              </button>
+            ) : (
+              <div class="text-[#f7931a] font-semibold flex items-center gap-1">
+                <span class="text-sm">₿</span>
+                {this.state.cashuBalance.toLocaleString()}
+                <span class="text-xs font-normal">sats</span>
+              </div>
+            )}
             <svg
               class={`w-4 h-4 text-[var(--color-text-tertiary)] transition-transform duration-200 ${showMenu ? 'rotate-180' : ''}`}
               viewBox="0 0 24 24"
@@ -226,14 +259,26 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
                 Wallet
               </div>
               
-              <div class="flex items-center justify-between">
-                <span class="text-xs text-[var(--color-text-secondary)]">Balance:</span>
-                <span class="text-sm font-semibold text-[#f7931a] flex items-center gap-1">
-                  <span>₿</span>
-                  {this.state.cashuBalance.toLocaleString()}
-                  <span class="text-xs font-normal">sats</span>
-                </span>
-              </div>
+              {this.state.walletLoading ? (
+                <div class="text-[var(--color-text-tertiary)] text-sm py-2">
+                  Loading wallet...
+                </div>
+              ) : this.state.mintCount === 0 ? (
+                <div class="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-3 mb-2">
+                  <p class="text-xs text-yellow-400">
+                    ⚠️ No mints configured. Add a mint to start using your wallet.
+                  </p>
+                </div>
+              ) : (
+                <div class="flex items-center justify-between">
+                  <span class="text-xs text-[var(--color-text-secondary)]">Balance:</span>
+                  <span class="text-sm font-semibold text-[#f7931a] flex items-center gap-1">
+                    <span>₿</span>
+                    {this.state.cashuBalance.toLocaleString()}
+                    <span class="text-xs font-normal">sats</span>
+                  </span>
+                </div>
+              )}
               
               <div class="mt-3 space-y-2">
                 <button
@@ -280,8 +325,15 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
           <div class="w-full max-w-md">
             <WalletDisplay 
               client={client} 
-              onClose={() => {
+              onClose={async () => {
                 this.setState({ showWalletModal: false });
+                // Refresh mint count when closing wallet modal
+                try {
+                  const mints = await this.props.client.getCashuMints();
+                  this.setState({ mintCount: mints.length });
+                } catch (err) {
+                  console.warn('Failed to refresh mint count:', err);
+                }
               }}
               isModal={true}
               initialCashuBalance={this.state.cashuBalance}

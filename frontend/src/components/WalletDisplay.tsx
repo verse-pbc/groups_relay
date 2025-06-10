@@ -32,10 +32,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
   const [isInitialized, setIsInitialized] = useState(false);
   const [hasCheckedWallet, setHasCheckedWallet] = useState(false);
   const [cashuBalance, setCashuBalance] = useState<number>(initialCashuBalance ?? walletBalance ?? 0);
-  const [mints, setMints] = useState<string[]>([
-    "https://mint.minibits.cash/Bitcoin",
-    "https://mint.coinos.io"
-  ]);
+  const [mints, setMints] = useState<string[]>([]);
   const [showMintManager, setShowMintManager] = useState(false);
   const [newMintUrl, setNewMintUrl] = useState("");
   const [showReceiveModal, setShowReceiveModal] = useState(false);
@@ -57,6 +54,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
   const [isMelting, setIsMelting] = useState(false);
   const [meltError, setMeltError] = useState<string | null>(null);
   const [meltSuccess, setMeltSuccess] = useState<string | null>(null);
+  const [meltSelectedMint, setMeltSelectedMint] = useState("");
 
   const initializeWallet = async () => {
     setLoading(true);
@@ -72,7 +70,6 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
       
       // Get mints from wallet
       const walletMints = await client.getCashuMints();
-      console.log("🔍 WalletDisplay - initializeWallet - walletMints:", walletMints);
       if (walletMints.length > 0) {
         setMints(walletMints);
       }
@@ -112,10 +109,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
         }),
         
         // Fetch all mint balances (authorized and unauthorized)
-        client.getAllCashuMintBalances().then(balances => {
-          console.log("🎯 WalletDisplay - getAllCashuMintBalances result:", balances);
-          return balances;
-        }).catch(() => {
+        client.getAllCashuMintBalances().catch(() => {
           console.error("❌ Failed to get mint balances");
           return { authorized: {}, unauthorized: {} };
         }),
@@ -126,29 +120,19 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
       
       // Update balance
       setCashuBalance(cashuBalance);
-      console.log("🎯 WalletDisplay - Updated balance to:", cashuBalance);
       
       // Update mint balances
-      console.log("🎯 WalletDisplay - Setting mint balances:");
-      console.log("  allBalances:", allBalances);
-      console.log("  allBalances.authorized:", allBalances.authorized);
-      console.log("  allBalances.unauthorized:", allBalances.unauthorized);
-      console.log("  Current mintBalances state before update:", mintBalances);
-      
       // Force a default structure if empty
       if (Object.keys(allBalances.authorized).length === 0 && cashuBalance > 0) {
-        console.log("⚠️ No mint balances but have total balance, checking mints...");
         // If we have balance but no mint-specific balances, assume it's all in the first mint
         const walletMints = await client.getCashuMints();
         const defaultMint = walletMints[0];
         if (defaultMint) {
-          console.log(`  Setting default balance to first mint: ${defaultMint}`);
           setMintBalances({ [defaultMint]: cashuBalance });
         } else {
           setMintBalances(allBalances.authorized);
         }
       } else {
-        console.log("  Setting mintBalances to:", allBalances.authorized);
         setMintBalances(allBalances.authorized);
       }
       setUnauthorizedMintBalances(allBalances.unauthorized);
@@ -269,7 +253,6 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
       
       // Get the updated mints list from the wallet instead of managing local state
       const updatedMints = await client.getCashuMints();
-      console.log("🔍 WalletDisplay - addMint - updatedMints after adding:", updatedMints);
       setMints(updatedMints);
       setNewMintUrl("");
       
@@ -294,7 +277,6 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
       
       // Get the updated mints list from the wallet instead of managing local state
       const updatedMints = await client.getCashuMints();
-      console.log("🔍 WalletDisplay - removeMint - updatedMints after removing:", updatedMints);
       setMints(updatedMints);
       
       // Refresh balance to reflect the removed mint
@@ -319,17 +301,19 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
     setMeltSuccess(null);
 
     try {
-      const result = await client.meltToLightning(meltInvoice);
+      // Try the selected mint first, then all mints if that fails
+      const result = await client.meltToLightning(meltInvoice, meltSelectedMint || undefined);
       
       if (result.paid) {
         setMeltSuccess(`Payment successful! Preimage: ${result.preimage?.substring(0, 16)}...`);
         setShowMeltModal(false);
         setMeltInvoice("");
+        setMeltSelectedMint("");
         
         // Refresh balance after melting
         await fetchBalance(true);
       } else {
-        setMeltError(result.error || "Payment failed");
+        setMeltError(result.error || "Payment failed - please check if your mints support Lightning payments");
       }
     } catch (err) {
       setMeltError(err instanceof Error ? err.message : "Failed to pay invoice");
@@ -400,6 +384,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
         } else if (showMeltModal) {
           setShowMeltModal(false);
           setMeltInvoice("");
+          setMeltSelectedMint("");
           setMeltError(null);
           setMeltSuccess(null);
         } else if (isModal && onClose) {
@@ -463,14 +448,11 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
         setHasCheckedWallet(true);
         // Only initialize if the wallet is not already initialized at the client level
         if (!isWalletInitialized) {
-          console.log('🔍 WalletDisplay - Auto-initializing wallet for modal');
           initializeWallet();
         } else {
-          console.log('🔍 WalletDisplay - Wallet already initialized, skipping auto-init');
           setIsInitialized(true);
           // Get mints from wallet since it's already initialized
           const walletMints = await client.getCashuMints();
-          console.log("🔍 WalletDisplay - Already initialized walletMints:", walletMints);
           if (walletMints.length > 0) {
             setMints(walletMints);
           }
@@ -556,6 +538,15 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
           </div>
         </div>
         
+        {/* Show CTA when wallet has no mints */}
+        {mints.length === 0 && (
+          <div class="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-3">
+            <p class="text-sm text-yellow-400">
+              ⚠️ No mints configured. Add a mint below to start using your wallet.
+            </p>
+          </div>
+        )}
+        
         {error && <p class="text-sm mt-2 text-red-400">{error}</p>}
         {success && <p class="text-sm mt-2 text-green-400">{success}</p>}
       </div>
@@ -586,9 +577,13 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
             setShowMintManager(!showMintManager);
           }}
           disabled={loading}
-          class="w-full bg-[var(--color-bg-tertiary)] hover:bg-gray-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-3 rounded-lg text-white font-medium transition-all border border-[var(--color-border)]"
+          class={`w-full px-4 py-3 rounded-lg text-white font-medium transition-all border ${
+            mints.length === 0 
+              ? 'bg-purple-600 hover:bg-purple-700 border-purple-500 animate-pulse' 
+              : 'bg-[var(--color-bg-tertiary)] hover:bg-gray-700 border-[var(--color-border)]'
+          } disabled:bg-gray-600 disabled:cursor-not-allowed`}
         >
-          {showMintManager ? 'Hide' : 'Manage'} Mints{Object.keys(mintBalances).length > 0 ? ` (${mints.length})` : ''}
+          {showMintManager ? 'Hide' : mints.length === 0 ? '⚡ Add Your First Mint' : 'Manage'} Mints{mints.length > 0 ? ` (${mints.length})` : ''}
         </button>
         
         <button
@@ -614,6 +609,9 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
         {showMintManager && (
           <div class="space-y-2 pt-2 border-t border-gray-700">
             <div class="text-xs text-gray-400">Connected Mints:</div>
+            {mints.length === 0 && (
+              <p class="text-xs text-gray-500 italic">No mints added yet. Add your first mint below.</p>
+            )}
             {(() => {
               // Create a combined list of all mints that have balances or are in the mints list
               const allMints = new Set([
@@ -624,16 +622,15 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
               
               return Array.from(allMints)
                 .filter(mint => {
-                  // Only show mints that are authorized OR have a balance > 0
+                  // Show mints that are in the mints array (authorized) OR have a balance > 0
                   const balance = mintBalances[mint] || unauthorizedMintBalances[mint] || 0;
-                  const isAuthorized = mintBalances[mint] !== undefined;
+                  const isAuthorized = mints.includes(mint);
                   return isAuthorized || balance > 0;
                 })
                 .map(mint => {
                 // Get balance from both authorized and unauthorized mint balances
                 const balance = mintBalances[mint] || unauthorizedMintBalances[mint] || 0;
-                const isAuthorized = mintBalances[mint] !== undefined;
-                console.log(`🔍 Mint: ${mint}, Balance:`, balance, "isAuthorized:", isAuthorized, "mintBalances:", mintBalances, "unauthorizedMintBalances:", unauthorizedMintBalances);
+                const isAuthorized = mints.includes(mint);
                 return (
                 <div key={mint} class={`flex items-center justify-between text-xs p-2 rounded border ${isAuthorized ? 'bg-[var(--color-bg-primary)] border-[var(--color-border)]' : 'bg-yellow-900/20 border-yellow-700/30'}`}>
                   <div class="flex items-center gap-2">
@@ -832,9 +829,9 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
                         );
                       })}
                     </select>
-                    {window.location.hostname === 'localhost' && (
+                    {(window.location.hostname === 'localhost' || window.location.hostname.includes('.local')) && (
                       <p class="text-xs text-yellow-400 mt-1">
-                        ⚠️ Running on localhost may cause CORS issues with some mints
+                        ⚠️ Running on {window.location.hostname} may cause CORS issues with some mints
                       </p>
                     )}
                   </div>
@@ -1026,6 +1023,32 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
               </div>
             </div>
 
+            {/* Mint selection */}
+            {mints.length > 1 && (
+              <div>
+                <label class="block text-sm font-medium text-gray-400 mb-2">
+                  Select Mint (optional)
+                </label>
+                <select
+                  value={meltSelectedMint}
+                  onChange={(e) => setMeltSelectedMint((e.target as HTMLSelectElement).value)}
+                  class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm
+                         focus:outline-none focus:ring-1 focus:ring-purple-500"
+                  disabled={isMelting}
+                >
+                  <option value="">Try all mints automatically</option>
+                  {mints.map(mint => {
+                    const balance = mintBalances[mint] || 0;
+                    return (
+                      <option key={mint} value={mint}>
+                        {getMintHostname(mint)} (₿{balance} sats)
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            )}
+
             {/* Invoice input */}
             <div>
               <label class="block text-sm font-medium text-gray-400 mb-2">
@@ -1059,8 +1082,12 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
             <div class="text-xs text-gray-400">
               <p>• Paste a Lightning invoice to pay with your Cashu tokens</p>
               <p>• The tokens will be "melted" (converted) to pay the invoice</p>
-              <p>• The mint will add fees and a reserve for Lightning routing</p>
-              <p>• Any unused reserve will be returned as change</p>
+              <p>• The mint needs to support Lightning payments</p>
+              <p>• Fees vary by mint and Lightning routing costs</p>
+              {mints.length > 1 && <p>• If payment fails, try selecting a specific mint</p>}
+              {(window.location.hostname === 'localhost' || window.location.hostname.includes('.local')) && (
+                <p class="text-yellow-400 mt-1">⚠️ Running on {window.location.hostname} - some mints may block requests due to CORS</p>
+              )}
             </div>
 
             {/* Action buttons */}
@@ -1091,6 +1118,7 @@ export const WalletDisplay = ({ client, onClose, isModal, initialCashuBalance, w
                 onClick={() => {
                   setShowMeltModal(false);
                   setMeltInvoice("");
+                  setMeltSelectedMint("");
                   setMeltError(null);
                   setMeltSuccess(null);
                 }}
