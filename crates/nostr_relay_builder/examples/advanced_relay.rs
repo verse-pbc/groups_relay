@@ -13,8 +13,9 @@
 use anyhow::Result;
 use axum::{response::IntoResponse, routing::get, Router};
 use nostr_relay_builder::{
-    CryptoWorker, EventContext, EventProcessor, Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware,
-    RelayBuilder, RelayConfig, RelayInfo, Result as RelayResult, StoreCommand, WebSocketConfig,
+    CryptoWorker, EventContext, EventProcessor, Nip09Middleware, Nip40ExpirationMiddleware,
+    Nip70Middleware, RelayBuilder, RelayConfig, RelayInfo, Result as RelayResult, StoreCommand,
+    WebSocketConfig,
 };
 use nostr_sdk::prelude::*;
 use std::net::SocketAddr;
@@ -157,7 +158,10 @@ async fn main() -> Result<()> {
     let shutdown_token = cancellation_token.clone();
 
     // Create crypto worker and database for middleware
-    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(config.keys.clone()), cancellation_token.clone()));
+    let crypto_worker = Arc::new(CryptoWorker::new(
+        Arc::new(config.keys.clone()),
+        cancellation_token.clone(),
+    ));
     let database = config.create_database(crypto_worker)?;
 
     let handlers = Arc::new(
@@ -189,9 +193,7 @@ async fn main() -> Result<()> {
                   headers: axum::http::HeaderMap| async move {
                 // Check if this is a WebSocket or NIP-11 request
                 if ws.is_some()
-                    || headers
-                        .get("accept")
-                        .and_then(|h| h.to_str().ok())
+                    || headers.get("accept").and_then(|h| h.to_str().ok())
                         == Some("application/nostr+json")
                 {
                     // Handle WebSocket/NIP-11 with the builder's handler

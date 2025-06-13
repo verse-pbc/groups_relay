@@ -20,8 +20,8 @@ use axum::{
 };
 use nostr_relay_builder::{
     middlewares::{Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware},
-    CryptoWorker, EventContext, EventProcessor, RelayBuilder, RelayConfig, RelayInfo, Result as RelayResult,
-    StoreCommand, WebSocketConfig,
+    CryptoWorker, EventContext, EventProcessor, RelayBuilder, RelayConfig, RelayInfo,
+    Result as RelayResult, StoreCommand, WebSocketConfig,
 };
 use nostr_sdk::prelude::*;
 use std::net::SocketAddr;
@@ -69,7 +69,10 @@ impl EventProcessor for ProductionProcessor {
         }
 
         // Check authentication for deletions
-        if event.kind == Kind::EventDeletion && self.require_auth_for_deletion && context.authed_pubkey.is_none() {
+        if event.kind == Kind::EventDeletion
+            && self.require_auth_for_deletion
+            && context.authed_pubkey.is_none()
+        {
             warn!(
                 "Rejecting deletion event {} - authentication required",
                 event.id
@@ -325,10 +328,7 @@ async fn root_handler(
 ) -> impl IntoResponse {
     // Check if this is a WebSocket or NIP-11 request
     if ws.is_some()
-        || headers
-            .get("accept")
-            .and_then(|h| h.to_str().ok())
-            == Some("application/nostr+json")
+        || headers.get("accept").and_then(|h| h.to_str().ok()) == Some("application/nostr+json")
     {
         // Handle with relay handlers
         state.handlers.axum_root_handler()(ws, connect_info, headers).await
@@ -395,7 +395,10 @@ async fn main() -> Result<()> {
     let connection_counter = Arc::new(AtomicUsize::new(0));
 
     // Create crypto worker and database for middleware
-    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(keys.clone()), cancellation_token.clone()));
+    let crypto_worker = Arc::new(CryptoWorker::new(
+        Arc::new(keys.clone()),
+        cancellation_token.clone(),
+    ));
     let database = config.create_database(crypto_worker)?;
 
     // Build relay handlers with all production features

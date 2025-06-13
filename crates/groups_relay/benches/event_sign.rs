@@ -1,8 +1,8 @@
 use anyhow::Result;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use std::hint::black_box;
 use nostr_sdk::prelude::*;
 use nostr_sdk::{Keys, UnsignedEvent};
+use std::hint::black_box;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::task::spawn_blocking;

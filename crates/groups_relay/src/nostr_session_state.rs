@@ -1,8 +1,11 @@
 use crate::error::Error;
 use crate::groups::Groups;
-use nostr_relay_builder::{subdomain::extract_subdomain, RelayDatabase, SubscriptionService, state::CURRENT_REQUEST_HOST, StoreCommand};
 use anyhow::Result;
 use nostr_lmdb::Scope;
+use nostr_relay_builder::{
+    state::CURRENT_REQUEST_HOST, subdomain::extract_subdomain, RelayDatabase, StoreCommand,
+    SubscriptionService,
+};
 use nostr_sdk::prelude::*;
 use snafu::Backtrace;
 use std::sync::Arc;
@@ -215,7 +218,7 @@ mod tests {
     use super::*; // Import items from the parent module (NostrConnectionFactory, NostrConnectionState, etc.)
     use crate::groups::Groups;
     use nostr_relay_builder::state::CURRENT_REQUEST_HOST; // To set the task-local
-    use nostr_relay_builder::{RelayDatabase, crypto_worker::CryptoWorker};
+    use nostr_relay_builder::{crypto_worker::CryptoWorker, RelayDatabase};
     use nostr_sdk::prelude::Keys; // Removed RelayUrl from here
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -229,7 +232,10 @@ mod tests {
         let relay_keys = Keys::generate();
 
         let cancellation_token = CancellationToken::new();
-        let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(relay_keys.clone()), cancellation_token));
+        let crypto_worker = Arc::new(CryptoWorker::new(
+            Arc::new(relay_keys.clone()),
+            cancellation_token,
+        ));
         let database = Arc::new(
             RelayDatabase::new(db_path.to_str().unwrap(), crypto_worker)
                 .expect("Failed to create test database"),

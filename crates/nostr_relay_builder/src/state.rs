@@ -116,7 +116,7 @@ impl<T> NostrConnectionState<T> {
         debug!("Setting up connection");
 
         let metrics_handler = crate::global_metrics::get_subscription_metrics_handler();
-        
+
         let service = if let Some(handler) = metrics_handler {
             SubscriptionService::new_with_metrics(database, sender, Some(handler))
                 .await

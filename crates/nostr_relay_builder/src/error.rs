@@ -102,7 +102,6 @@ impl Error {
         }
     }
 
-
     /// Create a notice error
     pub fn notice(message: impl Into<String>) -> Self {
         Self::Notice {

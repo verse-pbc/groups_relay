@@ -1,10 +1,3 @@
-use crate::metrics;
-use crate::StoreCommand;
-use anyhow::Result;
-use dashmap::{
-    mapref::one::{Ref, RefMut},
-    DashMap,
-};
 pub use crate::group::{
     Group, GroupError, GroupMember, GroupMetadata, GroupRole, Invite, ADDRESSABLE_EVENT_KINDS,
     KIND_GROUP_ADD_USER_9000, KIND_GROUP_ADMINS_39001, KIND_GROUP_CREATE_9007,
@@ -12,6 +5,13 @@ pub use crate::group::{
     KIND_GROUP_EDIT_METADATA_9002, KIND_GROUP_MEMBERS_39002, KIND_GROUP_METADATA_39000,
     KIND_GROUP_REMOVE_USER_9001, KIND_GROUP_SET_ROLES_9006, KIND_GROUP_USER_JOIN_REQUEST_9021,
     KIND_GROUP_USER_LEAVE_REQUEST_9022, KIND_SIMPLE_LIST_10009, NON_GROUP_ALLOWED_KINDS,
+};
+use crate::metrics;
+use crate::StoreCommand;
+use anyhow::Result;
+use dashmap::{
+    mapref::one::{Ref, RefMut},
+    DashMap,
 };
 use nostr_lmdb::Scope;
 use nostr_relay_builder::{Error, RelayDatabase};
@@ -915,7 +915,7 @@ impl DerefMut for Groups {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr_relay_builder::{RelayDatabase, crypto_worker::CryptoWorker};
+    use nostr_relay_builder::{crypto_worker::CryptoWorker, RelayDatabase};
     use std::time::Instant;
     use tempfile::TempDir;
     use tokio_util::sync::CancellationToken;
@@ -937,7 +937,10 @@ mod tests {
     async fn create_test_groups_with_db(admin_keys: &Keys) -> Groups {
         let temp_dir = TempDir::new().unwrap();
         let cancellation_token = CancellationToken::new();
-        let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(admin_keys.clone()), cancellation_token));
+        let crypto_worker = Arc::new(CryptoWorker::new(
+            Arc::new(admin_keys.clone()),
+            cancellation_token,
+        ));
         let db = Arc::new(
             RelayDatabase::new(
                 temp_dir

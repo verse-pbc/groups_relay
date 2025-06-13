@@ -6,20 +6,13 @@
 //! Run with: cargo run --example minimal_relay --features axum
 
 use anyhow::Result;
-use axum::{
-    extract::{ws::WebSocketUpgrade, ConnectInfo},
-    http::HeaderMap,
-    response::{Html, IntoResponse},
-    routing::get,
-    Router,
-};
+use axum::{routing::get, Router};
 use nostr_relay_builder::{
     EventContext, EventProcessor, RelayBuilder, RelayConfig, RelayInfo, Result as RelayResult,
     StoreCommand,
 };
 use nostr_sdk::prelude::*;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 /// Simple event processor that accepts all events
 #[derive(Debug, Clone)]
@@ -64,49 +57,11 @@ async fn main() -> Result<()> {
         icon: None,
     };
 
-    // Build the relay handlers using the new API
+    // Build the relay with default HTML page
     let processor = AcceptAllProcessor;
-    let handlers = Arc::new(
-        RelayBuilder::new(config.clone())
-            .build_handlers(processor, relay_info)
-            .await?,
-    );
-
-    // Create root handler that serves either WebSocket/NIP-11 or HTML
-    let root_handler = {
-        let handlers = handlers.clone();
-        move |ws: Option<WebSocketUpgrade>,
-              connect_info: ConnectInfo<SocketAddr>,
-              headers: HeaderMap| async move {
-            if ws.is_some()
-                || headers
-                    .get("accept")
-                    .and_then(|h| h.to_str().ok())
-                    == Some("application/nostr+json")
-            {
-                // Handle WebSocket or NIP-11 request
-                handlers.axum_root_handler()(ws, connect_info, headers).await
-            } else {
-                // Serve custom HTML for regular browser requests
-                Html(
-                    r#"
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <title>Minimal Nostr Relay</title>
-                    </head>
-                    <body>
-                        <h1>🚀 Minimal Nostr Relay</h1>
-                        <p>Connect with any Nostr client using WebSocket.</p>
-                        <p>WebSocket endpoint: <code>ws://localhost:8080</code></p>
-                    </body>
-                    </html>
-                "#,
-                )
-                .into_response()
-            }
-        }
-    };
+    let root_handler = RelayBuilder::new(config.clone())
+        .build_axum_handler(processor, relay_info)
+        .await?;
 
     // Create HTTP server
     let app = Router::new().route("/", get(root_handler));

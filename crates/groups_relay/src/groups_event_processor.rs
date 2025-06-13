@@ -222,18 +222,14 @@ impl EventProcessor for GroupsRelayProcessor {
 
             k if k == KIND_GROUP_DELETE_9008 => {
                 debug!(target: "groups_relay_logic", "Processing group deletion event: id={}", event.id);
-                self.groups.handle_delete_group(
-                    Box::new(event),
-                    &subdomain,
-                )?
+                self.groups
+                    .handle_delete_group(Box::new(event), &subdomain)?
             }
 
             k if k == KIND_GROUP_DELETE_EVENT_9005 => {
                 debug!(target: "groups_relay_logic", "Processing group content event deletion: id={}", event.id);
-                self.groups.handle_delete_event(
-                    Box::new(event),
-                    &subdomain,
-                )?
+                self.groups
+                    .handle_delete_event(Box::new(event), &subdomain)?
             }
 
             k if k == KIND_GROUP_CREATE_INVITE_9009 => {

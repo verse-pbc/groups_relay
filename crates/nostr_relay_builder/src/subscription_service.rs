@@ -23,7 +23,7 @@ use websocket_builder::MessageSender;
 /// Commands that can be executed against the database
 #[derive(Debug, Clone, PartialEq)]
 pub enum StoreCommand {
-    /// Save an unsigned event to the database  
+    /// Save an unsigned event to the database
     SaveUnsignedEvent(UnsignedEvent, Scope),
     /// Save a signed event to the database
     SaveSignedEvent(Box<Event>, Scope),
@@ -380,46 +380,27 @@ impl SubscriptionService {
         subdomain: &Scope,
         filter_fn: impl Fn(&Event, &Scope, Option<&PublicKey>) -> bool + Send + Sync + Clone + 'static,
     ) -> Result<(), Error> {
-        // Enforce global query limit on filters
-        let query_limit = crate::global_config::get_query_limit();
-        let filters = if let Some(limit) = query_limit {
-            filters
-                .into_iter()
-                .map(|mut filter| {
-                    if let Some(filter_limit) = filter.limit {
-                        if filter_limit > limit {
-                            debug!(
-                                "Capping filter limit from {} to global limit {}",
-                                filter_limit, limit
-                            );
-                            filter.limit = Some(limit);
-                        }
-                    }
-                    filter
-                })
-                .collect()
-        } else {
-            filters
-        };
-
-        // Add the subscription
-        self.add_subscription(subscription_id.clone(), filters.clone())?;
-
-        // Get the sender
+        // Get the sender first to check availability
         let Some(sender) = self.outgoing_sender.as_ref() else {
             return Err(Error::internal("No outgoing sender available"));
         };
 
         // Handle the historical events
         self.process_historical_events(
-            subscription_id,
-            filters,
+            subscription_id.clone(),
+            filters.clone(),
             authed_pubkey,
             subdomain,
             sender.clone(),
             filter_fn,
         )
-        .await
+        .await?;
+
+        // Add the subscription
+        // TODO: We could have lost some events here while process_historical_events was running, but if we add the subscription before it, we would send the events before EOSE, we are postponing this fix
+        self.add_subscription(subscription_id, filters)?;
+
+        Ok(())
     }
 
     async fn process_historical_events(
@@ -431,6 +412,46 @@ impl SubscriptionService {
         sender: MessageSender<RelayMessage<'static>>,
         filter_fn: impl Fn(&Event, &Scope, Option<&PublicKey>) -> bool + Send + Sync + Clone + 'static,
     ) -> Result<(), Error> {
+        // Cap filter limits based on configured max_limit
+        let max_limit = crate::global_config::get_max_limit_or_default(500);
+
+        // Also check actual channel capacity as a safety measure
+        // This handles edge cases like tests with tiny channels
+        let channel_capacity = sender.capacity();
+        let channel_safe_limit = if channel_capacity < 10 {
+            // For very small channels (like in tests), leave room for EOSE
+            channel_capacity.saturating_sub(1)
+        } else {
+            // For normal channels, this shouldn't matter since channel_size
+            // is calculated from max_subscriptions * max_limit * 1.10
+            usize::MAX
+        };
+        let effective_limit = max_limit.min(channel_safe_limit);
+
+        let filters: Vec<Filter> = filters
+            .into_iter()
+            .map(|mut filter| {
+                match filter.limit {
+                    Some(filter_limit) if filter_limit > effective_limit => {
+                        debug!(
+                            "Capping filter limit from {} to {}",
+                            filter_limit, effective_limit
+                        );
+                        filter.limit = Some(effective_limit);
+                    }
+                    None => {
+                        debug!(
+                            "Setting filter limit to {} for unbounded query",
+                            effective_limit
+                        );
+                        filter.limit = Some(effective_limit);
+                    }
+                    _ => {} // Keep existing limit if it's already below effective_limit
+                }
+                filter
+            })
+            .collect();
+
         let ctx = SubscriptionContext {
             subscription_id,
             filters,
@@ -809,6 +830,17 @@ impl SubscriptionService {
         subscription_id: SubscriptionId,
         filters: Vec<Filter>,
     ) -> Result<(), Error> {
+        // Check max subscriptions limit
+        let max_subscriptions = crate::global_config::get_max_subscriptions_or_default(50);
+        let current_count = self.local_subscription_count.load(Ordering::SeqCst);
+
+        if current_count >= max_subscriptions {
+            return Err(Error::restricted(format!(
+                "Maximum number of subscriptions ({}) reached",
+                max_subscriptions
+            )));
+        }
+
         self.subscription_sender
             .send(SubscriptionMessage::Add(subscription_id, filters))
             .map_err(|e| Error::internal(format!("Failed to send subscription: {}", e)))
@@ -1893,7 +1925,7 @@ mod tests {
         }
     }
 
-    /// Test window sliding with since + limit  
+    /// Test window sliding with since + limit
     #[tokio::test]
     async fn test_window_sliding_since_limit() {
         let (_tmp_dir, database, keys) = setup_test().await;
@@ -2191,6 +2223,151 @@ mod tests {
         // Unsubscribe using handle_unsubscribe
         service.handle_unsubscribe(sub_id).await.unwrap();
         assert!(service.wait_for_subscription_count(0, 1000).await);
+    }
+
+    /// Test that the channel overflow bug is fixed by capping limit to channel capacity
+    #[tokio::test]
+    async fn test_channel_overflow_with_large_limit() {
+        let (_tmp_dir, database, keys) = setup_test().await;
+
+        // Create a VERY SMALL channel to test the limit capping
+        let channel_size = 2;
+        let (tx, mut rx) = mpsc::channel(channel_size);
+
+        let service = SubscriptionService::new(database.clone(), MessageSender::new(tx, 0))
+            .await
+            .unwrap();
+
+        // Create many events (more than channel capacity)
+        let num_events = 10;
+        for i in 0..num_events {
+            let event = EventBuilder::text_note(format!("Event {}", i))
+                .build_with_ctx(&Instant::now(), keys.public_key())
+                .sign_with_keys(&keys)
+                .unwrap();
+            database
+                .save_signed_event(event, Scope::Default)
+                .await
+                .unwrap();
+        }
+
+        sleep(Duration::from_millis(100)).await;
+
+        // Request more events than channel capacity
+        let filter = Filter::new().kinds(vec![Kind::TextNote]).limit(num_events); // Request 10 events but channel can only hold 2
+
+        let sub_id = SubscriptionId::new("test_overflow");
+        let filter_fn = |_: &Event, _: &Scope, _: Option<&PublicKey>| true;
+
+        // This should succeed because limit is capped to channel capacity
+        let result = service
+            .handle_req(
+                sub_id.clone(),
+                vec![filter],
+                None,
+                &Scope::Default,
+                filter_fn,
+            )
+            .await;
+
+        if let Err(e) = &result {
+            eprintln!("Error: {:?}", e);
+        }
+        assert!(result.is_ok());
+
+        // Collect all messages
+        let mut event_count = 0;
+        let mut eose_received = false;
+
+        while let Ok(msg) = rx.try_recv() {
+            match msg.0 {
+                RelayMessage::Event { .. } => event_count += 1,
+                RelayMessage::EndOfStoredEvents(_) => eose_received = true,
+                _ => {}
+            }
+        }
+
+        assert!(eose_received, "Should receive EOSE");
+        // Should only receive events up to channel capacity minus 1 (for EOSE)
+        let expected_max_events = channel_size - 1;
+        assert!(
+            event_count <= expected_max_events,
+            "Should receive at most {} events (channel capacity {} - 1 for EOSE), but got {}",
+            expected_max_events,
+            channel_size,
+            event_count
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unbounded_query_gets_limited() {
+        let (_tmp_dir, database, keys) = setup_test().await;
+
+        // Create a small channel
+        let channel_size = 5;
+        let (tx, mut rx) = mpsc::channel(channel_size);
+
+        let service = SubscriptionService::new(database.clone(), MessageSender::new(tx, 0))
+            .await
+            .unwrap();
+
+        // Create some events
+        for i in 0..20 {
+            let event = EventBuilder::text_note(format!("Event {}", i))
+                .build_with_ctx(&Instant::now(), keys.public_key())
+                .sign_with_keys(&keys)
+                .unwrap();
+            database
+                .save_signed_event(event, Scope::Default)
+                .await
+                .unwrap();
+        }
+
+        sleep(Duration::from_millis(100)).await;
+
+        // Create filter WITHOUT limit (unbounded query)
+        let filter = Filter::new().kinds(vec![Kind::TextNote]);
+        // No limit set!
+
+        let sub_id = SubscriptionId::new("test_unbounded");
+        let filter_fn = |_: &Event, _: &Scope, _: Option<&PublicKey>| true;
+
+        // This should succeed with automatic limit
+        let result = service
+            .handle_req(
+                sub_id.clone(),
+                vec![filter],
+                None,
+                &Scope::Default,
+                filter_fn,
+            )
+            .await;
+
+        if let Err(e) = &result {
+            eprintln!("Error: {:?}", e);
+        }
+        assert!(result.is_ok());
+
+        // Collect all messages
+        let mut event_count = 0;
+        let mut eose_received = false;
+
+        while let Ok(msg) = rx.try_recv() {
+            match msg.0 {
+                RelayMessage::Event { .. } => event_count += 1,
+                RelayMessage::EndOfStoredEvents(_) => eose_received = true,
+                _ => {}
+            }
+        }
+
+        assert!(eose_received, "Should receive EOSE");
+        // Should receive exactly channel_size - 1 events (max allowed)
+        let expected_events = channel_size - 1;
+        assert_eq!(
+            event_count, expected_events,
+            "Unbounded query should be limited to {} events (channel capacity {} - 1 for EOSE)",
+            expected_events, channel_size
+        );
     }
 
     #[tokio::test]

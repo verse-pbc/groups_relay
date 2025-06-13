@@ -5,10 +5,10 @@ use crate::crypto_worker::CryptoWorker;
 use crate::database::RelayDatabase;
 use crate::error::Error;
 use crate::event_processor::EventProcessor;
-use crate::metrics::SubscriptionMetricsHandler;
-use crate::middlewares::MetricsHandler;
 use crate::message_converter::NostrMessageConverter;
+use crate::metrics::SubscriptionMetricsHandler;
 use crate::middleware::RelayMiddleware;
+use crate::middlewares::MetricsHandler;
 use crate::state::{GenericNostrConnectionFactory, NostrConnectionState};
 use nostr_sdk::prelude::*;
 use std::marker::PhantomData;
@@ -17,6 +17,30 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use websocket_builder::{Middleware, WebSocketBuilder};
+
+/// HTML rendering options for the relay
+#[cfg(feature = "axum")]
+#[derive(Clone, Default)]
+pub enum HtmlOption {
+    /// No HTML - returns 404 for non-WebSocket requests
+    None,
+    /// Default HTML page that renders RelayInfo
+    #[default]
+    Default,
+    /// Custom HTML provider function
+    Custom(Arc<dyn Fn(&crate::handlers::RelayInfo) -> String + Send + Sync>),
+}
+
+#[cfg(feature = "axum")]
+impl std::fmt::Debug for HtmlOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HtmlOption::None => write!(f, "HtmlOption::None"),
+            HtmlOption::Default => write!(f, "HtmlOption::Default"),
+            HtmlOption::Custom(_) => write!(f, "HtmlOption::Custom(<function>)"),
+        }
+    }
+}
 
 /// Builder for constructing Nostr relays with custom state.
 ///
@@ -82,6 +106,9 @@ pub struct RelayBuilder<T = ()> {
     metrics_handler: Option<Arc<dyn MetricsHandler>>,
     /// Optional subscription metrics handler
     subscription_metrics_handler: Option<Arc<dyn SubscriptionMetricsHandler>>,
+    /// HTML rendering option for browser requests
+    #[cfg(feature = "axum")]
+    html_option: HtmlOption,
     _phantom: PhantomData<T>,
 }
 
@@ -99,6 +126,8 @@ where
             connection_counter: None,
             metrics_handler: None,
             subscription_metrics_handler: None,
+            #[cfg(feature = "axum")]
+            html_option: HtmlOption::Default,
             _phantom: PhantomData,
         }
     }
@@ -160,8 +189,37 @@ where
             connection_counter: self.connection_counter,
             metrics_handler: None,
             subscription_metrics_handler: None,
+            #[cfg(feature = "axum")]
+            html_option: self.html_option,
             _phantom: PhantomData,
         }
+    }
+
+    /// Set HTML rendering option
+    #[cfg(feature = "axum")]
+    #[must_use]
+    pub fn with_html(mut self, html_option: HtmlOption) -> Self {
+        self.html_option = html_option;
+        self
+    }
+
+    /// Disable HTML rendering (return 404 for browser requests)
+    #[cfg(feature = "axum")]
+    #[must_use]
+    pub fn without_html(mut self) -> Self {
+        self.html_option = HtmlOption::None;
+        self
+    }
+
+    /// Set custom HTML provider
+    #[cfg(feature = "axum")]
+    #[must_use]
+    pub fn with_custom_html<F>(mut self, html_provider: F) -> Self
+    where
+        F: Fn(&crate::handlers::RelayInfo) -> String + Send + Sync + 'static,
+    {
+        self.html_option = HtmlOption::Custom(Arc::new(html_provider));
+        self
     }
 
     /// Add a middleware to the relay
@@ -213,10 +271,14 @@ where
     where
         T: Default,
     {
-        let websocket_config = self.config.websocket_config.clone();
+        // Always calculate channel_size based on subscription limits
+        let mut websocket_config = self.config.websocket_config.clone();
+        websocket_config.channel_size =
+            self.config.max_subscriptions * self.config.max_limit * 110 / 100;
 
-        // Set the global query limit
-        crate::global_config::set_query_limit(self.config.query_limit);
+        // Set the global subscription limits
+        crate::global_config::set_max_subscriptions(self.config.max_subscriptions);
+        crate::global_config::set_max_limit(self.config.max_limit);
 
         // Set the global subscription metrics handler if provided
         if let Some(handler) = self.subscription_metrics_handler.clone() {
@@ -224,8 +286,7 @@ where
         }
 
         // Create the crypto worker for signing and verification
-        let cancellation_token = self.cancellation_token.clone()
-            .unwrap_or_else(|| CancellationToken::new());
+        let cancellation_token = self.cancellation_token.clone().unwrap_or_default();
         let crypto_worker = Arc::new(CryptoWorker::new(
             Arc::new(self.config.keys.clone()),
             cancellation_token.clone(),
@@ -251,11 +312,11 @@ where
         // Add standard middlewares that should always be present
         builder = builder.with_middleware(crate::middlewares::LoggerMiddleware::new());
         builder = builder.with_middleware(crate::middlewares::ErrorHandlingMiddleware::new());
-        
+
         // Add metrics middleware if handler is provided
         if let Some(metrics_handler) = self.metrics_handler.clone() {
             builder = builder.with_arc_middleware(Arc::new(
-                crate::middlewares::MetricsMiddleware::with_arc_handler(metrics_handler)
+                crate::middlewares::MetricsMiddleware::with_arc_handler(metrics_handler),
             ));
         }
 
@@ -277,7 +338,9 @@ where
         }
 
         // Add event verification middleware with crypto worker
-        builder = builder.with_middleware(crate::middlewares::EventVerifierMiddleware::new(crypto_worker.clone()));
+        builder = builder.with_middleware(crate::middlewares::EventVerifierMiddleware::new(
+            crypto_worker.clone(),
+        ));
 
         // Add custom middlewares
         for middleware in custom_middlewares {
@@ -345,8 +408,47 @@ where
     where
         T: Default,
     {
+        let html_option = self.html_option.clone();
         let handlers = Arc::new(self.build_handlers(processor, relay_info).await?);
-        Ok(handlers.axum_root_handler())
+
+        Ok(
+            move |ws: Option<axum::extract::ws::WebSocketUpgrade>,
+                  connect_info: axum::extract::ConnectInfo<std::net::SocketAddr>,
+                  headers: axum::http::HeaderMap| {
+                let handlers = handlers.clone();
+                let html_option = html_option.clone();
+                Box::pin(async move {
+                    // Check if this is a WebSocket or NIP-11 request
+                    if ws.is_some()
+                        || headers
+                            .get("accept")
+                            .and_then(|h| h.to_str().ok())
+                            .map(|s| s == "application/nostr+json")
+                            .unwrap_or(false)
+                    {
+                        // Handle WebSocket/NIP-11 with the built handler
+                        handlers.axum_root_handler()(ws, connect_info, headers).await
+                    } else {
+                        // Handle HTML based on configuration
+                        use axum::response::{Html, IntoResponse};
+
+                        match &html_option {
+                            HtmlOption::None => axum::http::StatusCode::NOT_FOUND.into_response(),
+                            HtmlOption::Default => {
+                                Html(crate::handlers::default_relay_html(handlers.relay_info()))
+                                    .into_response()
+                            }
+                            HtmlOption::Custom(provider) => {
+                                Html(provider(handlers.relay_info())).into_response()
+                            }
+                        }
+                    }
+                })
+                    as std::pin::Pin<
+                        Box<dyn std::future::Future<Output = axum::response::Response> + Send>,
+                    >
+            },
+        )
     }
 }
 

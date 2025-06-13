@@ -481,9 +481,7 @@ async fn main() -> Result<()> {
                   connect_info: axum::extract::ConnectInfo<SocketAddr>,
                   headers: axum::http::HeaderMap| async move {
                 if ws.is_some()
-                    || headers
-                        .get("accept")
-                        .and_then(|h| h.to_str().ok())
+                    || headers.get("accept").and_then(|h| h.to_str().ok())
                         == Some("application/nostr+json")
                 {
                     handlers.axum_root_handler()(ws, connect_info, headers).await

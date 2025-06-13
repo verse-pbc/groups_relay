@@ -553,7 +553,12 @@ impl Group {
         // For deletion events, we use the event's pubkey since it's signed
         // No need for NIP-42 authentication - the signature proves identity
         let deletion_pubkey = Some(delete_request_event.pubkey);
-        self.can_delete_event(&deletion_pubkey, relay_pubkey, &delete_request_event, "event")?;
+        self.can_delete_event(
+            &deletion_pubkey,
+            relay_pubkey,
+            &delete_request_event,
+            "event",
+        )?;
 
         // We may be deleting invites, remove them from memory too.
         let codes_to_remove: Vec<_> = self
@@ -2154,7 +2159,7 @@ mod tests {
         assert!(result.is_ok());
         let commands = result.unwrap();
         assert_eq!(commands.len(), 2); // Delete command + save delete request event
-        
+
         // Check the delete command
         match &commands[0] {
             StoreCommand::DeleteEvents(filter, _) => {
@@ -2163,7 +2168,7 @@ mod tests {
             }
             _ => panic!("Expected DeleteEvents command"),
         }
-        
+
         // Check the save delete request event command
         match &commands[1] {
             StoreCommand::SaveSignedEvent(saved_event, _) => {
@@ -2199,10 +2204,7 @@ mod tests {
         )
         .await;
 
-        let result = group.delete_event_request(
-            Box::new(delete_request),
-            &relay_pubkey,
-        );
+        let result = group.delete_event_request(Box::new(delete_request), &relay_pubkey);
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -2224,10 +2226,7 @@ mod tests {
         .await;
         let delete_event = create_test_delete_event(&non_member_keys, &group_id, &event).await;
 
-        let result = group.delete_event_request(
-            Box::new(delete_event),
-            &relay_pubkey,
-        );
+        let result = group.delete_event_request(Box::new(delete_event), &relay_pubkey);
 
         assert!(result.is_err());
         assert_eq!(
@@ -2350,10 +2349,7 @@ mod tests {
         // Delete the invite event
         let delete_event =
             create_test_delete_event(&admin_keys, &group_id, &create_invite_event).await;
-        let result = group.delete_event_request(
-            Box::new(delete_event),
-            &relay_pubkey,
-        );
+        let result = group.delete_event_request(Box::new(delete_event), &relay_pubkey);
         assert!(result.is_ok());
         assert!(
             !group.invites.contains_key(invite_code),

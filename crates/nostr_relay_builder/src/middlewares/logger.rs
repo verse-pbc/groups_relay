@@ -68,7 +68,7 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
             }) => {
                 let sub_id_clone = subscription_id.clone();
                 let filter_json_clone = filter.as_json();
-                
+
                 debug!("> REQ {}: {}", sub_id_clone, filter_json_clone);
             }
             Some(ClientMessage::ReqMultiFilter {
@@ -135,7 +135,7 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for LoggerMi
                 } => {
                     let sub_id_clone = subscription_id.clone();
                     let event_json_clone = event.as_ref().as_json();
-                    
+
                     debug!("< EVENT {} {}", sub_id_clone, event_json_clone);
                 }
                 RelayMessage::Notice(message) => {

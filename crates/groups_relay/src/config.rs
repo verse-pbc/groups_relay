@@ -17,8 +17,10 @@ pub struct RelaySettings {
     pub db_path: String,
     #[serde(default)]
     pub websocket: WebSocketSettings,
-    #[serde(default = "default_query_limit")]
-    pub query_limit: usize,
+    #[serde(default = "default_max_limit")]
+    pub max_limit: usize,
+    #[serde(default = "default_max_subscriptions")]
+    pub max_subscriptions: usize,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -32,7 +34,7 @@ pub struct WebSocketSettings {
 }
 
 fn default_channel_size() -> usize {
-    300 // Default channel size
+    27500 // Default: 50 subscriptions * 500 max_limit * 1.10
 }
 
 fn default_max_connection_time() -> Option<Duration> {
@@ -43,8 +45,12 @@ fn default_max_connections() -> Option<usize> {
     Some(1000) // Default max connections
 }
 
-fn default_query_limit() -> usize {
+fn default_max_limit() -> usize {
     500 // Default/maximum limit for queries
+}
+
+fn default_max_subscriptions() -> usize {
+    50 // Default max subscriptions per connection
 }
 
 impl RelaySettings {
@@ -126,7 +132,8 @@ pub struct Settings {
     pub admin_keys: Vec<String>,
     pub websocket: WebSocketSettings,
     pub db_path: String,
-    pub query_limit: usize,
+    pub max_limit: usize,
+    pub max_subscriptions: usize,
 }
 
 pub use nostr_sdk::Keys;

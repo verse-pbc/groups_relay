@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use nostr_relay_builder::{
-    CryptoWorker, Error, EventContext, EventProcessor, NostrConnectionState, RelayDatabase, 
+    CryptoWorker, Error, EventContext, EventProcessor, NostrConnectionState, RelayDatabase,
     RelayMiddleware, StoreCommand,
 };
 use nostr_sdk::prelude::*;
@@ -115,7 +115,10 @@ mod tests {
         let db_path = tmp_dir.path();
         let keys = Keys::generate();
         let cancellation_token = CancellationToken::new();
-        let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(keys.clone()), cancellation_token));
+        let crypto_worker = Arc::new(CryptoWorker::new(
+            Arc::new(keys.clone()),
+            cancellation_token,
+        ));
         let database = Arc::new(RelayDatabase::new(db_path, crypto_worker).unwrap());
         (database, keys, tmp_dir)
     }

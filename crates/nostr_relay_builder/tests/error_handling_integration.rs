@@ -16,7 +16,8 @@ async fn test_error_handling_middleware_in_relay() {
     let keys = Keys::generate();
     let config = RelayConfig::new("ws://test", db_path, keys);
 
-    let _relay_builder = RelayBuilder::<()>::new(config).with_middleware(ErrorHandlingMiddleware::new());
+    let _relay_builder =
+        RelayBuilder::<()>::new(config).with_middleware(ErrorHandlingMiddleware::new());
 
     // The actual middleware execution is tested in the error_handling.rs unit tests
     // and through the websocket_builder's integration test pattern

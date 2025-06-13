@@ -1,8 +1,8 @@
 use crate::{
-    app_state::HttpServerState, config, groups::Groups, handler, metrics,
+    app_state::HttpServerState, config, groups::Groups,
+    groups_event_processor::GroupsRelayProcessor, handler, metrics,
     metrics_handler::PrometheusSubscriptionMetricsHandler,
-    sampled_metrics_handler::SampledMetricsHandler,
-    validation_middleware::ValidationMiddleware, groups_event_processor::GroupsRelayProcessor,
+    sampled_metrics_handler::SampledMetricsHandler, validation_middleware::ValidationMiddleware,
     RelayDatabase,
 };
 use anyhow::Result;
@@ -69,7 +69,7 @@ pub async fn run_server(
         validate_subdomains: true,
     })
     .with_websocket_config(websocket_config)
-    .with_query_limit(settings.query_limit);
+    .with_subscription_limits(settings.max_subscriptions, settings.max_limit);
 
     let groups_processor = GroupsRelayProcessor::new(groups.clone(), relay_keys.public_key);
 

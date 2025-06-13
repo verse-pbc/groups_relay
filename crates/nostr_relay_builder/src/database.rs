@@ -31,7 +31,10 @@ impl RelayDatabase {
     /// # Arguments
     /// * `db_path_param` - Path where the database should be stored
     /// * `crypto_worker` - Crypto worker for signing unsigned events
-    pub fn new(db_path_param: impl AsRef<std::path::Path>, crypto_worker: Arc<CryptoWorker>) -> Result<Self, Error> {
+    pub fn new(
+        db_path_param: impl AsRef<std::path::Path>,
+        crypto_worker: Arc<CryptoWorker>,
+    ) -> Result<Self, Error> {
         let db_path = db_path_param.as_ref().to_path_buf();
 
         // Ensure database directory exists

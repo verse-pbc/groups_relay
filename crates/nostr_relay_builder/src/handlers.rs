@@ -94,6 +94,165 @@ pub struct RelayInfo {
     pub icon: Option<String>,
 }
 
+/// Generate default HTML page for relay info
+pub fn default_relay_html(relay_info: &RelayInfo) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{name} - Nostr Relay</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }}
+        .container {{
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #6200ea;
+            margin-bottom: 10px;
+        }}
+        .description {{
+            font-size: 1.1em;
+            color: #666;
+            margin-bottom: 30px;
+        }}
+        .info-section {{
+            margin: 20px 0;
+        }}
+        .info-section h2 {{
+            color: #444;
+            font-size: 1.2em;
+            margin-bottom: 10px;
+        }}
+        .info-item {{
+            display: flex;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }}
+        .info-label {{
+            font-weight: 600;
+            width: 150px;
+            color: #555;
+        }}
+        .info-value {{
+            flex: 1;
+            color: #666;
+            word-break: break-all;
+        }}
+        .nip-list {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 5px;
+        }}
+        .nip-badge {{
+            background-color: #6200ea;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }}
+        .endpoint {{
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            margin: 10px 0;
+        }}
+        .icon {{
+            width: 64px;
+            height: 64px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }}
+        a {{
+            color: #6200ea;
+            text-decoration: none;
+        }}
+        a:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        {icon}
+        <h1>{name}</h1>
+        <p class="description">{description}</p>
+        
+        <div class="info-section">
+            <h2>Connection Info</h2>
+            <div class="endpoint">
+                WebSocket Endpoint: <strong>{websocket_url}</strong>
+            </div>
+        </div>
+        
+        <div class="info-section">
+            <h2>Relay Details</h2>
+            <div class="info-item">
+                <span class="info-label">Public Key:</span>
+                <span class="info-value">{pubkey}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Contact:</span>
+                <span class="info-value">{contact}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Software:</span>
+                <span class="info-value">{software} v{version}</span>
+            </div>
+        </div>
+        
+        <div class="info-section">
+            <h2>Supported NIPs</h2>
+            <div class="nip-list">
+                {nips}
+            </div>
+        </div>
+        
+        <div class="info-section">
+            <h2>Usage</h2>
+            <p>Connect to this relay using any Nostr client that supports the WebSocket protocol.</p>
+            <p>For relay information in JSON format, send a request with <code>Accept: application/nostr+json</code></p>
+        </div>
+    </div>
+</body>
+</html>"#,
+        name = relay_info.name,
+        description = relay_info.description,
+        icon = relay_info
+            .icon
+            .as_ref()
+            .map(|url| format!(
+                r#"<img src="{}" alt="{} icon" class="icon">"#,
+                url, relay_info.name
+            ))
+            .unwrap_or_default(),
+        websocket_url = "ws://localhost:8080", // TODO: Make this configurable
+        pubkey = relay_info.pubkey,
+        contact = relay_info.contact,
+        software = relay_info.software,
+        version = relay_info.version,
+        nips = relay_info
+            .supported_nips
+            .iter()
+            .map(|nip| format!(r#"<span class="nip-badge">NIP-{}</span>"#, nip))
+            .collect::<Vec<_>>()
+            .join("")
+    )
+}
+
 impl<T> RelayHandlers<T>
 where
     T: Clone + Send + Sync + 'static,

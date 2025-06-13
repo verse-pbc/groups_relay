@@ -81,7 +81,8 @@ async fn main() -> Result<()> {
         admin_keys: vec![],
         websocket: relay_settings.websocket.clone(),
         db_path: relay_settings.db_path.clone(),
-        query_limit: relay_settings.query_limit,
+        max_limit: relay_settings.max_limit,
+        max_subscriptions: relay_settings.max_subscriptions,
     };
 
     if let Some(target_url) = args.relay_url {
@@ -98,15 +99,14 @@ async fn main() -> Result<()> {
 
     let relay_keys = relay_settings.relay_keys()?;
     let cancellation_token = CancellationToken::new();
-    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(relay_keys.clone()), cancellation_token));
-    let database = Arc::new(RelayDatabase::new(
-        settings.db_path.clone(),
-        crypto_worker,
-    )?);
+    let crypto_worker = Arc::new(CryptoWorker::new(
+        Arc::new(relay_keys.clone()),
+        cancellation_token,
+    ));
+    let database = Arc::new(RelayDatabase::new(settings.db_path.clone(), crypto_worker)?);
     let groups =
         Arc::new(Groups::load_groups(Arc::clone(&database), relay_keys.public_key()).await?);
 
-    
     server::run_server(settings, relay_keys, database, groups).await?;
 
     Ok(())

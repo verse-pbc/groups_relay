@@ -25,7 +25,6 @@ impl<T> EventVerifierMiddleware<T> {
     }
 }
 
-
 #[async_trait]
 impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for EventVerifierMiddleware<T> {
     type State = NostrConnectionState<T>;
@@ -71,8 +70,8 @@ mod tests {
     use super::*;
     use std::borrow::Cow;
     use std::sync::Arc;
-    use websocket_builder::InboundContext;
     use tokio_util::sync::CancellationToken;
+    use websocket_builder::InboundContext;
 
     fn create_crypto_worker() -> Arc<CryptoWorker> {
         let keys = Arc::new(Keys::generate());
@@ -80,7 +79,9 @@ mod tests {
         Arc::new(CryptoWorker::new(keys, cancellation_token))
     }
 
-    fn create_middleware_chain(crypto_worker: Arc<CryptoWorker>) -> Vec<
+    fn create_middleware_chain(
+        crypto_worker: Arc<CryptoWorker>,
+    ) -> Vec<
         Arc<
             dyn Middleware<
                 State = NostrConnectionState<()>,

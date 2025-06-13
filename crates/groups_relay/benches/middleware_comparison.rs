@@ -1,10 +1,10 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use std::hint::black_box;
 use groups_relay::groups::Groups;
 use groups_relay::groups_event_processor::GroupsRelayProcessor;
 use groups_relay::RelayDatabase;
-use nostr_relay_builder::{EventProcessor, EventContext, RelayConfig, crypto_worker::CryptoWorker};
+use nostr_relay_builder::{crypto_worker::CryptoWorker, EventContext, EventProcessor, RelayConfig};
 use nostr_sdk::prelude::*;
+use std::hint::black_box;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
@@ -16,9 +16,11 @@ async fn setup_bench() -> (tempfile::TempDir, Arc<RelayDatabase>, Arc<Groups>, K
 
     let admin_keys = Keys::generate();
     let cancellation_token = CancellationToken::new();
-    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(admin_keys.clone()), cancellation_token));
-    let database =
-        Arc::new(RelayDatabase::new(db_path.to_str().unwrap(), crypto_worker).unwrap());
+    let crypto_worker = Arc::new(CryptoWorker::new(
+        Arc::new(admin_keys.clone()),
+        cancellation_token,
+    ));
+    let database = Arc::new(RelayDatabase::new(db_path.to_str().unwrap(), crypto_worker).unwrap());
 
     let groups = Arc::new(
         Groups::load_groups(database.clone(), admin_keys.public_key())
@@ -99,7 +101,10 @@ async fn create_test_data(
                 ],
             );
 
-            processor.handle_event(add_event, &mut (), context).await.unwrap();
+            processor
+                .handle_event(add_event, &mut (), context)
+                .await
+                .unwrap();
 
             // Create some messages from members
             if j < 5 {
@@ -145,7 +150,8 @@ fn bench_visibility_direct(c: &mut Criterion) {
                 BenchmarkId::new(format!("groups_logic_{}", name), i),
                 event,
                 |b, event| {
-                    let processor = GroupsRelayProcessor::new(groups.clone(), admin_keys.public_key());
+                    let processor =
+                        GroupsRelayProcessor::new(groups.clone(), admin_keys.public_key());
 
                     b.to_async(&rt).iter(|| async {
                         let context = EventContext {
@@ -250,7 +256,11 @@ fn bench_nip29_operations(c: &mut Criterion) {
                     relay_pubkey: &admin_pk,
                 };
 
-                black_box(processor.handle_event(event.clone(), &mut (), context).await)
+                black_box(
+                    processor
+                        .handle_event(event.clone(), &mut (), context)
+                        .await,
+                )
             });
         });
     }
@@ -285,13 +295,15 @@ fn bench_group_operations(c: &mut Criterion) {
                     }
                     "check_membership" => {
                         let user = admin_keys.public_key();
-                        if let Some(group) = groups.get_group(&nostr_lmdb::Scope::Default, group_id) {
+                        if let Some(group) = groups.get_group(&nostr_lmdb::Scope::Default, group_id)
+                        {
                             black_box(group.is_member(&user));
                         }
                     }
                     "check_admin" => {
                         let user = admin_keys.public_key();
-                        if let Some(group) = groups.get_group(&nostr_lmdb::Scope::Default, group_id) {
+                        if let Some(group) = groups.get_group(&nostr_lmdb::Scope::Default, group_id)
+                        {
                             black_box(group.is_admin(&user));
                         }
                     }
@@ -303,8 +315,8 @@ fn bench_group_operations(c: &mut Criterion) {
 
     // Benchmark filter operations
     group.bench_function("filter_by_group", |b| {
-        let filter = Filter::new()
-            .custom_tag(SingleLetterTag::lowercase(Alphabet::H), "bench_group_0");
+        let filter =
+            Filter::new().custom_tag(SingleLetterTag::lowercase(Alphabet::H), "bench_group_0");
 
         b.to_async(&rt).iter(|| async {
             let processor = GroupsRelayProcessor::new(groups.clone(), admin_keys.public_key());

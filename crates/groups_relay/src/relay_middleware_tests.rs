@@ -927,9 +927,10 @@ mod tests {
             .custom_tag(SingleLetterTag::lowercase(Alphabet::D), "test_group");
 
         // Test filter verification - should pass for addressable queries
-        let result = middleware
-            .processor()
-            .verify_filters(&[addressable_filter], &(), member_context);
+        let result =
+            middleware
+                .processor()
+                .verify_filters(&[addressable_filter], &(), member_context);
 
         assert!(
             result.is_ok(),
@@ -954,15 +955,19 @@ mod tests {
         };
 
         // Create filter for non-existing group
-        let filters = vec![Filter::new()
-            .kinds(vec![Kind::TextNote])
-            .custom_tag(SingleLetterTag::lowercase(Alphabet::H), "non_existing_group")];
+        let filters = vec![Filter::new().kinds(vec![Kind::TextNote]).custom_tag(
+            SingleLetterTag::lowercase(Alphabet::H),
+            "non_existing_group",
+        )];
 
         // Should pass because unmanaged groups are allowed
         let result = middleware
             .processor()
             .verify_filters(&filters, &(), member_context);
-        assert!(result.is_ok(), "Non-existing groups should be allowed (unmanaged groups)");
+        assert!(
+            result.is_ok(),
+            "Non-existing groups should be allowed (unmanaged groups)"
+        );
     }
 
     #[tokio::test]
@@ -1028,10 +1033,11 @@ mod tests {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let (_, member_keys, _) = create_test_keys().await;
 
-        let middleware = create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
+        let middleware =
+            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
 
         let group_id = "existing_events_group";
-        
+
         // First, create some unmanaged group content
         let unmanaged_event = create_test_event(
             &member_keys,
@@ -1074,6 +1080,9 @@ mod tests {
             .await;
 
         // Should fail because only relay admin can convert unmanaged to managed
-        assert!(result.is_err(), "Only relay admin should be able to convert unmanaged groups to managed");
+        assert!(
+            result.is_err(),
+            "Only relay admin should be able to convert unmanaged groups to managed"
+        );
     }
 }

@@ -46,7 +46,6 @@ pub struct ConfigResponse {
     base_domain_parts: usize,
 }
 
-
 pub async fn handle_root(
     ws: Option<WebSocketUpgrade>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -58,7 +57,8 @@ pub async fn handle_root(
     if ws.is_some()
         || headers
             .get(axum::http::header::ACCEPT)
-            .and_then(|h| h.to_str().ok()) == Some("application/nostr+json")
+            .and_then(|h| h.to_str().ok())
+            == Some("application/nostr+json")
     {
         // Handle with the relay handlers
         state.handlers.clone().axum_root_handler()(ws, ConnectInfo(addr), headers).await
@@ -136,9 +136,7 @@ pub async fn handle_config(State(state): State<Arc<ServerState>>) -> impl IntoRe
         })
         .unwrap_or(2);
 
-    Json(ConfigResponse {
-        base_domain_parts,
-    })
+    Json(ConfigResponse { base_domain_parts })
 }
 
 /// Serve the frontend without needing state

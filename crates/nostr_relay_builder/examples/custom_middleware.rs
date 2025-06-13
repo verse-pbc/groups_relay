@@ -3,8 +3,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use nostr_relay_builder::{
-    CryptoWorker, EventContext, EventProcessor, Nip09Middleware, Nip40ExpirationMiddleware, 
-    Nip70Middleware, NostrConnectionState, RelayBuilder, RelayConfig, RelayDatabase, 
+    CryptoWorker, EventContext, EventProcessor, Nip09Middleware, Nip40ExpirationMiddleware,
+    Nip70Middleware, NostrConnectionState, RelayBuilder, RelayConfig, RelayDatabase,
     Result as RelayResult, StoreCommand, WebSocketConfig,
 };
 use nostr_sdk::prelude::*;
@@ -165,7 +165,10 @@ async fn main() -> Result<()> {
 
     // Create the crypto worker and database
     let cancellation_token = CancellationToken::new();
-    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(keys.clone()), cancellation_token));
+    let crypto_worker = Arc::new(CryptoWorker::new(
+        Arc::new(keys.clone()),
+        cancellation_token,
+    ));
     let database = Arc::new(RelayDatabase::new("./data/custom_relay.db", crypto_worker)?);
 
     let config = RelayConfig::new("wss://localhost:8080", database.clone(), keys)

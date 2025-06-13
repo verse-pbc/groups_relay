@@ -75,7 +75,7 @@ pub struct WebSocketConfig {
 impl Default for WebSocketConfig {
     fn default() -> Self {
         Self {
-            channel_size: 100,
+            channel_size: 27500, // Default: 50 subscriptions * 500 max_limit * 1.10
             max_connections: None,
             max_connection_time: None,
         }
@@ -126,8 +126,10 @@ pub struct RelayConfig {
     pub auth_config: Option<crate::middlewares::AuthConfig>,
     /// WebSocket server configuration
     pub websocket_config: WebSocketConfig,
-    /// Query limit for REQ filters (both default and maximum)
-    pub query_limit: usize,
+    /// Maximum number of active subscriptions per connection
+    pub max_subscriptions: usize,
+    /// Maximum limit value allowed in subscription filters
+    pub max_limit: usize,
 }
 
 impl RelayConfig {
@@ -145,16 +147,18 @@ impl RelayConfig {
             enable_auth: false,
             auth_config: None,
             websocket_config: WebSocketConfig::default(),
-            query_limit: 500,
+            max_subscriptions: 50,
+            max_limit: 500,
         }
     }
 
     /// Create database instance from configuration with a provided crypto worker
-    pub fn create_database(&self, crypto_worker: Arc<CryptoWorker>) -> Result<Arc<RelayDatabase>, Error> {
+    pub fn create_database(
+        &self,
+        crypto_worker: Arc<CryptoWorker>,
+    ) -> Result<Arc<RelayDatabase>, Error> {
         match &self.database {
-            DatabaseConfig::Path(path) => {
-                Ok(Arc::new(RelayDatabase::new(path, crypto_worker)?))
-            }
+            DatabaseConfig::Path(path) => Ok(Arc::new(RelayDatabase::new(path, crypto_worker)?)),
             DatabaseConfig::Instance(db) => Ok(db.clone()),
         }
     }
@@ -178,14 +182,15 @@ impl RelayConfig {
             .ok()
             .and_then(|u| u.host_str().map(|s| s.to_string()))
             .unwrap_or_default();
-        
+
         // Count the number of parts in the base domain
-        let base_domain_parts = if host.is_empty() || host == "localhost" || host.parse::<std::net::IpAddr>().is_ok() {
-            2 // Default for invalid hosts
-        } else {
-            host.split('.').count()
-        };
-        
+        let base_domain_parts =
+            if host.is_empty() || host == "localhost" || host.parse::<std::net::IpAddr>().is_ok() {
+                2 // Default for invalid hosts
+            } else {
+                host.split('.').count()
+            };
+
         self.scope_config = ScopeConfig::subdomain(base_domain_parts);
         self
     }
@@ -203,12 +208,6 @@ impl RelayConfig {
         self
     }
 
-    /// Set the channel size for WebSocket connections
-    pub fn with_channel_size(mut self, size: usize) -> Self {
-        self.websocket_config.channel_size = size;
-        self
-    }
-
     /// Set the maximum number of concurrent connections
     pub fn with_max_connections(mut self, max: usize) -> Self {
         self.websocket_config.max_connections = Some(max);
@@ -221,9 +220,22 @@ impl RelayConfig {
         self
     }
 
-    /// Set the query limit for REQ filters
-    pub fn with_query_limit(mut self, limit: usize) -> Self {
-        self.query_limit = limit;
+    /// Set the maximum number of active subscriptions per connection
+    pub fn with_max_subscriptions(mut self, max_subscriptions: usize) -> Self {
+        self.max_subscriptions = max_subscriptions;
+        self
+    }
+
+    /// Set the maximum limit value allowed in subscription filters
+    pub fn with_max_limit(mut self, max_limit: usize) -> Self {
+        self.max_limit = max_limit;
+        self
+    }
+
+    /// Set max_subscriptions and max_limit
+    pub fn with_subscription_limits(mut self, max_subscriptions: usize, max_limit: usize) -> Self {
+        self.max_subscriptions = max_subscriptions;
+        self.max_limit = max_limit;
         self
     }
 }

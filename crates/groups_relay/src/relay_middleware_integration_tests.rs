@@ -126,10 +126,9 @@ mod integration_tests {
             .unwrap();
 
         // Test filter verification for member
-        let filters = vec![Filter::new().kinds(vec![Kind::TextNote]).custom_tag(
-            SingleLetterTag::lowercase(Alphabet::H),
-            group_id,
-        )];
+        let filters = vec![Filter::new()
+            .kinds(vec![Kind::TextNote])
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::H), group_id)];
 
         let member_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
         let member_pubkey = member_keys.public_key();

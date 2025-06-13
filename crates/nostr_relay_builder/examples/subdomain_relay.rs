@@ -12,7 +12,7 @@ use anyhow::Result;
 use axum::{response::IntoResponse, routing::get, Router};
 use nostr_relay_builder::{
     middlewares::{Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware},
-    CryptoWorker, EventContext, EventProcessor, RelayBuilder, RelayConfig, RelayInfo, 
+    CryptoWorker, EventContext, EventProcessor, RelayBuilder, RelayConfig, RelayInfo,
     Result as RelayResult, StoreCommand,
 };
 use nostr_sdk::prelude::*;
@@ -339,7 +339,10 @@ async fn main() -> Result<()> {
 
     // Create crypto worker and database for middleware
     let cancellation_token = CancellationToken::new();
-    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(keys.clone()), cancellation_token));
+    let crypto_worker = Arc::new(CryptoWorker::new(
+        Arc::new(keys.clone()),
+        cancellation_token,
+    ));
     let database = config.create_database(crypto_worker)?;
 
     // Build the relay handlers with connection counting
@@ -363,9 +366,7 @@ async fn main() -> Result<()> {
                       connect_info: axum::extract::ConnectInfo<SocketAddr>,
                       headers: axum::http::HeaderMap| async move {
                     if ws.is_some()
-                        || headers
-                            .get("accept")
-                            .and_then(|h| h.to_str().ok())
+                        || headers.get("accept").and_then(|h| h.to_str().ok())
                             == Some("application/nostr+json")
                     {
                         handlers.axum_root_handler()(ws, connect_info, headers).await
