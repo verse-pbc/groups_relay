@@ -7,7 +7,8 @@ use crate::metrics::SubscriptionMetricsHandler;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 
-static SUBSCRIPTION_METRICS_HANDLER: OnceCell<Arc<dyn SubscriptionMetricsHandler>> = OnceCell::new();
+static SUBSCRIPTION_METRICS_HANDLER: OnceCell<Arc<dyn SubscriptionMetricsHandler>> =
+    OnceCell::new();
 
 /// Set the global subscription metrics handler
 pub fn set_subscription_metrics_handler(handler: Arc<dyn SubscriptionMetricsHandler>) {

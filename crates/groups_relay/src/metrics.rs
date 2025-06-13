@@ -30,9 +30,8 @@ pub fn groups_created() -> Counter {
 }
 
 /// Cached histogram instances for event latency
-static EVENT_LATENCY_HISTOGRAMS: Lazy<RwLock<HashMap<u32, Histogram>>> = Lazy::new(|| {
-    RwLock::new(HashMap::new())
-});
+static EVENT_LATENCY_HISTOGRAMS: Lazy<RwLock<HashMap<u32, Histogram>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Get the label for an event kind
 fn get_kind_label(kind: u32) -> &'static str {
@@ -76,16 +75,16 @@ pub fn event_latency(kind: u32) -> Histogram {
             return histogram.clone();
         }
     }
-    
+
     // Not in cache, need to create it
     let kind_label = get_kind_label(kind);
     let histogram = metrics::histogram!("event_latency_ms", "kind" => kind_label);
-    
+
     // Store in cache
     if let Ok(mut cache) = EVENT_LATENCY_HISTOGRAMS.write() {
         cache.insert(kind, histogram.clone());
     }
-    
+
     histogram
 }
 
@@ -111,50 +110,50 @@ pub fn setup_metrics() -> Result<PrometheusHandle, anyhow::Error> {
     if let Some(handle) = METRICS_HANDLE.get() {
         return Ok(handle.clone());
     }
-    
-    
+
     // Initialize only once
-    METRICS_HANDLE.get_or_try_init(|| {
-        // Describe metrics
-        describe_counter!("groups_created", "Total number of groups created");
-        describe_gauge!(
-            "groups_by_privacy",
-            "Number of groups by privacy settings (private/public and closed/open)"
-        );
-        describe_histogram!(
-            "event_latency_ms",
-            "Event processing latency in milliseconds by event kind"
-        );
-        describe_gauge!(
-            "active_groups_by_privacy",
-            "Number of active groups (2+ members and 1+ event) by privacy settings"
-    );
-    describe_gauge!(
-        "active_groups",
-        "Number of groups with at least 2 members and 1 event"
-    );
-    describe_gauge!(
-        "active_connections",
-        "Number of active WebSocket connections"
-    );
-    describe_counter!(
-        "inbound_events_processed",
-        "Total number of inbound events processed"
-    );
-    describe_gauge!(
-        "active_subscriptions",
-        "Number of active REQ subscriptions across all connections"
-    );
+    METRICS_HANDLE
+        .get_or_try_init(|| {
+            // Describe metrics
+            describe_counter!("groups_created", "Total number of groups created");
+            describe_gauge!(
+                "groups_by_privacy",
+                "Number of groups by privacy settings (private/public and closed/open)"
+            );
+            describe_histogram!(
+                "event_latency_ms",
+                "Event processing latency in milliseconds by event kind"
+            );
+            describe_gauge!(
+                "active_groups_by_privacy",
+                "Number of active groups (2+ members and 1+ event) by privacy settings"
+            );
+            describe_gauge!(
+                "active_groups",
+                "Number of groups with at least 2 members and 1 event"
+            );
+            describe_gauge!(
+                "active_connections",
+                "Number of active WebSocket connections"
+            );
+            describe_counter!(
+                "inbound_events_processed",
+                "Total number of inbound events processed"
+            );
+            describe_gauge!(
+                "active_subscriptions",
+                "Number of active REQ subscriptions across all connections"
+            );
 
-        let builder = PrometheusBuilder::new();
-        let handle = builder.install_recorder()?;
+            let builder = PrometheusBuilder::new();
+            let handle = builder.install_recorder()?;
 
-        // Reset gauges to 0 on startup
-        active_connections().set(0.0);
-        active_subscriptions().set(0.0);
-        active_groups().set(0.0);
+            // Reset gauges to 0 on startup
+            active_connections().set(0.0);
+            active_subscriptions().set(0.0);
+            active_groups().set(0.0);
 
-        Ok(handle)
-    })
-    .cloned()
+            Ok(handle)
+        })
+        .cloned()
 }

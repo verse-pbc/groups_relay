@@ -21,16 +21,16 @@ use websocket_builder::{
 pub trait MetricsHandler: Send + Sync + std::fmt::Debug {
     /// Record event processing latency
     fn record_event_latency(&self, kind: u32, latency_ms: f64);
-    
+
     /// Called when a connection is established
     fn increment_active_connections(&self);
-    
+
     /// Called when a connection is closed
     fn decrement_active_connections(&self);
-    
+
     /// Called when an inbound event is processed
     fn increment_inbound_events_processed(&self);
-    
+
     /// Whether to track latency for this event (allows sampling)
     fn should_track_latency(&self) -> bool {
         true // Default to always track for backward compatibility
@@ -108,7 +108,10 @@ impl<T: Clone + Send + Sync + std::fmt::Debug + 'static> Middleware for MetricsM
     ) -> Result<(), anyhow::Error> {
         // Track event processing latency for OK responses
         if let Some(RelayMessage::Ok { .. }) = ctx.message.as_ref() {
-            if let (Some(start_time), Some(kind)) = (ctx.state.event_start_time.take(), ctx.state.event_kind.take()) {
+            if let (Some(start_time), Some(kind)) = (
+                ctx.state.event_start_time.take(),
+                ctx.state.event_kind.take(),
+            ) {
                 let latency_ms = start_time.elapsed().as_secs_f64() * 1000.0;
                 if let Some(handler) = &self.handler {
                     handler.record_event_latency(kind as u32, latency_ms);
@@ -173,7 +176,7 @@ mod tests {
         fn increment_inbound_events_processed(&self) {
             *self.events_processed.lock().unwrap() += 1;
         }
-        
+
         fn should_track_latency(&self) -> bool {
             true // Always track in tests
         }
@@ -187,16 +190,19 @@ mod tests {
     async fn test_connection_tracking() {
         let handler = TestMetricsHandler::default();
         let connections = handler.connections.clone();
-        
+
         let middleware = MetricsMiddleware::with_handler(Box::new(handler));
-        let chain = vec![Arc::new(middleware) as Arc<dyn Middleware<
-            State = NostrConnectionState<()>,
-            IncomingMessage = ClientMessage<'static>,
-            OutgoingMessage = RelayMessage<'static>,
-        >>];
-        
+        let chain = vec![Arc::new(middleware)
+            as Arc<
+                dyn Middleware<
+                    State = NostrConnectionState<()>,
+                    IncomingMessage = ClientMessage<'static>,
+                    OutgoingMessage = RelayMessage<'static>,
+                >,
+            >];
+
         let mut state = create_test_state();
-        
+
         // Test connection
         let mut ctx = ConnectionContext::new(
             "test_connection".to_string(),
@@ -205,10 +211,10 @@ mod tests {
             chain.as_slice(),
             0,
         );
-        
+
         chain[0].on_connect(&mut ctx).await.unwrap();
         assert_eq!(*connections.lock().unwrap(), 1);
-        
+
         // Test disconnection
         let mut ctx = DisconnectContext::new(
             "test_connection".to_string(),
@@ -217,7 +223,7 @@ mod tests {
             chain.as_slice(),
             0,
         );
-        
+
         chain[0].on_disconnect(&mut ctx).await.unwrap();
         assert_eq!(*connections.lock().unwrap(), 0);
     }

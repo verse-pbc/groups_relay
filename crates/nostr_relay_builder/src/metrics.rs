@@ -7,7 +7,7 @@
 pub trait SubscriptionMetricsHandler: Send + Sync + std::fmt::Debug {
     /// Called when a subscription is added
     fn increment_active_subscriptions(&self);
-    
+
     /// Called when subscriptions are removed
     fn decrement_active_subscriptions(&self, count: usize);
 }

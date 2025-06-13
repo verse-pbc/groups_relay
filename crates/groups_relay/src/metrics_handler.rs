@@ -17,11 +17,11 @@ impl MetricsHandler for PrometheusMetricsHandler {
     fn decrement_active_connections(&self) {
         metrics::active_connections().decrement(1.0);
     }
-    
+
     fn increment_inbound_events_processed(&self) {
         metrics::inbound_events_processed().increment(1);
     }
-    
+
     fn should_track_latency(&self) -> bool {
         true // Always track for full metrics
     }
@@ -48,7 +48,9 @@ impl SubscriptionMetricsHandler for PrometheusSubscriptionMetricsHandler {
 }
 
 // Also implement the nostr_relay_builder trait
-impl nostr_relay_builder::metrics::SubscriptionMetricsHandler for PrometheusSubscriptionMetricsHandler {
+impl nostr_relay_builder::metrics::SubscriptionMetricsHandler
+    for PrometheusSubscriptionMetricsHandler
+{
     fn increment_active_subscriptions(&self) {
         metrics::active_subscriptions().increment(1.0);
     }
@@ -57,4 +59,3 @@ impl nostr_relay_builder::metrics::SubscriptionMetricsHandler for PrometheusSubs
         metrics::active_subscriptions().decrement(count as f64);
     }
 }
-

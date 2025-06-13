@@ -3,7 +3,7 @@ use nostr_relay_builder::middlewares::MetricsHandler;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// A metrics handler that samples events to reduce overhead
-/// 
+///
 /// This handler only records metrics for a configurable percentage of events
 /// to avoid the performance overhead of recording every single event.
 #[derive(Debug)]
@@ -16,7 +16,7 @@ pub struct SampledMetricsHandler {
 
 impl SampledMetricsHandler {
     /// Create a new sampled metrics handler
-    /// 
+    ///
     /// sample_rate: Record metrics for 1 out of every N events
     /// For example, sample_rate = 10 means record 10% of events
     pub fn new(sample_rate: u64) -> Self {
@@ -25,7 +25,7 @@ impl SampledMetricsHandler {
             sample_rate: sample_rate.max(1), // Ensure at least 1
         }
     }
-    
+
     /// Check if we should sample this event
     fn should_sample(&self) -> bool {
         let count = self.event_counter.fetch_add(1, Ordering::Relaxed);
@@ -48,15 +48,15 @@ impl MetricsHandler for SampledMetricsHandler {
         // Always track connections (not sampled)
         metrics::active_connections().decrement(1.0);
     }
-    
+
     fn increment_inbound_events_processed(&self) {
         // Use sampling for event counts too
         if self.should_sample() {
             // Multiply by sample rate to extrapolate
-            metrics::inbound_events_processed().increment(self.sample_rate as u64);
+            metrics::inbound_events_processed().increment(self.sample_rate);
         }
     }
-    
+
     fn should_track_latency(&self) -> bool {
         // This is the key optimization - only call Instant::now() for sampled events
         self.should_sample()
