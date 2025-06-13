@@ -190,14 +190,14 @@ pub fn default_relay_html(relay_info: &RelayInfo) -> String {
         {icon}
         <h1>{name}</h1>
         <p class="description">{description}</p>
-        
+
         <div class="info-section">
             <h2>Connection Info</h2>
             <div class="endpoint">
-                WebSocket Endpoint: <strong>{websocket_url}</strong>
+                WebSocket Endpoint: <strong id="websocket-url"></strong>
             </div>
         </div>
-        
+
         <div class="info-section">
             <h2>Relay Details</h2>
             <div class="info-item">
@@ -213,20 +213,30 @@ pub fn default_relay_html(relay_info: &RelayInfo) -> String {
                 <span class="info-value">{software} v{version}</span>
             </div>
         </div>
-        
+
         <div class="info-section">
             <h2>Supported NIPs</h2>
             <div class="nip-list">
                 {nips}
             </div>
         </div>
-        
+
         <div class="info-section">
             <h2>Usage</h2>
             <p>Connect to this relay using any Nostr client that supports the WebSocket protocol.</p>
             <p>For relay information in JSON format, send a request with <code>Accept: application/nostr+json</code></p>
         </div>
     </div>
+
+    <script>
+        // Dynamically set the WebSocket URL based on current protocol and hostname
+        document.addEventListener('DOMContentLoaded', function() {{
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host; // includes hostname and port if present
+            const websocketUrl = protocol + '//' + host;
+            document.getElementById('websocket-url').textContent = websocketUrl;
+        }});
+    </script>
 </body>
 </html>"#,
         name = relay_info.name,
@@ -239,7 +249,6 @@ pub fn default_relay_html(relay_info: &RelayInfo) -> String {
                 url, relay_info.name
             ))
             .unwrap_or_default(),
-        websocket_url = "ws://localhost:8080", // TODO: Make this configurable
         pubkey = relay_info.pubkey,
         contact = relay_info.contact,
         software = relay_info.software,
