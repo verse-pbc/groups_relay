@@ -1,6 +1,4 @@
-use groups_relay::group::{
-    Group, GroupRole, KIND_GROUP_ADMINS_39001, KIND_GROUP_MEMBERS_39002,
-};
+use groups_relay::group::{Group, GroupRole, KIND_GROUP_ADMINS_39001, KIND_GROUP_MEMBERS_39002};
 use nostr_sdk::prelude::*;
 
 #[tokio::test]

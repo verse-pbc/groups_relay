@@ -3,7 +3,7 @@
 use groups_relay::{
     config::Keys, groups::Groups, groups_event_processor::GroupsRelayProcessor, RelayDatabase,
 };
-use nostr_relay_builder::{AuthConfig, RelayBuilder, RelayConfig, crypto_worker::CryptoWorker};
+use nostr_relay_builder::{crypto_worker::CryptoWorker, AuthConfig, RelayBuilder, RelayConfig};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -16,7 +16,10 @@ async fn test_groups_relay_with_nostr_relay_builder() -> anyhow::Result<()> {
 
     let keys = Keys::generate();
     let cancellation_token = CancellationToken::new();
-    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(keys.clone()), cancellation_token));
+    let crypto_worker = Arc::new(CryptoWorker::new(
+        Arc::new(keys.clone()),
+        cancellation_token,
+    ));
 
     // groups_relay's database is used for groups management
     let groups_database = Arc::new(RelayDatabase::new(&db_path, crypto_worker)?);

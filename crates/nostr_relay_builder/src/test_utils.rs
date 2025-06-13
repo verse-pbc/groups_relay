@@ -15,7 +15,10 @@ pub async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let db_path = tmp_dir.path().join("test.db");
     let keys = Keys::generate();
     let cancellation_token = CancellationToken::new();
-    let crypto_worker = Arc::new(CryptoWorker::new(Arc::new(keys.clone()), cancellation_token));
+    let crypto_worker = Arc::new(CryptoWorker::new(
+        Arc::new(keys.clone()),
+        cancellation_token,
+    ));
     let database = Arc::new(RelayDatabase::new(db_path.to_str().unwrap(), crypto_worker).unwrap());
     (tmp_dir, database, keys)
 }
