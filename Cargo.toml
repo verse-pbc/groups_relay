@@ -1,42 +1,65 @@
-[workspace]
-members = [
-    "crates/groups_relay",
-    "crates/websocket_builder",
-    "crates/nostr_relay_builder",
-]
-resolver = "2"
-
-[workspace.package]
+[package]
+name = "groups_relay"
 version = "0.1.0"
 edition = "2021"
+authors = ["Daniel Cadenas <dcadenas@gmail.com>"]
+default-run = "groups_relay"
 
-
-[profile.release]
-debug = true
-lto = "thin"
-codegen-units = 1
-
-[workspace.dependencies]
-futures-util = "0.3.31"
+[dependencies]
+nostr_relay_builder = { git = "https://github.com/verse-pbc/nostr_relay_builder", features = ["axum"] }
+websocket_builder = { git = "https://github.com/verse-pbc/websocket_builder" }
 tokio = { version = "1.45", features = ["full"] }
-tokio-util = { version = "0.7.12", features = ["rt"] }
 anyhow = { version = "1.0.89", features = ["backtrace"] }
 async-trait = "0.1.82"
 tracing = { version = "0.1" }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 futures = "0.3.31"
 clap = { version = "4.5.17", features = ["derive"] }
 nostr-sdk = { git = "https://github.com/verse-pbc/nostr", features = ["all-nips"] }
-nostr = { git = "https://github.com/verse-pbc/nostr", features = ["std"] }
-nostr-database = { git = "https://github.com/verse-pbc/nostr" }
-nostr-lmdb = { git = "https://github.com/verse-pbc/nostr" }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
+tracing-appender = "0.2"
 metrics = "0.24.1"
 metrics-exporter-prometheus = "0.16.2"
 rand = "0.8.5"
-tokio-tungstenite = "0.26.1"
-heed = "=0.20.5"
+thiserror = "2.0.12"
+indicatif = "0.17"
+
+tokio-util = { version = "0.7.1", features = ["rt"] }
+dashmap = "6.1.0"
+config = "0.15.11"
 axum = { version = "0.7.9", features = ["ws", "http1"] }
-tower = { version = "0.4.13", features = ["util"] }
+axum-server = "0.6.0"
+strum = { version = "0.27.1", features = ["derive", "strum_macros"] }
+snafu = { version = "0.8.5", features = ["backtrace"] }
+console-subscriber = { version = "0.4.1", optional = true }
 tower-http = { version = "0.6.2", features = ["trace", "cors", "fs"] }
+tower = { version = "0.4.13", features = ["util"] }
+nostr = { git = "https://github.com/verse-pbc/nostr", features = ["std"] }
+nostr-database = { git = "https://github.com/verse-pbc/nostr" }
+nostr-lmdb = { git = "https://github.com/verse-pbc/nostr" }
+time = { version = "0.3.37", features = ["local-offset", "macros"] }
+humantime-serde = "1.1.1"
+tracing-futures = "0.2.5"
+once_cell = "1.20"
+
+[features]
+console = ["dep:console-subscriber"]
+
+[dev-dependencies]
+criterion = { version = "0.6.0", features = ["async_tokio"] }
+futures-util = "0.3.31"
+pretty_assertions = "1.4.1"
+tempfile = "3.14.0"
+tokio-tungstenite = "0.26.1"
+
+[[bench]]
+name = "event_verify"
+harness = false
+
+[[bench]]
+name = "event_sign"
+harness = false
+
+[[bench]]
+name = "middleware_comparison"
+harness = false

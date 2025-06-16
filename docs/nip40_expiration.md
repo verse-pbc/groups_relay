@@ -28,11 +28,11 @@ Implement NIP-40 to allow Nostr events to include an expiration timestamp. Event
 ## Implementation Context
 
 ### Key Files and Functions
-- `crates/groups_relay/src/middlewares.rs`: Register the new middleware.
-- `crates/groups_relay/src/middlewares/nip_40_expiration.rs` (New file): Implement the core NIP-40 logic.
-- `crates/groups_relay/src/nostr_database.rs`: Potentially modify `query` function or add a new filtered query mechanism to exclude expired events.
-- `crates/groups_relay/src/subscription_manager.rs`: Ensure subscription handling filters out expired events before sending.
-- `crates/groups_relay/src/main.rs` (or wherever NIP-11 info is generated): Add `40` to supported NIPs.
+- `src/middlewares.rs`: Register the new middleware.
+- `src/middlewares/nip_40_expiration.rs` (New file): Implement the core NIP-40 logic.
+- `src/nostr_database.rs`: Potentially modify `query` function or add a new filtered query mechanism to exclude expired events.
+- `src/subscription_manager.rs`: Ensure subscription handling filters out expired events before sending.
+- `src/main.rs` (or wherever NIP-11 info is generated): Add `40` to supported NIPs.
 
 ### Event Processing Flow
 1. Incoming `EVENT` messages pass through the middleware chain.
@@ -45,7 +45,7 @@ Implement NIP-40 to allow Nostr events to include an expiration timestamp. Event
 ## Implementation Steps
 
 ### 1. Create `Nip40Middleware`
-- Create `crates/groups_relay/src/middlewares/nip_40_expiration.rs`.
+- Create `src/middlewares/nip_40_expiration.rs`.
 - Define `Nip40Middleware` struct (might not need any fields initially).
 - Implement the `Middleware` trait for `Nip40Middleware`.
 - In `process_inbound`:
@@ -55,7 +55,7 @@ Implement NIP-40 to allow Nostr events to include an expiration timestamp. Event
     - If not expired or no tag, call `ctx.next().await`.
 
 ### 2. Register Middleware
-- Add `mod nip_40_expiration;` and `pub use nip_40_expiration::Nip40Middleware;` to `crates/groups_relay/src/middlewares.rs`.
+- Add `mod nip_40_expiration;` and `pub use nip_40_expiration::Nip40Middleware;` to `src/middlewares.rs`.
 - Instantiate and add `Nip40Middleware` to the middleware chain where `App` or the websocket server is configured (e.g., in `main.rs`).
 
 ### 3. Filter Expired Events on Query

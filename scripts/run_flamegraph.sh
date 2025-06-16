@@ -20,7 +20,7 @@ fi
 echo ""
 echo "Starting flamegraph for groups_relay..."
 echo "The server will start under the profiler."
-echo "Its configuration will be loaded from: $PROJECT_ROOT/crates/groups_relay/config"
+echo "Its configuration will be loaded from: $PROJECT_ROOT/config"
 echo ""
 echo "IMPORTANT:"
 echo "1. Wait for the server to indicate it's listening (e.g., on 0.0.0.0:8080)."
@@ -31,7 +31,7 @@ echo ""
 
 # Run flamegraph, passing the config directory to the binary
 # sudo is required for dtrace on macOS
-sudo cargo flamegraph --release --bin groups_relay -- --config-dir crates/groups_relay/config
+sudo cargo flamegraph --release --bin groups_relay -- --config-dir config
 
 if [ $? -eq 0 ]; then
   echo ""

@@ -11,15 +11,14 @@ RUN set -eux; \
 
 WORKDIR /usr/src/app
 
-# Copy workspace files
+# Copy project files
 COPY .cargo/config.toml .cargo/config.toml
 COPY Cargo.toml Cargo.lock ./
-COPY crates/groups_relay ./crates/groups_relay
-COPY crates/websocket_builder ./crates/websocket_builder
-COPY crates/nostr_relay_builder ./crates/nostr_relay_builder
+COPY src ./src
+COPY benches ./benches
 
 # Build the relay binary in debug mode
-RUN cargo build --package groups_relay
+RUN cargo build
 
 FROM node:20-slim AS frontend-builder
 
@@ -61,7 +60,7 @@ RUN set -eux; \
     apt-get clean
 
 WORKDIR /app
-COPY crates/groups_relay/config/settings.yml ./config/
+COPY config/settings.yml ./config/
 COPY --from=rust-builder /usr/src/app/target/debug/groups_relay ./groups_relay
 COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
 

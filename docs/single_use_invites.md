@@ -38,7 +38,7 @@ This implementation:
 ## Implementation Context
 
 ### Key Files and Functions
-- `crates/groups_relay/src/groups/group.rs`:
+- `src/groups/group.rs`:
   - `join_request`: Processes join requests and invite validation
   - `create_invite`: Creates new invite codes
   - `load_invite_from_event`: Reconstructs invite state from events

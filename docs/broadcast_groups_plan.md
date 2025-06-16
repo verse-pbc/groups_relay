@@ -5,7 +5,7 @@ This plan outlines the steps required to implement a feature allowing NIP-29 gro
 ## Tasks
 
 -   [x] **1. Add Test for Broadcast Mode Publishing Restrictions:**
-    -   Location: `mod tests` in `crates/groups_relay/src/groups/group.rs`.
+    -   Location: `mod tests` in `src/groups/group.rs`.
     -   Create a new test function (e.g., `test_broadcast_mode_restrictions`).
     -   Scenario 1: Broadcast Mode Enabled
         -   Setup: Create a group, add a member. Update metadata via `kind:39000` or `kind:9002` to include the `["broadcast"]` tag.
@@ -20,13 +20,13 @@ This plan outlines the steps required to implement a feature allowing NIP-29 gro
         -   Test Member Publishing: Create a standard event signed by the Member. Assert that publishing now succeeds.
 
 -   [x] **2. Modify `GroupMetadata` Struct:**
-    -   Location: `crates/groups_relay/src/groups/group.rs`
+    -   Location: `src/groups/group.rs`
     -   Add a new boolean field, `is_broadcast: bool`, initialized to `false`.
 -   [x] **3. Update Metadata Parsing:**
     -   `Group::load_metadata_from_event` (for `kind:39000`): Modify parsing to look for the `["broadcast"]` tag and set `is_broadcast` accordingly.
     -   `Group::set_metadata` (for `kind:9002`): Modify parsing. Check for the presence of the `["broadcast"]` tag *within the incoming event*. If present, set `self.metadata.is_broadcast = true`. If *absent*, explicitly set `self.metadata.is_broadcast = false`.
 -   [x] **4. Update Metadata Generation:**
-    -   Location: `Group::generate_metadata_event` in `crates/groups_relay/src/groups/group.rs`.
+    -   Location: `Group::generate_metadata_event` in `src/groups/group.rs`.
     -   Modify the event generation to include the `["broadcast"]` tag if `self.metadata.is_broadcast` is `true`.
 -   [x] **5. Enforce Publishing Restrictions:**
     -   Location: `Group::handle_group_content` (or identified validation point).

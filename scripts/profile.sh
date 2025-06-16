@@ -310,14 +310,14 @@ if [ "$(uname)" = "Darwin" ]; then
         --release \
         --bin groups_relay \
         --output "${OUTPUT_NAME}_flamegraph.svg" \
-        -- --config-dir crates/groups_relay/config &
+        -- --config-dir config &
 else
     # Linux
     RUST_LOG="$RUST_LOG_LEVEL" CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
         --release \
         --bin groups_relay \
         --output "${OUTPUT_NAME}_flamegraph.svg" \
-        -- --config-dir crates/groups_relay/config &
+        -- --config-dir config &
 fi
 
 FLAMEGRAPH_PID=$!

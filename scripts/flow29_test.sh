@@ -150,7 +150,7 @@ run_step_or_fail() {
 start_server() {
     echo -e "${YELLOW}Starting groups_relay server...${NC}"
     cd "$PROJECT_ROOT"
-    cargo run --bin groups_relay -- --config-dir crates/groups_relay/config > "$SERVER_LOG" 2>&1 &
+    cargo run --bin groups_relay -- --config-dir config > "$SERVER_LOG" 2>&1 &
     SERVER_PID=$!
     
     # Wait for server to start

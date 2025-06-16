@@ -6,8 +6,8 @@ services:
       args:
         - DEBIAN_FRONTEND=noninteractive
     volumes:
-      - ./crates/groups_relay/config:/app/config:ro
-      - ./crates/groups_relay/db:/app/db
+      - ./config:/app/config:ro
+      - ./db:/app/db
     environment:
       RUST_LOG: "${RUST_LOG:-info}"
       NIP29__relay__relay_url: "${RELAY_URL:-ws://example.local:8080}"

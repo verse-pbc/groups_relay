@@ -38,11 +38,11 @@ clean:
 
 # Run the relay server
 run:
-    cargo run --bin groups_relay -- --config-dir crates/groups_relay/config
+    cargo run --bin groups_relay -- --config-dir config
 
 # Run the relay server with debug logging
 run-debug:
-    RUST_LOG=debug cargo run --bin groups_relay -- --config-dir crates/groups_relay/config
+    RUST_LOG=debug cargo run --bin groups_relay -- --config-dir config
 
 # Format code
 fmt:

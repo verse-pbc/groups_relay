@@ -85,7 +85,7 @@ If the test hangs, it's likely due to `nak` detecting it's not running in a term
 
 ### Server Won't Start
 - Check if port 8080 is already in use
-- Ensure you have the correct configuration in `crates/groups_relay/config/`
+- Ensure you have the correct configuration in `config/`
 - Check server logs: `test_server.log`
 
 ### Authentication Errors

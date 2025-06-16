@@ -9,12 +9,13 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /usr/src/app
 
-# Copy the entire workspace for building
+# Copy the project for building
 COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
+COPY src ./src
+COPY benches ./benches
 
-# Build all workspace binaries
-RUN cargo build --release --workspace
+# Build the release binary
+RUN cargo build --release
 
 FROM node:20-slim AS frontend-builder
 
@@ -51,8 +52,7 @@ WORKDIR /app
 
 # Copy pre-built artifacts and default config
 COPY --from=rust-builder /usr/src/app/target/release/groups_relay ./groups_relay
-COPY --from=rust-builder /usr/src/app/target/release/delete_event ./delete_event
-COPY crates/groups_relay/config/settings.yml ./config/
+COPY config/settings.yml ./config/
 COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
 
 EXPOSE 8080
