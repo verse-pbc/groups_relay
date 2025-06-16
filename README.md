@@ -6,80 +6,67 @@ A Nostr relay server specialized for group chat functionality.
 
 Implements [NIP-29: Relay-based Groups](https://github.com/nostr-protocol/nips/blob/master/29.md).
 
-## Project Structure
-
-This is a Rust workspace with three main crates:
-
-- **websocket_builder**: A low-level middleware-based WebSocket framework for building protocol servers.
-- **nostr_relay_builder**: A framework for building custom Nostr relays with pluggable business logic.
-- **groups_relay**: The main relay server implementing NIP-29 group chat functionality.
-
 ## Architecture
 
-The project follows a layered architecture:
+Groups Relay is built on top of modular Rust libraries:
 
 ```
 groups_relay (NIP-29 implementation)
-    ↓ uses
+    ↓ depends on
 nostr_relay_builder (Nostr protocol handling)
-    ↓ uses
+    ↓ depends on  
 websocket_builder (WebSocket transport)
 ```
 
-## Key Features
+**Dependencies:**
+- [nostr_relay_builder](https://github.com/verse-pbc/nostr_relay_builder) - Nostr relay framework
+- [websocket_builder](https://github.com/verse-pbc/websocket_builder) - WebSocket middleware framework
 
-### groups_relay
+## Features
 
-- **NIP-29 Groups**:
-  - Support for managed and unmanaged groups
-  - Group metadata management
-  - Member roles and permissions
-  - Join requests and invitations
-  
-- **Built on nostr_relay_builder**:
-  - Inherits all protocol support (NIPs 09, 40, 42, 70)
-  - Custom `GroupsRelayProcessor` for group-specific rules
-
+- **NIP-29 Groups**: Managed and unmanaged groups with metadata, roles, and permissions
+- **Join System**: Join requests and invite codes with role-based access control
+- **Protocol Support**: Inherits NIPs 09 (deletion), 40 (expiration), 42 (auth), 70 (protected events)
 - **Management UI**: Preact-based frontend for group administration
-
-### nostr_relay_builder
-
-- **Pluggable event processing** via `EventProcessor` trait
-- **Protocol middlewares**: NIPs 09, 40, 42, 70
-- **Multi-tenant support** via subdomain isolation
-- **Database abstraction** with LMDB backend
-
-### websocket_builder
-
-- **Middleware pipeline** for bidirectional message processing
-- **Type-safe message conversion**
-- **Connection state management**
-- **Backpressure handling**
+- **Multi-tenant**: Subdomain-based data isolation
 
 ## Development
 
 ### Prerequisites
 
-- Rust 1.84 or later
+- Rust 1.86 or later
+- Node.js 20+ (for frontend)
 - Docker (optional)
 
 ### Quick Start
 
 Build and test:
 ```bash
-cargo build --workspace
-cargo test --workspace
+cargo build
+cargo test
 ```
 
 Run the relay:
 ```bash
-cargo run -p groups_relay
+cargo run
 ```
 
 Run with Docker:
 ```bash
 docker compose up --build
 ```
+
+### Frontend Development
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+## Configuration
+
+Default configuration in `config/settings.yml`. Environment-specific overrides supported via `config/settings.local.yml`.
 
 ## License
 
