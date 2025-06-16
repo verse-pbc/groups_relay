@@ -51,6 +51,7 @@ jobs:
           mkdir -p build-context/config
           cp Cargo.toml Cargo.lock build-context/
           cp -r src build-context/
+          cp -r benches build-context/
           cp config/settings.yml build-context/config/
           cp -r frontend build-context/
 
