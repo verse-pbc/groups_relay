@@ -2,71 +2,37 @@
 
 [![codecov](https://codecov.io/gh/verse-pbc/groups_relay/branch/main/graph/badge.svg)](https://codecov.io/gh/verse-pbc/groups_relay)
 
-A Nostr relay server specialized for group chat functionality.
+[NIP-29: Relay-based Groups](https://github.com/nostr-protocol/nips/blob/master/29.md) implementation.
 
-Implements [NIP-29: Relay-based Groups](https://github.com/nostr-protocol/nips/blob/master/29.md).
+## Implementation Status
 
-## Architecture
+- ✅ All event kinds (9000-9009, 9021-9022, 39000-39003)  
+- ✅ Group types (public/private, open/closed, broadcast)
+- ✅ Moderation actions and role-based permissions
+- ✅ Join requests and invite codes
+- ❌ Timeline references (not implemented)
 
-Groups Relay is built on top of modular Rust libraries:
+Also supports NIPs 09, 40, 42, 70.
 
-```
-groups_relay (NIP-29 implementation)
-    ↓ depends on
-nostr_relay_builder (Nostr protocol handling)
-    ↓ depends on  
-websocket_builder (WebSocket transport)
-```
+## Quick Start
 
-**Dependencies:**
-- [nostr_relay_builder](https://github.com/verse-pbc/nostr_relay_builder) - Nostr relay framework
-- [websocket_builder](https://github.com/verse-pbc/websocket_builder) - WebSocket middleware framework
-
-## Features
-
-- **NIP-29 Groups**: Managed and unmanaged groups with metadata, roles, and permissions
-- **Join System**: Join requests and invite codes with role-based access control
-- **Protocol Support**: Inherits NIPs 09 (deletion), 40 (expiration), 42 (auth), 70 (protected events)
-- **Management UI**: Preact-based frontend for group administration
-- **Multi-tenant**: Subdomain-based data isolation
-
-## Development
-
-### Prerequisites
-
-- Rust 1.86 or later
-- Node.js 20+ (for frontend)
-- Docker (optional)
-
-### Quick Start
-
-Build and test:
-```bash
-cargo build
-cargo test
-```
-
-Run the relay:
 ```bash
 cargo run
-```
-
-Run with Docker:
-```bash
+# or
 docker compose up --build
 ```
 
-### Frontend Development
+Web UI at `http://localhost:8080`
+
+## Development
 
 ```bash
-cd frontend
-npm install
-npm run dev
+cargo test
+cargo fmt
+cargo clippy
 ```
 
-## Configuration
-
-Default configuration in `config/settings.yml`. Environment-specific overrides supported via `config/settings.local.yml`.
+Built on [nostr_relay_builder](https://github.com/verse-pbc/nostr_relay_builder) and [websocket_builder](https://github.com/verse-pbc/websocket_builder).
 
 ## License
 
