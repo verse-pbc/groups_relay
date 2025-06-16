@@ -35,7 +35,7 @@ jobs:
       - name: Build
         env:
           RUSTFLAGS: '-C target-feature=+crt-static'
-        run: cargo build --release --target x86_64-unknown-linux-gnu --workspace --verbose
+        run: cargo build --release --target x86_64-unknown-linux-gnu --verbose
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
@@ -43,15 +43,15 @@ jobs:
       - name: Run tests
         env:
           RUST_TEST_THREADS: 5
-        run: cargo nextest run --workspace --status-level all
+        run: cargo nextest run --status-level all
 
       - name: Setup build context
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
-          mkdir -p build-context/config build-context/crates
+          mkdir -p build-context/config
           cp Cargo.toml Cargo.lock build-context/
-          cp -r crates/groups_relay crates/websocket_builder crates/nostr_relay_builder build-context/crates/
-          cp crates/groups_relay/config/settings.yml build-context/config/
+          cp -r src build-context/
+          cp config/settings.yml build-context/config/
           cp -r frontend build-context/
 
       - name: Install cosign
@@ -121,7 +121,7 @@ jobs:
 
       - name: Generate code coverage
         run: |
-          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --exclude-files "*/bin/*" --exclude-files "*/examples/*" --exclude-files "*/tests/*" --exclude-files "*/benches/*"
+          cargo tarpaulin --verbose --all-features --timeout 120 --out xml --exclude-files "*/bin/*" --exclude-files "*/examples/*" --exclude-files "*/tests/*" --exclude-files "*/benches/*"
 
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v3
