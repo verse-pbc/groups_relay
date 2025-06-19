@@ -19,6 +19,7 @@ use nostr_relay_builder::crypto_worker::CryptoWorker;
 use nostr_sdk::RelayUrl;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -98,12 +99,15 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| panic!("Invalid relay_url scheme: {}", settings.relay_url));
 
     let relay_keys = relay_settings.relay_keys()?;
-    let cancellation_token = CancellationToken::new();
-    let crypto_worker = Arc::new(CryptoWorker::new(
-        Arc::new(relay_keys.clone()),
-        cancellation_token,
-    ));
-    let database = Arc::new(RelayDatabase::new(settings.db_path.clone(), crypto_worker)?);
+    let _cancellation_token = CancellationToken::new();
+    // Create task tracker for managing background tasks
+    let task_tracker = TaskTracker::new();
+    
+    // Spawn crypto workers
+    let crypto_sender = CryptoWorker::spawn(Arc::new(relay_keys.clone()), &task_tracker);
+    
+    // Create database with crypto sender
+    let database = Arc::new(RelayDatabase::new(settings.db_path.clone(), crypto_sender)?);
     let groups =
         Arc::new(Groups::load_groups(Arc::clone(&database), relay_keys.public_key()).await?);
 

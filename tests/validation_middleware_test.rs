@@ -11,27 +11,31 @@ use nostr_relay_builder::NostrConnectionState;
 use nostr_sdk::prelude::*;
 use std::borrow::Cow;
 use std::sync::Arc;
-use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::RwLock;
 use websocket_builder::{InboundContext, Middleware};
+extern crate flume;
 
-fn create_test_context<'a>(
+fn create_test_context(
     message: ClientMessage<'static>,
-    state: &'a mut NostrConnectionState,
-    middlewares: &'a [Arc<
+    state: NostrConnectionState,
+    middlewares: Vec<Arc<
         dyn Middleware<
             State = NostrConnectionState,
             IncomingMessage = ClientMessage<'static>,
             OutgoingMessage = RelayMessage<'static>,
         >,
-    >],
-    sender: Option<Sender<(RelayMessage<'static>, usize)>>,
-) -> InboundContext<'a, NostrConnectionState, ClientMessage<'static>, RelayMessage<'static>> {
+    >>,
+    sender: Option<flume::Sender<(RelayMessage<'static>, usize)>>,
+) -> InboundContext<NostrConnectionState, ClientMessage<'static>, RelayMessage<'static>> {
+    let state_arc = Arc::new(RwLock::new(state));
+    let middlewares_arc = Arc::new(middlewares);
+    
     InboundContext::new(
         "test_conn".to_string(),
         Some(message),
         sender,
-        state,
-        middlewares,
+        state_arc,
+        middlewares_arc,
         0,
     )
 }
@@ -76,8 +80,8 @@ async fn test_event_from_relay_pubkey_with_d_tag_allowed() {
     );
 
     let message = ClientMessage::Event(Cow::Owned(event));
-    let mut state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
-    let mut ctx = create_test_context(message, &mut state, &middlewares, None);
+    let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+    let mut ctx = create_test_context(message, state, middlewares.clone(), None);
 
     // Should pass validation
     let result = middlewares[0].process_inbound(&mut ctx).await;
@@ -103,9 +107,9 @@ async fn test_event_without_h_tag_non_group_kind_allowed() {
     for kind in NON_GROUP_ALLOWED_KINDS.iter() {
         let event = create_test_event(&user_keys, *kind, vec![]);
         let message = ClientMessage::Event(Cow::Owned(event));
-        let mut state =
+        let state =
             NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
-        let mut ctx = create_test_context(message, &mut state, &middlewares, None);
+        let mut ctx = create_test_context(message, state, middlewares.clone(), None);
 
         let result = middlewares[0].process_inbound(&mut ctx).await;
         assert!(
@@ -139,8 +143,8 @@ async fn test_event_with_h_tag_allowed() {
     );
 
     let message = ClientMessage::Event(Cow::Owned(event));
-    let mut state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
-    let mut ctx = create_test_context(message, &mut state, &middlewares, None);
+    let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+    let mut ctx = create_test_context(message, state, middlewares.clone(), None);
 
     // Should pass validation
     let result = middlewares[0].process_inbound(&mut ctx).await;
@@ -162,7 +166,7 @@ async fn test_event_without_h_tag_group_kind_rejected() {
         >,
     > = vec![Arc::new(middleware)];
 
-    let (tx, mut rx) = mpsc::channel(100);
+    let (tx, rx) = flume::bounded(100);
 
     // Create group event without h tag
     let event = create_test_event(
@@ -173,8 +177,8 @@ async fn test_event_without_h_tag_group_kind_rejected() {
 
     let event_id = event.id;
     let message = ClientMessage::Event(Cow::Owned(event));
-    let mut state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
-    let mut ctx = create_test_context(message, &mut state, &middlewares, Some(tx));
+    let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+    let mut ctx = create_test_context(message, state, middlewares.clone(), Some(tx));
 
     // Should fail validation but return Ok (error handled)
     let result = middlewares[0].process_inbound(&mut ctx).await;
@@ -228,15 +232,15 @@ async fn test_all_group_event_kinds() {
     ];
 
     for kind in group_kinds {
-        let (tx, mut rx) = mpsc::channel(100);
+        let (tx, rx) = flume::bounded(100);
 
         // Test without h tag - should fail
         let event = create_test_event(&user_keys, kind, vec![]);
         let event_id = event.id;
         let message = ClientMessage::Event(Cow::Owned(event));
-        let mut state =
+        let state =
             NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
-        let mut ctx = create_test_context(message, &mut state, &middlewares, Some(tx.clone()));
+        let mut ctx = create_test_context(message, state, middlewares.clone(), Some(tx.clone()));
 
         let result = middlewares[0].process_inbound(&mut ctx).await;
         assert!(result.is_ok());
@@ -262,9 +266,9 @@ async fn test_all_group_event_kinds() {
             vec![Tag::custom(TagKind::h(), vec!["test_group"])],
         );
         let message = ClientMessage::Event(Cow::Owned(event));
-        let mut state =
+        let state =
             NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
-        let mut ctx = create_test_context(message, &mut state, &middlewares, None);
+        let mut ctx = create_test_context(message, state, middlewares.clone(), None);
 
         let result = middlewares[0].process_inbound(&mut ctx).await;
         assert!(result.is_ok());
@@ -288,15 +292,15 @@ async fn test_addressable_event_kinds() {
 
     // Test some addressable event kinds
     for kind in ADDRESSABLE_EVENT_KINDS.iter().take(3) {
-        let (tx, mut rx) = mpsc::channel(100);
+        let (tx, rx) = flume::bounded(100);
 
         // Without h tag - should fail
         let event = create_test_event(&user_keys, *kind, vec![]);
         let event_id = event.id;
         let message = ClientMessage::Event(Cow::Owned(event));
-        let mut state =
+        let state =
             NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
-        let mut ctx = create_test_context(message, &mut state, &middlewares, Some(tx.clone()));
+        let mut ctx = create_test_context(message, state, middlewares.clone(), Some(tx.clone()));
 
         let result = middlewares[0].process_inbound(&mut ctx).await;
         assert!(result.is_ok());
@@ -337,16 +341,16 @@ async fn test_non_event_messages_pass_through() {
         subscription_id: Cow::Owned(SubscriptionId::new("test")),
         filter: Cow::Owned(filter),
     };
-    let mut state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
-    let mut ctx = create_test_context(message, &mut state, &middlewares, None);
+    let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+    let mut ctx = create_test_context(message, state, middlewares.clone(), None);
 
     let result = middlewares[0].process_inbound(&mut ctx).await;
     assert!(result.is_ok());
 
     // Test CLOSE message
     let message = ClientMessage::Close(Cow::Owned(SubscriptionId::new("test")));
-    let mut state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
-    let mut ctx = create_test_context(message, &mut state, &middlewares, None);
+    let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+    let mut ctx = create_test_context(message, state, middlewares.clone(), None);
 
     let result = middlewares[0].process_inbound(&mut ctx).await;
     assert!(result.is_ok());
@@ -354,8 +358,8 @@ async fn test_non_event_messages_pass_through() {
     // Test AUTH message
     let auth_event = create_test_event(&relay_keys, Kind::Authentication, vec![]);
     let message = ClientMessage::Auth(Cow::Owned(auth_event));
-    let mut state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
-    let mut ctx = create_test_context(message, &mut state, &middlewares, None);
+    let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+    let mut ctx = create_test_context(message, state, middlewares.clone(), None);
 
     let result = middlewares[0].process_inbound(&mut ctx).await;
     assert!(result.is_ok());
@@ -386,7 +390,7 @@ async fn test_relay_pubkey_without_d_tag() {
         >,
     > = vec![Arc::new(middleware)];
 
-    let (tx, mut rx) = mpsc::channel(100);
+    let (tx, rx) = flume::bounded(100);
 
     // Event from relay pubkey but without d tag and not a non-group kind
     let event = create_test_event(
@@ -397,8 +401,8 @@ async fn test_relay_pubkey_without_d_tag() {
 
     let event_id = event.id;
     let message = ClientMessage::Event(Cow::Owned(event));
-    let mut state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
-    let mut ctx = create_test_context(message, &mut state, &middlewares, Some(tx));
+    let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+    let mut ctx = create_test_context(message, state, middlewares.clone(), Some(tx));
 
     // Should fail validation
     let result = middlewares[0].process_inbound(&mut ctx).await;
@@ -450,8 +454,8 @@ async fn test_event_with_multiple_tags() {
     );
 
     let message = ClientMessage::Event(Cow::Owned(event));
-    let mut state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
-    let mut ctx = create_test_context(message, &mut state, &middlewares, None);
+    let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+    let mut ctx = create_test_context(message, state, middlewares.clone(), None);
 
     // Should pass validation
     let result = middlewares[0].process_inbound(&mut ctx).await;
@@ -492,9 +496,9 @@ async fn test_empty_middleware_chain() {
     let event = create_test_event(&user_keys, Kind::Custom(11), vec![]);
 
     let message = ClientMessage::Event(Cow::Owned(event));
-    let mut state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+    let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
 
     // This should create a context but with empty middleware chain
-    let ctx = create_test_context(message, &mut state, &middlewares, None);
+    let ctx = create_test_context(message, state, middlewares.clone(), None);
     assert_eq!(ctx.connection_id, "test_conn");
 }

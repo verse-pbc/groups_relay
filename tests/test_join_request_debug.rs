@@ -7,7 +7,7 @@ use nostr_relay_builder::{crypto_worker::CryptoWorker, RelayDatabase, StoreComma
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tempfile::TempDir;
-use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 #[tokio::test]
 async fn test_join_request_generates_correct_events() {
@@ -16,11 +16,8 @@ async fn test_join_request_generates_correct_events() {
     let admin_keys = Keys::generate();
     let user_keys = Keys::generate();
 
-    let cancellation_token = CancellationToken::new();
-    let crypto_worker = Arc::new(CryptoWorker::new(
-        Arc::new(admin_keys.clone()),
-        cancellation_token,
-    ));
+    let task_tracker = TaskTracker::new();
+    let crypto_worker = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
     let db = Arc::new(
         RelayDatabase::new(
             temp_dir

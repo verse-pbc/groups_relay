@@ -917,8 +917,8 @@ mod tests {
     use super::*;
     use nostr_relay_builder::{crypto_worker::CryptoWorker, RelayDatabase};
     use std::time::Instant;
+    use tokio_util::task::TaskTracker;
     use tempfile::TempDir;
-    use tokio_util::sync::CancellationToken;
 
     const TEST_GROUP_ID: &str = "test_group_123";
 
@@ -936,11 +936,8 @@ mod tests {
 
     async fn create_test_groups_with_db(admin_keys: &Keys) -> Groups {
         let temp_dir = TempDir::new().unwrap();
-        let cancellation_token = CancellationToken::new();
-        let crypto_worker = Arc::new(CryptoWorker::new(
-            Arc::new(admin_keys.clone()),
-            cancellation_token,
-        ));
+        let task_tracker = TaskTracker::new();
+        let crypto_sender = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
         let db = Arc::new(
             RelayDatabase::new(
                 temp_dir
@@ -948,7 +945,7 @@ mod tests {
                     .join("test.db")
                     .to_string_lossy()
                     .to_string(),
-                crypto_worker,
+                crypto_sender,
             )
             .unwrap(),
         );

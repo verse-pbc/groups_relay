@@ -1274,6 +1274,7 @@ dependencies = [
  "console-subscriber",
  "criterion",
  "dashmap",
+ "flume",
  "futures",
  "futures-util",
  "humantime-serde",
@@ -2179,7 +2180,6 @@ dependencies = [
 [[package]]
 name = "nostr"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr#abeea1e9c82c441541c4544ed877f217ad9f0c44"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -2208,7 +2208,6 @@ dependencies = [
 [[package]]
 name = "nostr-database"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr#abeea1e9c82c441541c4544ed877f217ad9f0c44"
 dependencies = [
  "flatbuffers",
  "lru",
@@ -2219,7 +2218,6 @@ dependencies = [
 [[package]]
 name = "nostr-lmdb"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr#abeea1e9c82c441541c4544ed877f217ad9f0c44"
 dependencies = [
  "async-utility",
  "flatbuffers",
@@ -2234,7 +2232,6 @@ dependencies = [
 [[package]]
 name = "nostr-relay-pool"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr#abeea1e9c82c441541c4544ed877f217ad9f0c44"
 dependencies = [
  "async-utility",
  "async-wsocket",
@@ -2251,7 +2248,6 @@ dependencies = [
 [[package]]
 name = "nostr-sdk"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr#abeea1e9c82c441541c4544ed877f217ad9f0c44"
 dependencies = [
  "async-utility",
  "nostr",
@@ -2264,7 +2260,6 @@ dependencies = [
 [[package]]
 name = "nostr_relay_builder"
 version = "0.1.0"
-source = "git+https://github.com/verse-pbc/nostr_relay_builder#5dd6d411b7e2f3db2b83b884970b054728e340ee"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4291,11 +4286,11 @@ dependencies = [
 [[package]]
 name = "websocket_builder"
 version = "0.1.0"
-source = "git+https://github.com/verse-pbc/websocket_builder#8fc811d074e8a71ff529226faeed6fde2b9d34fc"
 dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "flume",
  "futures-util",
  "hickory-resolver",
  "thiserror 1.0.69",

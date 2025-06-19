@@ -96,7 +96,7 @@ impl NostrConnectionState {
         };
 
         for event in events {
-            if let Err(e) = connection.save_and_broadcast(event).await {
+            if let Err(e) = connection.save_and_broadcast(event, None).await {
                 error!("Failed to save event: {}", e);
                 return Err(Error::Internal {
                     message: format!("Failed to save event: {}", e),
@@ -223,6 +223,7 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
     use tokio_util::sync::CancellationToken;
+    use tokio_util::task::TaskTracker;
 
     // Helper to create a NostrConnectionFactory for tests
     async fn create_test_factory(base_domain_parts: usize) -> (NostrConnectionFactory, TempDir) {
@@ -231,13 +232,10 @@ mod tests {
         let db_path = tmp_dir.path().join("test_nostr_session_state.db");
         let relay_keys = Keys::generate();
 
-        let cancellation_token = CancellationToken::new();
-        let crypto_worker = Arc::new(CryptoWorker::new(
-            Arc::new(relay_keys.clone()),
-            cancellation_token,
-        ));
+        let task_tracker = TaskTracker::new();
+        let crypto_sender = CryptoWorker::spawn(Arc::new(relay_keys.clone()), &task_tracker);
         let database = Arc::new(
-            RelayDatabase::new(db_path.to_str().unwrap(), crypto_worker)
+            RelayDatabase::new(db_path.to_str().unwrap(), crypto_sender)
                 .expect("Failed to create test database"),
         );
 

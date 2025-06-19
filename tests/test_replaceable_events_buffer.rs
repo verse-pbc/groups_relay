@@ -5,19 +5,15 @@ use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
-use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
-use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use websocket_builder::MessageSender;
 
 async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys, SubscriptionService) {
     let tmp_dir = TempDir::new().unwrap();
     let admin_keys = Keys::generate();
-    let cancellation_token = CancellationToken::new();
-    let crypto_worker = Arc::new(CryptoWorker::new(
-        Arc::new(admin_keys.clone()),
-        cancellation_token,
-    ));
+    let task_tracker = TaskTracker::new();
+    let crypto_worker = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
     let database = Arc::new(
         RelayDatabase::new(
             tmp_dir.path().join("test.db").to_string_lossy().to_string(),
@@ -27,7 +23,7 @@ async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys, SubscriptionService
     );
 
     // Create a channel for outgoing messages (we won't use it in this test)
-    let (tx, _rx) = mpsc::channel(10);
+    let (tx, _rx) = flume::bounded(10);
     let subscription_service =
         SubscriptionService::new(database.clone(), MessageSender::new(tx, 0))
             .await
@@ -72,12 +68,12 @@ async fn test_replaceable_events_buffer_deduplicates_same_second_events() {
 
     // Send both events to the subscription manager (they will be buffered)
     subscription_service
-        .save_and_broadcast(StoreCommand::SaveUnsignedEvent(event1, Scope::Default))
+        .save_and_broadcast(StoreCommand::SaveUnsignedEvent(event1, Scope::Default), None)
         .await
         .unwrap();
 
     subscription_service
-        .save_and_broadcast(StoreCommand::SaveUnsignedEvent(event2, Scope::Default))
+        .save_and_broadcast(StoreCommand::SaveUnsignedEvent(event2, Scope::Default), None)
         .await
         .unwrap();
 
@@ -173,7 +169,7 @@ async fn test_non_replaceable_events_bypass_buffer() {
 
     // Send the event
     subscription_service
-        .save_and_broadcast(StoreCommand::SaveUnsignedEvent(text_note, Scope::Default))
+        .save_and_broadcast(StoreCommand::SaveUnsignedEvent(text_note, Scope::Default), None)
         .await
         .unwrap();
 
@@ -220,7 +216,7 @@ async fn test_signed_events_bypass_buffer() {
         .save_and_broadcast(StoreCommand::SaveSignedEvent(
             Box::new(signed_event.clone()),
             Scope::Default,
-        ))
+        ), None)
         .await
         .unwrap();
 
@@ -289,7 +285,7 @@ async fn test_different_scopes_are_separate_in_buffer() {
         .save_and_broadcast(StoreCommand::SaveUnsignedEvent(
             event_scope1,
             Scope::Default,
-        ))
+        ), None)
         .await
         .unwrap();
 
@@ -298,7 +294,7 @@ async fn test_different_scopes_are_separate_in_buffer() {
         .save_and_broadcast(StoreCommand::SaveUnsignedEvent(
             event_scope2,
             named_scope.clone(),
-        ))
+        ), None)
         .await
         .unwrap();
 

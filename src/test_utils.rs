@@ -2,21 +2,18 @@ use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
-use tokio_util::sync::CancellationToken;
 
 use crate::group::Group;
 use nostr_relay_builder::{crypto_worker::CryptoWorker, NostrConnectionState, RelayDatabase};
+use tokio_util::task::TaskTracker;
 
 pub async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let db_path = tmp_dir.path().join("test.db");
     let keys = Keys::generate();
-    let cancellation_token = CancellationToken::new();
-    let crypto_worker = Arc::new(CryptoWorker::new(
-        Arc::new(keys.clone()),
-        cancellation_token,
-    ));
-    let database = Arc::new(RelayDatabase::new(db_path.to_str().unwrap(), crypto_worker).unwrap());
+    let task_tracker = TaskTracker::new();
+    let crypto_sender = CryptoWorker::spawn(Arc::new(keys.clone()), &task_tracker);
+    let database = Arc::new(RelayDatabase::new(db_path.to_str().unwrap(), crypto_sender).unwrap());
     (tmp_dir, database, keys)
 }
 

@@ -6,16 +6,13 @@ use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
-use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let admin_keys = Keys::generate();
-    let cancellation_token = CancellationToken::new();
-    let crypto_worker = Arc::new(CryptoWorker::new(
-        Arc::new(admin_keys.clone()),
-        cancellation_token,
-    ));
+    let task_tracker = TaskTracker::new();
+    let crypto_worker = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
     let database = Arc::new(
         RelayDatabase::new(
             tmp_dir.path().join("test.db").to_string_lossy().to_string(),
@@ -35,7 +32,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
         groups_relay::groups::Groups::load_groups(database.clone(), admin_keys.public_key())
             .await
             .unwrap();
-    let (tx, _rx) = tokio::sync::mpsc::channel(10);
+    let (tx, _rx) = flume::bounded(10);
     let subscription_service = SubscriptionService::new(
         database.clone(),
         websocket_builder::MessageSender::new(tx, 0),
@@ -79,7 +76,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
     // Execute the commands through the subscription manager (using the buffer)
     for command in create_commands {
         subscription_service
-            .save_and_broadcast(command)
+            .save_and_broadcast(command, None)
             .await
             .unwrap();
     }
@@ -126,7 +123,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
     println!("Executing metadata commands...");
     for command in metadata_commands {
         subscription_service
-            .save_and_broadcast(command)
+            .save_and_broadcast(command, None)
             .await
             .unwrap();
     }

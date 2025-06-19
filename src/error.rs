@@ -240,20 +240,20 @@ impl Error {
 
     pub async fn handle_inbound_error<CM>(
         &self,
-        ctx: &mut InboundContext<'_, NostrConnectionState, CM, RelayMessage<'static>>,
+        ctx: &mut InboundContext<NostrConnectionState, CM, RelayMessage<'static>>,
         client_message_id: ClientMessageId,
     ) -> Result<()>
     where
         CM: Send + Sync + 'static,
     {
         let relay_messages: Vec<RelayMessage<'static>> = {
-            let state = &mut ctx.state;
+            let mut state = ctx.state.write().await;
             match client_message_id {
                 ClientMessageId::Event(event_id) => {
-                    self.to_relay_messages_from_event(state, event_id)
+                    self.to_relay_messages_from_event(&mut *state, event_id)
                 }
                 ClientMessageId::Subscription(subscription_id) => {
-                    self.to_relay_messages_from_subscription_id(state, subscription_id)
+                    self.to_relay_messages_from_subscription_id(&mut *state, subscription_id)
                 }
             }
         };

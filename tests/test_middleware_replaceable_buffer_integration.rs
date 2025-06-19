@@ -5,19 +5,15 @@ use nostr_relay_builder::{crypto_worker::CryptoWorker, StoreCommand, Subscriptio
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tempfile::TempDir;
-use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
-use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use websocket_builder::MessageSender;
 
 async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let admin_keys = Keys::generate();
-    let cancellation_token = CancellationToken::new();
-    let crypto_worker = Arc::new(CryptoWorker::new(
-        Arc::new(admin_keys.clone()),
-        cancellation_token,
-    ));
+    let task_tracker = TaskTracker::new();
+    let crypto_worker = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
     let database = Arc::new(
         RelayDatabase::new(
             tmp_dir.path().join("test.db").to_string_lossy().to_string(),
@@ -34,7 +30,7 @@ async fn test_rapid_metadata_edits_through_subscription_service() {
     let (_tmp_dir, database, admin_keys) = setup_test().await;
 
     // Create a subscription manager
-    let (tx, _rx) = mpsc::channel(10);
+    let (tx, _rx) = flume::bounded(10);
     let subscription_service =
         SubscriptionService::new(database.clone(), MessageSender::new(tx, 0))
             .await
@@ -71,7 +67,7 @@ async fn test_rapid_metadata_edits_through_subscription_service() {
     // Send create commands through subscription manager to establish the group
     for command in create_commands {
         subscription_service
-            .save_and_broadcast(command)
+            .save_and_broadcast(command, None)
             .await
             .unwrap();
     }
@@ -113,13 +109,13 @@ async fn test_rapid_metadata_edits_through_subscription_service() {
     // This should trigger the buffer for the 39000 events
     for command in edit1_commands {
         subscription_service
-            .save_and_broadcast(command)
+            .save_and_broadcast(command, None)
             .await
             .unwrap();
     }
     for command in edit2_commands {
         subscription_service
-            .save_and_broadcast(command)
+            .save_and_broadcast(command, None)
             .await
             .unwrap();
     }
@@ -232,11 +228,11 @@ async fn test_direct_database_save_bypasses_buffer() {
 
     // Save directly to database (simulating the old broken behavior)
     database
-        .save_store_command(StoreCommand::SaveUnsignedEvent(event1, Scope::Default))
+        .save_store_command(StoreCommand::SaveUnsignedEvent(event1, Scope::Default), None)
         .await
         .unwrap();
     database
-        .save_store_command(StoreCommand::SaveUnsignedEvent(event2, Scope::Default))
+        .save_store_command(StoreCommand::SaveUnsignedEvent(event2, Scope::Default), None)
         .await
         .unwrap();
 
