@@ -131,10 +131,10 @@ impl Middleware for ValidationMiddleware {
 mod tests {
     use super::*;
     use nostr_relay_builder::NostrConnectionState;
-    use websocket_builder::InboundContext;
     use std::borrow::Cow;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+    use websocket_builder::InboundContext;
     extern crate flume;
 
     fn create_test_inbound_context(
@@ -142,12 +142,20 @@ mod tests {
         message: Option<ClientMessage<'static>>,
         sender: Option<flume::Sender<(RelayMessage<'static>, usize)>>,
         state: NostrConnectionState,
-        middlewares: Vec<Arc<dyn Middleware<State = NostrConnectionState, IncomingMessage = ClientMessage<'static>, OutgoingMessage = RelayMessage<'static>>>>,
+        middlewares: Vec<
+            Arc<
+                dyn Middleware<
+                    State = NostrConnectionState,
+                    IncomingMessage = ClientMessage<'static>,
+                    OutgoingMessage = RelayMessage<'static>,
+                >,
+            >,
+        >,
         index: usize,
     ) -> InboundContext<NostrConnectionState, ClientMessage<'static>, RelayMessage<'static>> {
         let state_arc = Arc::new(RwLock::new(state));
         let middlewares_arc = Arc::new(middlewares);
-        
+
         InboundContext::new(
             connection_id,
             message,
@@ -187,8 +195,7 @@ mod tests {
             subscription_id: Cow::Owned(SubscriptionId::new("test")),
             filter: Cow::Owned(normal_filter),
         };
-        let state =
-            NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+        let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
         let mut ctx = create_test_inbound_context(
             "test_conn".to_string(),
             Some(message),
@@ -215,8 +222,7 @@ mod tests {
             subscription_id: Cow::Owned(SubscriptionId::new("test")),
             filter: Cow::Owned(meta_filter),
         };
-        let state =
-            NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+        let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
         let mut ctx = create_test_inbound_context(
             "test_conn".to_string(),
             Some(message),
@@ -244,8 +250,7 @@ mod tests {
             subscription_id: Cow::Owned(SubscriptionId::new("test_id")),
             filter: Cow::Owned(ref_filter),
         };
-        let state =
-            NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+        let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
         let mut ctx = create_test_inbound_context(
             "test_conn".to_string(),
             Some(message),

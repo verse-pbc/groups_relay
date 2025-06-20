@@ -102,10 +102,10 @@ async fn main() -> Result<()> {
     let _cancellation_token = CancellationToken::new();
     // Create task tracker for managing background tasks
     let task_tracker = TaskTracker::new();
-    
+
     // Spawn crypto workers
     let crypto_sender = CryptoWorker::spawn(Arc::new(relay_keys.clone()), &task_tracker);
-    
+
     // Create database with crypto sender
     let database = Arc::new(RelayDatabase::new(settings.db_path.clone(), crypto_sender)?);
     let groups =

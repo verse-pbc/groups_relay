@@ -250,10 +250,10 @@ impl Error {
             let mut state = ctx.state.write().await;
             match client_message_id {
                 ClientMessageId::Event(event_id) => {
-                    self.to_relay_messages_from_event(&mut *state, event_id)
+                    self.to_relay_messages_from_event(&mut state, event_id)
                 }
                 ClientMessageId::Subscription(subscription_id) => {
-                    self.to_relay_messages_from_subscription_id(&mut *state, subscription_id)
+                    self.to_relay_messages_from_subscription_id(&mut state, subscription_id)
                 }
             }
         };

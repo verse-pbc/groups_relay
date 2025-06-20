@@ -6,8 +6,8 @@ authors = ["Daniel Cadenas <dcadenas@gmail.com>"]
 default-run = "groups_relay"
 
 [dependencies]
-nostr_relay_builder = { path = "../nostr_relay_builder", features = ["axum"] }
-websocket_builder = { path = "../websocket_builder" }
+nostr_relay_builder = { git = "https://github.com/verse-pbc/nostr_relay_builder", features = ["axum"] }
+websocket_builder = { git = "https://github.com/verse-pbc/websocket_builder" }
 tokio = { version = "1.45", features = ["full"] }
 anyhow = { version = "1.0.89", features = ["backtrace"] }
 async-trait = "0.1.82"
@@ -15,7 +15,7 @@ tracing = { version = "0.1" }
 serde = { version = "1.0", features = ["derive"] }
 futures = "0.3.31"
 clap = { version = "4.5.17", features = ["derive"] }
-nostr-sdk = { path = "../../nostr/crates/nostr-sdk", features = ["all-nips"] }
+nostr-sdk = { git = "https://github.com/verse-pbc/nostr", features = ["all-nips"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 tracing-appender = "0.2"
 metrics = "0.24.1"
@@ -34,9 +34,9 @@ snafu = { version = "0.8.5", features = ["backtrace"] }
 console-subscriber = { version = "0.4.1", optional = true }
 tower-http = { version = "0.6.2", features = ["trace", "cors", "fs"] }
 tower = { version = "0.4.13", features = ["util"] }
-nostr = { path = "../../nostr/crates/nostr", features = ["std"] }
-nostr-database = { path = "../../nostr/crates/nostr-database" }
-nostr-lmdb = { path = "../../nostr/crates/nostr-lmdb" }
+nostr = { git = "https://github.com/verse-pbc/nostr", features = ["std"] }
+nostr-database = { git = "https://github.com/verse-pbc/nostr" }
+nostr-lmdb = { git = "https://github.com/verse-pbc/nostr" }
 time = { version = "0.3.37", features = ["local-offset", "macros"] }
 humantime-serde = "1.1.1"
 tracing-futures = "0.2.5"

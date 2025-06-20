@@ -68,12 +68,18 @@ async fn test_replaceable_events_buffer_deduplicates_same_second_events() {
 
     // Send both events to the subscription manager (they will be buffered)
     subscription_service
-        .save_and_broadcast(StoreCommand::SaveUnsignedEvent(event1, Scope::Default), None)
+        .save_and_broadcast(
+            StoreCommand::SaveUnsignedEvent(event1, Scope::Default),
+            None,
+        )
         .await
         .unwrap();
 
     subscription_service
-        .save_and_broadcast(StoreCommand::SaveUnsignedEvent(event2, Scope::Default), None)
+        .save_and_broadcast(
+            StoreCommand::SaveUnsignedEvent(event2, Scope::Default),
+            None,
+        )
         .await
         .unwrap();
 
@@ -169,7 +175,10 @@ async fn test_non_replaceable_events_bypass_buffer() {
 
     // Send the event
     subscription_service
-        .save_and_broadcast(StoreCommand::SaveUnsignedEvent(text_note, Scope::Default), None)
+        .save_and_broadcast(
+            StoreCommand::SaveUnsignedEvent(text_note, Scope::Default),
+            None,
+        )
         .await
         .unwrap();
 
@@ -213,10 +222,10 @@ async fn test_signed_events_bypass_buffer() {
 
     // Send the signed event (should bypass buffer even though it's replaceable)
     subscription_service
-        .save_and_broadcast(StoreCommand::SaveSignedEvent(
-            Box::new(signed_event.clone()),
-            Scope::Default,
-        ), None)
+        .save_and_broadcast(
+            StoreCommand::SaveSignedEvent(Box::new(signed_event.clone()), Scope::Default),
+            None,
+        )
         .await
         .unwrap();
 
@@ -282,19 +291,19 @@ async fn test_different_scopes_are_separate_in_buffer() {
 
     // Send to different scopes
     subscription_service
-        .save_and_broadcast(StoreCommand::SaveUnsignedEvent(
-            event_scope1,
-            Scope::Default,
-        ), None)
+        .save_and_broadcast(
+            StoreCommand::SaveUnsignedEvent(event_scope1, Scope::Default),
+            None,
+        )
         .await
         .unwrap();
 
     let named_scope = Scope::named("testscope").unwrap();
     subscription_service
-        .save_and_broadcast(StoreCommand::SaveUnsignedEvent(
-            event_scope2,
-            named_scope.clone(),
-        ), None)
+        .save_and_broadcast(
+            StoreCommand::SaveUnsignedEvent(event_scope2, named_scope.clone()),
+            None,
+        )
         .await
         .unwrap();
 

@@ -228,11 +228,17 @@ async fn test_direct_database_save_bypasses_buffer() {
 
     // Save directly to database (simulating the old broken behavior)
     database
-        .save_store_command(StoreCommand::SaveUnsignedEvent(event1, Scope::Default), None)
+        .save_store_command(
+            StoreCommand::SaveUnsignedEvent(event1, Scope::Default),
+            None,
+        )
         .await
         .unwrap();
     database
-        .save_store_command(StoreCommand::SaveUnsignedEvent(event2, Scope::Default), None)
+        .save_store_command(
+            StoreCommand::SaveUnsignedEvent(event2, Scope::Default),
+            None,
+        )
         .await
         .unwrap();
 

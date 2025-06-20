@@ -917,8 +917,8 @@ mod tests {
     use super::*;
     use nostr_relay_builder::{crypto_worker::CryptoWorker, RelayDatabase};
     use std::time::Instant;
-    use tokio_util::task::TaskTracker;
     use tempfile::TempDir;
+    use tokio_util::task::TaskTracker;
 
     const TEST_GROUP_ID: &str = "test_group_123";
 

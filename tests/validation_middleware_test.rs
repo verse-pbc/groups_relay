@@ -18,18 +18,20 @@ extern crate flume;
 fn create_test_context(
     message: ClientMessage<'static>,
     state: NostrConnectionState,
-    middlewares: Vec<Arc<
-        dyn Middleware<
-            State = NostrConnectionState,
-            IncomingMessage = ClientMessage<'static>,
-            OutgoingMessage = RelayMessage<'static>,
+    middlewares: Vec<
+        Arc<
+            dyn Middleware<
+                State = NostrConnectionState,
+                IncomingMessage = ClientMessage<'static>,
+                OutgoingMessage = RelayMessage<'static>,
+            >,
         >,
-    >>,
+    >,
     sender: Option<flume::Sender<(RelayMessage<'static>, usize)>>,
 ) -> InboundContext<NostrConnectionState, ClientMessage<'static>, RelayMessage<'static>> {
     let state_arc = Arc::new(RwLock::new(state));
     let middlewares_arc = Arc::new(middlewares);
-    
+
     InboundContext::new(
         "test_conn".to_string(),
         Some(message),
@@ -107,8 +109,7 @@ async fn test_event_without_h_tag_non_group_kind_allowed() {
     for kind in NON_GROUP_ALLOWED_KINDS.iter() {
         let event = create_test_event(&user_keys, *kind, vec![]);
         let message = ClientMessage::Event(Cow::Owned(event));
-        let state =
-            NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+        let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
         let mut ctx = create_test_context(message, state, middlewares.clone(), None);
 
         let result = middlewares[0].process_inbound(&mut ctx).await;
@@ -238,8 +239,7 @@ async fn test_all_group_event_kinds() {
         let event = create_test_event(&user_keys, kind, vec![]);
         let event_id = event.id;
         let message = ClientMessage::Event(Cow::Owned(event));
-        let state =
-            NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+        let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
         let mut ctx = create_test_context(message, state, middlewares.clone(), Some(tx.clone()));
 
         let result = middlewares[0].process_inbound(&mut ctx).await;
@@ -266,8 +266,7 @@ async fn test_all_group_event_kinds() {
             vec![Tag::custom(TagKind::h(), vec!["test_group"])],
         );
         let message = ClientMessage::Event(Cow::Owned(event));
-        let state =
-            NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+        let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
         let mut ctx = create_test_context(message, state, middlewares.clone(), None);
 
         let result = middlewares[0].process_inbound(&mut ctx).await;
@@ -298,8 +297,7 @@ async fn test_addressable_event_kinds() {
         let event = create_test_event(&user_keys, *kind, vec![]);
         let event_id = event.id;
         let message = ClientMessage::Event(Cow::Owned(event));
-        let state =
-            NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+        let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
         let mut ctx = create_test_context(message, state, middlewares.clone(), Some(tx.clone()));
 
         let result = middlewares[0].process_inbound(&mut ctx).await;

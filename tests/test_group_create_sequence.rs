@@ -2,6 +2,7 @@ use groups_relay::RelayDatabase;
 use nostr_lmdb::Scope;
 use nostr_relay_builder::{crypto_worker::CryptoWorker, StoreCommand, SubscriptionService};
 use nostr_sdk::prelude::*;
+use nostr_sdk::RelayMessage;
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
@@ -321,21 +322,34 @@ async fn test_same_timestamp_event_id_ordering() {
         .build(admin_keys.public_key());
     let event2 = admin_keys.sign_event(event2).await.unwrap();
 
-    println!("Event 1: timestamp={}, id={}", event1.created_at, event1.id);
-    println!("Event 2: timestamp={}, id={}", event2.created_at, event2.id);
+    // Create channels to receive OK responses
+    let (tx1, rx1) = flume::bounded(1);
+    let (tx2, rx2) = flume::bounded(1);
 
-    // Save both events
+    // Save both events using save_store_command with MessageSender
     database
-        .save_signed_event(event1.clone(), Scope::Default)
+        .save_store_command(
+            StoreCommand::SaveSignedEvent(Box::new(event1.clone()), Scope::Default),
+            Some(websocket_builder::MessageSender::new(tx1, 0)),
+        )
         .await
         .unwrap();
+
     database
-        .save_signed_event(event2.clone(), Scope::Default)
+        .save_store_command(
+            StoreCommand::SaveSignedEvent(Box::new(event2.clone()), Scope::Default),
+            Some(websocket_builder::MessageSender::new(tx2, 0)),
+        )
         .await
         .unwrap();
 
-    // Wait for processing
-    sleep(Duration::from_millis(50)).await;
+    // Wait for OK responses which confirm the saves are complete
+    let ok1 = rx1.recv_async().await.unwrap();
+    let ok2 = rx2.recv_async().await.unwrap();
+
+    // Verify we got OK messages
+    assert!(matches!(ok1.0, RelayMessage::Ok { .. }));
+    assert!(matches!(ok2.0, RelayMessage::Ok { .. }));
 
     // Query for the latest event
     let latest_events = database
@@ -350,8 +364,6 @@ async fn test_same_timestamp_event_id_ordering() {
         .unwrap();
 
     if let Some(latest) = latest_events.first() {
-        println!("Database returned event with ID: {}", latest.id);
-
         // Determine which event should win based on ID comparison
         let expected_winner_id = if event1.id > event2.id {
             event1.id
