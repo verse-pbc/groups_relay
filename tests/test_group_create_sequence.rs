@@ -307,6 +307,7 @@ async fn test_same_timestamp_event_id_ordering() {
         .tags(vec![
             Tag::identifier(group_id.to_string()),
             Tag::custom(TagKind::Name, ["First Event"]),
+            Tag::custom(TagKind::custom("h"), [group_id]), // Add h tag
         ])
         .custom_created_at(fixed_timestamp)
         .build(admin_keys.public_key());
@@ -317,16 +318,14 @@ async fn test_same_timestamp_event_id_ordering() {
             Tag::identifier(group_id.to_string()),
             Tag::custom(TagKind::Name, ["Second Event"]),
             Tag::custom(TagKind::custom("about"), ["This should win"]),
+            Tag::custom(TagKind::custom("h"), [group_id]), // Add h tag
         ])
         .custom_created_at(fixed_timestamp)
         .build(admin_keys.public_key());
     let event2 = admin_keys.sign_event(event2).await.unwrap();
 
-    // Create channels to receive OK responses
+    // Save events sequentially to avoid batch conflicts
     let (tx1, rx1) = flume::bounded(1);
-    let (tx2, rx2) = flume::bounded(1);
-
-    // Save both events using save_store_command with MessageSender
     database
         .save_store_command(
             StoreCommand::SaveSignedEvent(Box::new(event1.clone()), Scope::Default),
@@ -335,6 +334,12 @@ async fn test_same_timestamp_event_id_ordering() {
         .await
         .unwrap();
 
+    // Wait for first event to complete
+    let response1 = rx1.recv_async().await.unwrap();
+    assert!(matches!(response1.0, RelayMessage::Ok { .. }), "Expected OK for event1, got {:?}", response1.0);
+
+    // Now save the second event
+    let (tx2, rx2) = flume::bounded(1);
     database
         .save_store_command(
             StoreCommand::SaveSignedEvent(Box::new(event2.clone()), Scope::Default),
@@ -343,13 +348,12 @@ async fn test_same_timestamp_event_id_ordering() {
         .await
         .unwrap();
 
-    // Wait for OK responses which confirm the saves are complete
-    let ok1 = rx1.recv_async().await.unwrap();
-    let ok2 = rx2.recv_async().await.unwrap();
+    // Wait for second event to complete
+    let response2 = rx2.recv_async().await.unwrap();
+    assert!(matches!(response2.0, RelayMessage::Ok { .. }), "Expected OK for event2, got {:?}", response2.0);
 
-    // Verify we got OK messages
-    assert!(matches!(ok1.0, RelayMessage::Ok { .. }));
-    assert!(matches!(ok2.0, RelayMessage::Ok { .. }));
+    // Wait for database queue to be fully processed
+    database.wait_for_queue_empty(Duration::from_secs(5)).await.unwrap();
 
     // Query for the latest event
     let latest_events = database
@@ -376,10 +380,6 @@ async fn test_same_timestamp_event_id_ordering() {
             "Second Event"
         };
 
-        println!(
-            "Expected winner ID: {} (name: {})",
-            expected_winner_id, expected_winner_name
-        );
 
         // Verify the correct event won
         assert_eq!(
