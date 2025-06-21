@@ -2410,7 +2410,7 @@ export class CashuWalletService implements ICashuWalletService {
       if (events.size === 0) return false;
       
       const latestBackup = Array.from(events)[0];
-      const backupAge = Date.now() / 1000 - latestBackup.created_at;
+      const backupAge = Date.now() / 1000 - (latestBackup.created_at || 0);
       
       // Consider backup recent if less than 24 hours old
       return backupAge < 24 * 60 * 60;
