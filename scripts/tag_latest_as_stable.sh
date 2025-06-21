@@ -1,8 +1,19 @@
-#!/bin/bash
-# Pull specified image (defaults to latest) and tag it as stable to trigger the deploy process
+#!/usr/bin/env bash
+# Pull the requested image (tag or digest) and retag it as :stable.
 
-SOURCE=${1:-latest}  # Use first argument if provided, otherwise default to "latest"
+set -euo pipefail
 
-docker pull --platform linux/amd64 ghcr.io/verse-pbc/groups_relay:$SOURCE && \
-docker tag ghcr.io/verse-pbc/groups_relay:$SOURCE ghcr.io/verse-pbc/groups_relay:stable && \
-docker push ghcr.io/verse-pbc/groups_relay:stable
+SOURCE=${1:-latest}              # allow tag, digest or omit (=latest)
+IMAGE="ghcr.io/verse-pbc/groups_relay"
+
+# Decide whether the arg is a digest (sha256:…) or a normal tag
+if [[ $SOURCE =~ ^sha256:[A-Fa-f0-9]{64}$ ]]; then
+  REF="@${SOURCE}"               # digest → use @sha256:...
+else
+  REF=":${SOURCE}"               # tag → use :tag
+fi
+
+# Pull the exact reference, then tag & push as :stable
+docker pull --platform linux/amd64 "${IMAGE}${REF}"
+docker tag "${IMAGE}${REF}"      "${IMAGE}:stable"
+docker push                      "${IMAGE}:stable"

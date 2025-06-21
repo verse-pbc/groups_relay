@@ -150,7 +150,7 @@ run_step_or_fail() {
 start_server() {
     echo -e "${YELLOW}Starting groups_relay server...${NC}"
     cd "$PROJECT_ROOT"
-    cargo run --bin groups_relay -- --config-dir config > "$SERVER_LOG" 2>&1 &
+    RUST_LOG="groups_relay=debug,nostr_relay_builder=debug,websocket_builder=info" cargo run --bin groups_relay -- --config-dir config > "$SERVER_LOG" 2>&1 &
     SERVER_PID=$!
     
     # Wait for server to start
@@ -180,31 +180,43 @@ run_test() {
     run_step_or_fail 1 "Admin creates group (9007)" \
         "nak event -k 9007 -t h='${GROUP_ID}' -t public -t open --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
     echo "Relay should automatically create 39000, 39001, 39002, and 39003 events"
+    
+    # Wait for replaceable events buffer to flush (usually 1 second interval)
+    echo -e "${YELLOW}Waiting 2 seconds for group state events to be flushed to database...${NC}"
+    sleep 2
 
     echo -e "\n=== Verify Group State Events ==="
     run_step_or_fail 2 "Query group metadata (39000)" \
-        "nak req -k 39000 -t d='${GROUP_ID}' '${RELAY_URL}' | grep -q '\"kind\":39000' && echo 'SUCCESS: Got 39000 metadata event' || echo 'ERROR: No 39000 metadata event found'"
+        "nak req -k 39000 -t d='${GROUP_ID}' '${RELAY_URL}' | tee /tmp/group_metadata.log | grep -q '\"kind\":39000' && echo 'SUCCESS: Got 39000 metadata event' || (echo 'ERROR: No 39000 metadata event found'; cat /tmp/group_metadata.log; false)"
     
     run_step_or_fail 3 "Query group admins (39001)" \
-        "nak req -k 39001 -t d='${GROUP_ID}' '${RELAY_URL}' | grep -q '\"kind\":39001' && echo 'SUCCESS: Got 39001 admins event' || echo 'ERROR: No 39001 admins event found'"
+        "nak req -k 39001 -t d='${GROUP_ID}' '${RELAY_URL}' | tee /tmp/group_admins.log | grep -q '\"kind\":39001' && echo 'SUCCESS: Got 39001 admins event' || (echo 'ERROR: No 39001 admins event found'; cat /tmp/group_admins.log; false)"
     
     run_step_or_fail 4 "Query group members (39002)" \
-        "nak req -k 39002 -t d='${GROUP_ID}' '${RELAY_URL}' | grep -q '\"kind\":39002' && echo 'SUCCESS: Got 39002 members event' || echo 'ERROR: No 39002 members event found'"
+        "nak req -k 39002 -t d='${GROUP_ID}' '${RELAY_URL}' | tee /tmp/group_members.log | grep -q '\"kind\":39002' && echo 'SUCCESS: Got 39002 members event' || (echo 'ERROR: No 39002 members event found'; cat /tmp/group_members.log; false)"
     
     run_step_or_fail 5 "Query group roles (39003)" \
-        "nak req -k 39003 -t d='${GROUP_ID}' '${RELAY_URL}' | grep -q '\"kind\":39003' && echo 'SUCCESS: Got 39003 roles event' || echo 'ERROR: No 39003 roles event found'"
+        "nak req -k 39003 -t d='${GROUP_ID}' '${RELAY_URL}' | tee /tmp/group_roles.log | grep -q '\"kind\":39003' && echo 'SUCCESS: Got 39003 roles event' || (echo 'ERROR: No 39003 roles event found'; cat /tmp/group_roles.log; false)"
 
     echo -e "\n=== Edit Metadata Flow ==="
     run_step_or_fail 6 "Admin edits metadata (9002)" \
         "nak event -k 9002 -t h='${GROUP_ID}' -t name='Pizza Lovers' -t about='A group for pizza enthusiasts' -t picture='https://example.com/pizza.jpg' -t public -t open --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
     echo "Relay should automatically update 39000 metadata"
+    
+    # Wait for replaceable event to be flushed
+    echo -e "${YELLOW}Waiting 3 seconds for metadata update to be flushed...${NC}"
+    sleep 3
 
     run_step_or_fail 7 "Verify updated metadata" \
-        "nak req -k 39000 -t d='${GROUP_ID}' '${RELAY_URL}' | grep -q 'Pizza Lovers' && echo 'SUCCESS: Updated metadata contains Pizza Lovers' || echo 'ERROR: Updated metadata not found'"
+        "nak req -k 39000 -t d='${GROUP_ID}' '${RELAY_URL}' | tee /tmp/updated_metadata.log | grep -q 'Pizza Lovers' && echo 'SUCCESS: Updated metadata contains Pizza Lovers' || (echo 'ERROR: Updated metadata not found'; echo 'Metadata content:'; cat /tmp/updated_metadata.log; false)"
 
     echo -e "\n=== Test Private/Closed Group Settings ==="
     run_step_or_fail 8 "Change group to private and closed" \
         "nak event -k 9002 -t h='${GROUP_ID}' -t private -t closed --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
+    
+    # Wait for metadata update
+    echo -e "${YELLOW}Waiting 2 seconds for settings update...${NC}"
+    sleep 2
     
     run_step_or_fail 9 "Verify non-members cannot read private group" \
         "nak req -t h='${GROUP_ID}' '${RELAY_URL}' || echo 'Expected: Access denied'"
@@ -368,6 +380,10 @@ run_test() {
     echo -e "\n=== Test Open Group ==="
     run_step_or_fail 23 "Change group to open" \
         "nak event -k 9002 -t h='${GROUP_ID}' -t open --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
+    
+    # Wait for metadata update
+    echo -e "${YELLOW}Waiting 2 seconds for settings update...${NC}"
+    sleep 2
     
     run_step_or_fail 24 "New user joins open group without invite" \
         "nak event -k 9021 -t h='${GROUP_ID}' --sec='${USER_PRIVATE_KEY}' '${RELAY_URL}'"
