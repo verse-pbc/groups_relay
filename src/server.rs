@@ -53,7 +53,7 @@ pub async fn run_server(
 
     // Build the relay configuration
     let websocket_config = WebSocketConfig {
-        max_connections: settings.websocket.max_connections,
+        max_connections: settings.websocket.max_connections(),
         max_connection_time: settings.websocket.max_connection_time.map(|d| d.as_secs()),
     };
 
