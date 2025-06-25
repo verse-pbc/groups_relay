@@ -1421,16 +1421,24 @@ impl Group {
     }
 
     /// Generates all metadata-related events for the group
-    pub fn generate_metadata_events(&self, relay_pubkey: &PublicKey) -> Vec<UnsignedEvent> {
+    pub fn generate_metadata_events(
+        &self,
+        relay_pubkey: &PublicKey,
+        relay_url: &str,
+    ) -> Vec<UnsignedEvent> {
         vec![
-            self.generate_metadata_event(relay_pubkey),
+            self.generate_metadata_event(relay_pubkey, relay_url),
             self.generate_roles_event(relay_pubkey),
         ]
     }
 
     /// Generates all group state events
-    pub fn generate_all_state_events(&self, relay_pubkey: &PublicKey) -> Vec<UnsignedEvent> {
-        let mut events = self.generate_metadata_events(relay_pubkey);
+    pub fn generate_all_state_events(
+        &self,
+        relay_pubkey: &PublicKey,
+        relay_url: &str,
+    ) -> Vec<UnsignedEvent> {
+        let mut events = self.generate_metadata_events(relay_pubkey, relay_url);
         events.extend(self.generate_membership_events(relay_pubkey));
         events
     }
@@ -1438,7 +1446,7 @@ impl Group {
 
 // Event generation based on current state
 impl Group {
-    pub fn generate_metadata_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
+    pub fn generate_metadata_event(&self, pubkey: &PublicKey, relay_url: &str) -> UnsignedEvent {
         // Private = needs authentication to read
         let access = if self.metadata.private {
             "private"
@@ -1470,6 +1478,12 @@ impl Group {
 
         // Add any unknown tags
         tags.extend(self.metadata.unknown_tags.iter().cloned());
+
+        // Add original_relay tag
+        tags.push(Tag::custom(
+            TagKind::custom("original_relay"),
+            [relay_url.to_string()],
+        ));
 
         // Add broadcast tag if needed
         if self.metadata.is_broadcast {
@@ -1916,7 +1930,8 @@ mod tests {
         assert!(group.set_metadata(&event, &admin_keys.public_key()).is_ok());
         assert_eq!(group.metadata.name, "Test Group");
 
-        let metadata_event = group.generate_metadata_event(&admin_keys.public_key());
+        let metadata_event =
+            group.generate_metadata_event(&admin_keys.public_key(), "wss://test.relay.url");
         let unknown_tag = metadata_event
             .tags
             .iter()

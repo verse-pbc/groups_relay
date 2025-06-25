@@ -31,12 +31,14 @@ pub struct Groups {
     db: Arc<RelayDatabase>,
     groups: DashMap<ScopedGroupKey, Group>, // (scope, group_id) -> Group
     pub relay_pubkey: PublicKey,
+    pub relay_url: String,
 }
 
 impl Groups {
     pub async fn load_groups(
         database: Arc<RelayDatabase>,
         relay_pubkey: PublicKey,
+        relay_url: String,
     ) -> Result<Self, Error> {
         // Get all scopes available in the database
         let scopes = match database.list_scopes().await {
@@ -81,6 +83,7 @@ impl Groups {
             db: database,
             groups: all_groups,
             relay_pubkey,
+            relay_url,
         })
     }
 
@@ -451,7 +454,7 @@ impl Groups {
         let mut commands = vec![StoreCommand::SaveSignedEvent(event, scope_clone.clone())];
         commands.extend(
             group
-                .generate_all_state_events(&self.relay_pubkey)
+                .generate_all_state_events(&self.relay_pubkey, &self.relay_url)
                 .into_iter()
                 .map(|e| StoreCommand::SaveUnsignedEvent(e, scope_clone.clone())),
         );
@@ -556,7 +559,7 @@ impl Groups {
         let mut commands = vec![StoreCommand::SaveSignedEvent(event, scope_clone.clone())];
         commands.extend(
             group
-                .generate_metadata_events(&self.relay_pubkey)
+                .generate_metadata_events(&self.relay_pubkey, &self.relay_url)
                 .into_iter()
                 .map(|e| StoreCommand::SaveUnsignedEvent(e, scope_clone.clone())),
         );
@@ -938,17 +941,16 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let task_tracker = TaskTracker::new();
         let crypto_sender = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
-        let db = Arc::new(
-            RelayDatabase::new(
-                temp_dir
-                    .path()
-                    .join("test.db")
-                    .to_string_lossy()
-                    .to_string(),
-                crypto_sender,
-            )
-            .unwrap(),
-        );
+        let (db, _db_sender) = RelayDatabase::new(
+            temp_dir
+                .path()
+                .join("test.db")
+                .to_string_lossy()
+                .to_string(),
+            crypto_sender,
+        )
+        .unwrap();
+        let db = Arc::new(db);
 
         std::mem::forget(temp_dir);
 
@@ -956,6 +958,7 @@ mod tests {
             db,
             groups: DashMap::new(),
             relay_pubkey: admin_keys.public_key(),
+            relay_url: "wss://test.relay.url".to_string(),
         }
     }
 
