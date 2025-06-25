@@ -23,7 +23,7 @@ use tracing::{error, info};
 
 pub struct ServerState {
     pub http_state: Arc<HttpServerState>,
-    pub handlers: Arc<nostr_relay_builder::RelayHandlers>,
+    pub handlers: Arc<nostr_relay_builder::RelayService<()>>,
     pub cancellation_token: CancellationToken,
     pub metrics_handle: metrics::PrometheusHandle,
     pub connection_counter: Arc<AtomicUsize>,
@@ -34,6 +34,7 @@ pub async fn run_server(
     settings: config::Settings,
     relay_keys: config::Keys,
     database: Arc<RelayDatabase>,
+    db_sender: nostr_relay_builder::DatabaseSender,
     groups: Arc<Groups>,
 ) -> Result<()> {
     // Setup metrics
@@ -59,7 +60,7 @@ pub async fn run_server(
 
     let relay_config = RelayConfig::new(
         settings.relay_url.clone(),
-        database.clone(),
+        (database.clone(), db_sender),
         relay_keys.clone(),
     )
     .with_subdomains_from_url(&settings.relay_url)
@@ -88,20 +89,19 @@ pub async fn run_server(
         icon: Some("https://pfp.nostr.build/c60f4853a6d4ae046bdbbd935f0ccd7354c9c411c324b411666d325562a5a906.png".to_string()),
     };
 
-    // Build the relay handlers using the improved API
-    let handlers = Arc::new(
-        RelayBuilder::new(relay_config)
-            .with_cancellation_token(cancellation_token.clone())
-            .with_connection_counter(connection_counter.clone())
-            .with_metrics(SampledMetricsHandler::new(10))
-            .with_subscription_metrics(PrometheusSubscriptionMetricsHandler)
-            .with_middleware(ValidationMiddleware::new(relay_keys.public_key))
-            .with_middleware(Nip09Middleware::new(database.clone()))
-            .with_middleware(Nip40ExpirationMiddleware::new())
-            .with_middleware(Nip70Middleware)
-            .build_handlers(groups_processor, relay_info)
-            .await?,
-    );
+    // Build the relay service
+    let handlers = RelayBuilder::new(relay_config)
+        .with_cancellation_token(cancellation_token.clone())
+        .with_connection_counter(connection_counter.clone())
+        .with_metrics(SampledMetricsHandler::new(10))
+        .with_subscription_metrics(PrometheusSubscriptionMetricsHandler)
+        .with_middleware(ValidationMiddleware::new(relay_keys.public_key))
+        .with_middleware(Nip09Middleware::new(database.clone()))
+        .with_middleware(Nip40ExpirationMiddleware::new())
+        .with_middleware(Nip70Middleware)
+        .with_event_processor(groups_processor)
+        .build_relay_service(relay_info)
+        .await?;
 
     let app_state = Arc::new(ServerState {
         http_state: http_state.clone(),

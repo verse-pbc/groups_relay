@@ -14,18 +14,17 @@ async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys, SubscriptionService
     let admin_keys = Keys::generate();
     let task_tracker = TaskTracker::new();
     let crypto_worker = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
-    let database = Arc::new(
-        RelayDatabase::new(
-            tmp_dir.path().join("test.db").to_string_lossy().to_string(),
-            crypto_worker,
-        )
-        .unwrap(),
-    );
+    let (database, db_sender) = RelayDatabase::new(
+        tmp_dir.path().join("test.db").to_string_lossy().to_string(),
+        crypto_worker,
+    )
+    .unwrap();
+    let database = Arc::new(database);
 
     // Create a channel for outgoing messages (we won't use it in this test)
     let (tx, _rx) = flume::bounded(10);
     let subscription_service =
-        SubscriptionService::new(database.clone(), MessageSender::new(tx, 0))
+        SubscriptionService::new(database.clone(), db_sender, MessageSender::new(tx, 0))
             .await
             .unwrap();
 

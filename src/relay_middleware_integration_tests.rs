@@ -9,6 +9,11 @@ mod integration_tests {
     };
     use nostr_sdk::prelude::*;
     use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    fn empty_state() -> Arc<RwLock<()>> {
+        Arc::new(RwLock::new(()))
+    }
 
     /// Test that RelayMiddleware can process events correctly
     #[tokio::test]
@@ -17,9 +22,13 @@ mod integration_tests {
         let relay_pubkey = admin_keys.public_key();
 
         let groups = Arc::new(
-            Groups::load_groups(database.clone(), relay_pubkey)
-                .await
-                .unwrap(),
+            Groups::load_groups(
+                database.clone(),
+                relay_pubkey,
+                "wss://test.relay.com".to_string(),
+            )
+            .await
+            .unwrap(),
         );
 
         let groups_processor = GroupsRelayProcessor::new(groups.clone(), relay_pubkey);
@@ -51,7 +60,7 @@ mod integration_tests {
         };
         let store_commands = relay_middleware
             .processor()
-            .handle_event(create_event, &mut (), context)
+            .handle_event(create_event, empty_state(), context)
             .await
             .unwrap();
 
@@ -72,9 +81,13 @@ mod integration_tests {
         let relay_pubkey = admin_keys.public_key();
 
         let groups = Arc::new(
-            Groups::load_groups(database.clone(), relay_pubkey)
-                .await
-                .unwrap(),
+            Groups::load_groups(
+                database.clone(),
+                relay_pubkey,
+                "wss://test.relay.com".to_string(),
+            )
+            .await
+            .unwrap(),
         );
 
         let groups_processor = GroupsRelayProcessor::new(groups.clone(), relay_pubkey);
@@ -104,7 +117,7 @@ mod integration_tests {
         };
         relay_middleware
             .processor()
-            .handle_event(create_event, &mut (), context)
+            .handle_event(create_event, empty_state(), context)
             .await
             .unwrap();
 
@@ -121,7 +134,7 @@ mod integration_tests {
 
         relay_middleware
             .processor()
-            .handle_event(add_event, &mut (), context)
+            .handle_event(add_event, empty_state(), context)
             .await
             .unwrap();
 
@@ -139,9 +152,10 @@ mod integration_tests {
         };
 
         // Member should be able to query
-        let result = relay_middleware
-            .processor()
-            .verify_filters(&filters, &(), member_context);
+        let result =
+            relay_middleware
+                .processor()
+                .verify_filters(&filters, empty_state(), member_context);
         assert!(result.is_ok());
 
         // Non-member should not be able to query
@@ -151,9 +165,11 @@ mod integration_tests {
             subdomain: member_state.subdomain(),
             relay_pubkey: &relay_pubkey,
         };
-        let result = relay_middleware
-            .processor()
-            .verify_filters(&filters, &(), non_member_context);
+        let result = relay_middleware.processor().verify_filters(
+            &filters,
+            empty_state(),
+            non_member_context,
+        );
         assert!(result.is_err());
     }
 
@@ -165,9 +181,13 @@ mod integration_tests {
         let relay_pubkey = admin_keys.public_key();
 
         let groups = Arc::new(
-            Groups::load_groups(database.clone(), relay_pubkey)
-                .await
-                .unwrap(),
+            Groups::load_groups(
+                database.clone(),
+                relay_pubkey,
+                "wss://test.relay.com".to_string(),
+            )
+            .await
+            .unwrap(),
         );
 
         let groups_processor = GroupsRelayProcessor::new(groups.clone(), relay_pubkey);
@@ -197,7 +217,7 @@ mod integration_tests {
         };
         relay_middleware
             .processor()
-            .handle_event(create_event, &mut (), admin_context)
+            .handle_event(create_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -214,7 +234,7 @@ mod integration_tests {
 
         relay_middleware
             .processor()
-            .handle_event(add_event, &mut (), admin_context)
+            .handle_event(add_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -229,7 +249,7 @@ mod integration_tests {
         // Test visibility for admin
         let can_see = relay_middleware
             .processor()
-            .can_see_event(&content_event, &(), admin_context)
+            .can_see_event(&content_event, empty_state(), admin_context)
             .unwrap();
         assert!(can_see);
 
@@ -242,7 +262,7 @@ mod integration_tests {
         };
         let can_see = relay_middleware
             .processor()
-            .can_see_event(&content_event, &(), member_context)
+            .can_see_event(&content_event, empty_state(), member_context)
             .unwrap();
         assert!(can_see);
 
@@ -255,7 +275,7 @@ mod integration_tests {
         };
         let can_see = relay_middleware
             .processor()
-            .can_see_event(&content_event, &(), non_member_context)
+            .can_see_event(&content_event, empty_state(), non_member_context)
             .unwrap();
         assert!(!can_see);
     }

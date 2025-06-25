@@ -390,7 +390,7 @@ dependencies = [
  "bitflags 2.9.1",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "log",
@@ -483,9 +483,9 @@ dependencies = [
 
 [[package]]
 name = "bumpalo"
-version = "3.18.1"
+version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "793db76d6187cd04dff33004d8e6c9cc4e05cd330500379d2394209271b4aeee"
+checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
 
 [[package]]
 name = "byteorder"
@@ -901,9 +901,9 @@ checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "crunchy"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43da5946c66ffcc7745f48db692ffbb10a83bfe0afd96235c5c2a4fb23994929"
+checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "crypto-common"
@@ -1874,6 +1874,15 @@ dependencies = [
 
 [[package]]
 name = "itertools"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
@@ -2171,7 +2180,7 @@ dependencies = [
 [[package]]
 name = "nostr"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?rev=ece888e#ece888e35a0f2005c249a9d61a9facbd99751067"
+source = "git+https://github.com/verse-pbc/nostr?rev=1df4d82#1df4d82d19dd5a16b557d3db3a70d081cb94cbc8"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -2200,7 +2209,7 @@ dependencies = [
 [[package]]
 name = "nostr-database"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?rev=ece888e#ece888e35a0f2005c249a9d61a9facbd99751067"
+source = "git+https://github.com/verse-pbc/nostr?rev=1df4d82#1df4d82d19dd5a16b557d3db3a70d081cb94cbc8"
 dependencies = [
  "flatbuffers",
  "lru",
@@ -2211,7 +2220,7 @@ dependencies = [
 [[package]]
 name = "nostr-lmdb"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?rev=ece888e#ece888e35a0f2005c249a9d61a9facbd99751067"
+source = "git+https://github.com/verse-pbc/nostr?rev=1df4d82#1df4d82d19dd5a16b557d3db3a70d081cb94cbc8"
 dependencies = [
  "async-utility",
  "flatbuffers",
@@ -2228,7 +2237,7 @@ dependencies = [
 [[package]]
 name = "nostr-relay-pool"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?rev=ece888e#ece888e35a0f2005c249a9d61a9facbd99751067"
+source = "git+https://github.com/verse-pbc/nostr?rev=1df4d82#1df4d82d19dd5a16b557d3db3a70d081cb94cbc8"
 dependencies = [
  "async-utility",
  "async-wsocket",
@@ -2245,7 +2254,7 @@ dependencies = [
 [[package]]
 name = "nostr-sdk"
 version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?rev=ece888e#ece888e35a0f2005c249a9d61a9facbd99751067"
+source = "git+https://github.com/verse-pbc/nostr?rev=1df4d82#1df4d82d19dd5a16b557d3db3a70d081cb94cbc8"
 dependencies = [
  "async-utility",
  "nostr",
@@ -2257,8 +2266,8 @@ dependencies = [
 
 [[package]]
 name = "nostr_relay_builder"
-version = "0.2.0"
-source = "git+https://github.com/verse-pbc/nostr_relay_builder#000bb4b056a79a23fe64e7062157ae32af837e1f"
+version = "0.4.0"
+source = "git+https://github.com/verse-pbc/nostr_relay_builder#8a9a073c55b36cc355790a2a97eb9066ee18c845"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4287,8 +4296,8 @@ dependencies = [
 
 [[package]]
 name = "websocket_builder"
-version = "0.1.0"
-source = "git+https://github.com/verse-pbc/websocket_builder#7e5b81f8fb410ab833183b0283bc53603cc6d54c"
+version = "0.1.0-alpha.1"
+source = "git+https://github.com/verse-pbc/websocket_builder#20b4f0a85c28bc334d937e07ea51449cca64526d"
 dependencies = [
  "anyhow",
  "async-trait",

@@ -18,22 +18,25 @@ async fn test_join_request_generates_correct_events() {
 
     let task_tracker = TaskTracker::new();
     let crypto_worker = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
-    let db = Arc::new(
-        RelayDatabase::new(
-            temp_dir
-                .path()
-                .join("test.db")
-                .to_string_lossy()
-                .to_string(),
-            crypto_worker,
-        )
-        .unwrap(),
-    );
+    let (db, _db_sender) = RelayDatabase::new(
+        temp_dir
+            .path()
+            .join("test.db")
+            .to_string_lossy()
+            .to_string(),
+        crypto_worker,
+    )
+    .unwrap();
+    let db = Arc::new(db);
 
     let groups = Arc::new(
-        Groups::load_groups(db.clone(), admin_keys.public_key())
-            .await
-            .unwrap(),
+        Groups::load_groups(
+            db.clone(),
+            admin_keys.public_key(),
+            "wss://test.relay.com".to_string(),
+        )
+        .await
+        .unwrap(),
     );
 
     let scope = Scope::Default;

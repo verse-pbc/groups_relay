@@ -1,6 +1,8 @@
 use groups_relay::RelayDatabase;
 use nostr_lmdb::Scope;
-use nostr_relay_builder::{crypto_worker::CryptoWorker, StoreCommand, SubscriptionService};
+use nostr_relay_builder::{
+    crypto_worker::CryptoWorker, DatabaseSender, StoreCommand, SubscriptionService,
+};
 use nostr_sdk::prelude::*;
 use nostr_sdk::RelayMessage;
 use std::sync::Arc;
@@ -9,33 +11,36 @@ use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
 use tokio_util::task::TaskTracker;
 
-async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
+async fn setup_test() -> (TempDir, Arc<RelayDatabase>, DatabaseSender, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let admin_keys = Keys::generate();
     let task_tracker = TaskTracker::new();
     let crypto_worker = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
-    let database = Arc::new(
-        RelayDatabase::new(
-            tmp_dir.path().join("test.db").to_string_lossy().to_string(),
-            crypto_worker,
-        )
-        .unwrap(),
-    );
-    (tmp_dir, database, admin_keys)
+    let (database, db_sender) = RelayDatabase::new(
+        tmp_dir.path().join("test.db").to_string_lossy().to_string(),
+        crypto_worker,
+    )
+    .unwrap();
+    let database = Arc::new(database);
+    (tmp_dir, database, db_sender, admin_keys)
 }
 
 #[tokio::test]
 async fn test_group_create_followed_by_metadata_update_sequence() {
-    let (_tmp_dir, database, admin_keys) = setup_test().await;
+    let (_tmp_dir, database, db_sender, admin_keys) = setup_test().await;
 
     // Create a groups manager and subscription manager (with buffer)
-    let groups =
-        groups_relay::groups::Groups::load_groups(database.clone(), admin_keys.public_key())
-            .await
-            .unwrap();
+    let groups = groups_relay::groups::Groups::load_groups(
+        database.clone(),
+        admin_keys.public_key(),
+        "wss://test.relay.com".to_string(),
+    )
+    .await
+    .unwrap();
     let (tx, _rx) = flume::bounded(10);
     let subscription_service = SubscriptionService::new(
         database.clone(),
+        db_sender.clone(),
         websocket_builder::MessageSender::new(tx, 0),
     )
     .await
@@ -297,7 +302,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
 
 #[tokio::test]
 async fn test_same_timestamp_event_id_ordering() {
-    let (_tmp_dir, database, admin_keys) = setup_test().await;
+    let (_tmp_dir, database, db_sender, admin_keys) = setup_test().await;
 
     let group_id = "test_group_456";
     let fixed_timestamp = Timestamp::now();
@@ -326,8 +331,8 @@ async fn test_same_timestamp_event_id_ordering() {
 
     // Save events sequentially to avoid batch conflicts
     let (tx1, rx1) = flume::bounded(1);
-    database
-        .save_store_command(
+    db_sender
+        .send_with_sender(
             StoreCommand::SaveSignedEvent(Box::new(event1.clone()), Scope::Default),
             Some(websocket_builder::MessageSender::new(tx1, 0)),
         )
@@ -336,12 +341,16 @@ async fn test_same_timestamp_event_id_ordering() {
 
     // Wait for first event to complete
     let response1 = rx1.recv_async().await.unwrap();
-    assert!(matches!(response1.0, RelayMessage::Ok { .. }), "Expected OK for event1, got {:?}", response1.0);
+    assert!(
+        matches!(response1.0, RelayMessage::Ok { .. }),
+        "Expected OK for event1, got {:?}",
+        response1.0
+    );
 
     // Now save the second event
     let (tx2, rx2) = flume::bounded(1);
-    database
-        .save_store_command(
+    db_sender
+        .send_with_sender(
             StoreCommand::SaveSignedEvent(Box::new(event2.clone()), Scope::Default),
             Some(websocket_builder::MessageSender::new(tx2, 0)),
         )
@@ -350,10 +359,14 @@ async fn test_same_timestamp_event_id_ordering() {
 
     // Wait for second event to complete
     let response2 = rx2.recv_async().await.unwrap();
-    assert!(matches!(response2.0, RelayMessage::Ok { .. }), "Expected OK for event2, got {:?}", response2.0);
+    assert!(
+        matches!(response2.0, RelayMessage::Ok { .. }),
+        "Expected OK for event2, got {:?}",
+        response2.0
+    );
 
-    // Wait for database queue to be fully processed
-    database.wait_for_queue_empty(Duration::from_secs(5)).await.unwrap();
+    // Give time for database to process the events
+    sleep(Duration::from_millis(100)).await;
 
     // Query for the latest event
     let latest_events = database
@@ -379,7 +392,6 @@ async fn test_same_timestamp_event_id_ordering() {
         } else {
             "Second Event"
         };
-
 
         // Verify the correct event won
         assert_eq!(

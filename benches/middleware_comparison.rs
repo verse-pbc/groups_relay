@@ -2,33 +2,49 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use groups_relay::groups::Groups;
 use groups_relay::groups_event_processor::GroupsRelayProcessor;
 use groups_relay::RelayDatabase;
-use nostr_relay_builder::{crypto_worker::CryptoWorker, EventContext, EventProcessor, RelayConfig};
+use nostr_relay_builder::{
+    crypto_worker::CryptoWorker, DatabaseSender, EventContext, EventProcessor, RelayConfig,
+};
 use nostr_sdk::prelude::*;
 use std::hint::black_box;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
-use tokio_util::sync::CancellationToken;
+use tokio::sync::RwLock;
+use tokio_util::task::TaskTracker;
+
+fn empty_state() -> Arc<RwLock<()>> {
+    Arc::new(RwLock::new(()))
+}
 
 /// Create a test database and groups instance
-async fn setup_bench() -> (tempfile::TempDir, Arc<RelayDatabase>, Arc<Groups>, Keys) {
+async fn setup_bench() -> (
+    tempfile::TempDir,
+    Arc<RelayDatabase>,
+    DatabaseSender,
+    Arc<Groups>,
+    Keys,
+) {
     let tmp_dir = tempfile::tempdir().unwrap();
     let db_path = tmp_dir.path().join("bench_db");
 
     let admin_keys = Keys::generate();
-    let cancellation_token = CancellationToken::new();
-    let crypto_worker = Arc::new(CryptoWorker::new(
-        Arc::new(admin_keys.clone()),
-        cancellation_token,
-    ));
-    let database = Arc::new(RelayDatabase::new(db_path.to_str().unwrap(), crypto_worker).unwrap());
+    let task_tracker = TaskTracker::new();
+    let crypto_worker = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
+    let (database, db_sender) =
+        RelayDatabase::new(db_path.to_str().unwrap(), crypto_worker).unwrap();
+    let database = Arc::new(database);
 
     let groups = Arc::new(
-        Groups::load_groups(database.clone(), admin_keys.public_key())
-            .await
-            .unwrap(),
+        Groups::load_groups(
+            database.clone(),
+            admin_keys.public_key(),
+            "wss://test.relay.com".to_string(),
+        )
+        .await
+        .unwrap(),
     );
 
-    (tmp_dir, database, groups, admin_keys)
+    (tmp_dir, database, db_sender, groups, admin_keys)
 }
 
 /// Create test event
@@ -43,6 +59,7 @@ fn create_test_event(keys: &Keys, kind: u16, tags: Vec<Tag>) -> Event {
 async fn create_test_data(
     groups: &Arc<Groups>,
     database: &Arc<RelayDatabase>,
+    db_sender: &DatabaseSender,
     admin_keys: &Keys,
     num_groups: usize,
     members_per_group: usize,
@@ -50,7 +67,11 @@ async fn create_test_data(
     let mut events = Vec::new();
 
     // Create GroupsRelayProcessor for handling events
-    let _config = RelayConfig::new("ws://bench", database.clone(), admin_keys.clone());
+    let _config = RelayConfig::new(
+        "ws://bench",
+        (database.clone(), db_sender.clone()),
+        admin_keys.clone(),
+    );
     let processor = Arc::new(GroupsRelayProcessor::new(
         groups.clone(),
         admin_keys.public_key(),
@@ -85,7 +106,7 @@ async fn create_test_data(
         };
 
         processor
-            .handle_event(create_event.clone(), &mut (), context)
+            .handle_event(create_event.clone(), empty_state(), context)
             .await
             .unwrap();
 
@@ -102,7 +123,7 @@ async fn create_test_data(
             );
 
             processor
-                .handle_event(add_event, &mut (), context)
+                .handle_event(add_event, empty_state(), context)
                 .await
                 .unwrap();
 
@@ -130,10 +151,17 @@ async fn create_test_data(
 /// Benchmark visibility checks - direct comparison
 fn bench_visibility_direct(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let (_tmp_dir, database, groups, admin_keys) = rt.block_on(setup_bench());
+    let (_tmp_dir, database, db_sender, groups, admin_keys) = rt.block_on(setup_bench());
 
     // Create test data
-    let test_events = rt.block_on(create_test_data(&groups, &database, &admin_keys, 5, 10));
+    let test_events = rt.block_on(create_test_data(
+        &groups,
+        &database,
+        &db_sender,
+        &admin_keys,
+        5,
+        10,
+    ));
 
     let mut group = c.benchmark_group("visibility_direct");
 
@@ -160,7 +188,7 @@ fn bench_visibility_direct(c: &mut Criterion) {
                             relay_pubkey: &admin_keys.public_key(),
                         };
 
-                        black_box(processor.can_see_event(event, &(), context))
+                        black_box(processor.can_see_event(event, empty_state(), context))
                     });
                 },
             );
@@ -173,10 +201,17 @@ fn bench_visibility_direct(c: &mut Criterion) {
 /// Benchmark different NIP-29 event types
 fn bench_nip29_operations(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let (_tmp_dir, database, groups, admin_keys) = rt.block_on(setup_bench());
+    let (_tmp_dir, database, db_sender, groups, admin_keys) = rt.block_on(setup_bench());
 
     // Create test data
-    rt.block_on(create_test_data(&groups, &database, &admin_keys, 3, 5));
+    rt.block_on(create_test_data(
+        &groups,
+        &database,
+        &db_sender,
+        &admin_keys,
+        3,
+        5,
+    ));
 
     let user_keys = Keys::generate();
 
@@ -258,7 +293,7 @@ fn bench_nip29_operations(c: &mut Criterion) {
 
                 black_box(
                     processor
-                        .handle_event(event.clone(), &mut (), context)
+                        .handle_event(event.clone(), empty_state(), context)
                         .await,
                 )
             });
@@ -271,10 +306,17 @@ fn bench_nip29_operations(c: &mut Criterion) {
 /// Benchmark group operations
 fn bench_group_operations(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let (_tmp_dir, database, groups, admin_keys) = rt.block_on(setup_bench());
+    let (_tmp_dir, database, db_sender, groups, admin_keys) = rt.block_on(setup_bench());
 
     // Create test data
-    rt.block_on(create_test_data(&groups, &database, &admin_keys, 10, 20));
+    rt.block_on(create_test_data(
+        &groups,
+        &database,
+        &db_sender,
+        &admin_keys,
+        10,
+        20,
+    ));
 
     let mut group = c.benchmark_group("group_operations");
     group.sample_size(20);
@@ -328,7 +370,7 @@ fn bench_group_operations(c: &mut Criterion) {
                 relay_pubkey: &admin_pk,
             };
 
-            black_box(processor.verify_filters(&[filter.clone()], &(), context))
+            black_box(processor.verify_filters(&[filter.clone()], empty_state(), context))
         });
     });
 

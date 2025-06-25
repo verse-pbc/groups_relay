@@ -1,7 +1,9 @@
 use groups_relay::Groups;
 use groups_relay::RelayDatabase;
 use nostr_lmdb::Scope;
-use nostr_relay_builder::{crypto_worker::CryptoWorker, StoreCommand, SubscriptionService};
+use nostr_relay_builder::{
+    crypto_worker::CryptoWorker, DatabaseSender, StoreCommand, SubscriptionService,
+};
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -9,38 +11,44 @@ use tokio::time::{sleep, Duration};
 use tokio_util::task::TaskTracker;
 use websocket_builder::MessageSender;
 
-async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
+async fn setup_test() -> (TempDir, Arc<RelayDatabase>, DatabaseSender, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let admin_keys = Keys::generate();
     let task_tracker = TaskTracker::new();
     let crypto_worker = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
-    let database = Arc::new(
-        RelayDatabase::new(
-            tmp_dir.path().join("test.db").to_string_lossy().to_string(),
-            crypto_worker,
-        )
-        .unwrap(),
-    );
+    let (db, db_sender) = RelayDatabase::new(
+        tmp_dir.path().join("test.db").to_string_lossy().to_string(),
+        crypto_worker,
+    )
+    .unwrap();
+    let database = Arc::new(db);
 
-    (tmp_dir, database, admin_keys)
+    (tmp_dir, database, db_sender, admin_keys)
 }
 
 #[tokio::test]
 async fn test_rapid_metadata_edits_through_subscription_service() {
-    let (_tmp_dir, database, admin_keys) = setup_test().await;
+    let (_tmp_dir, database, db_sender, admin_keys) = setup_test().await;
 
     // Create a subscription manager
     let (tx, _rx) = flume::bounded(10);
-    let subscription_service =
-        SubscriptionService::new(database.clone(), MessageSender::new(tx, 0))
-            .await
-            .unwrap();
+    let subscription_service = SubscriptionService::new(
+        database.clone(),
+        db_sender.clone(),
+        MessageSender::new(tx, 0),
+    )
+    .await
+    .unwrap();
 
     // Load groups
     let groups = Arc::new(
-        Groups::load_groups(database.clone(), admin_keys.public_key())
-            .await
-            .unwrap(),
+        Groups::load_groups(
+            database.clone(),
+            admin_keys.public_key(),
+            "wss://test.relay.com".to_string(),
+        )
+        .await
+        .unwrap(),
     );
 
     // Create a group first
@@ -201,7 +209,7 @@ async fn test_rapid_metadata_edits_through_subscription_service() {
 
 #[tokio::test]
 async fn test_direct_database_save_bypasses_buffer() {
-    let (_tmp_dir, database, admin_keys) = setup_test().await;
+    let (_tmp_dir, database, db_sender, admin_keys) = setup_test().await;
 
     // Create two 39000 events
     let event1 = UnsignedEvent::new(
@@ -227,18 +235,12 @@ async fn test_direct_database_save_bypasses_buffer() {
     );
 
     // Save directly to database (simulating the old broken behavior)
-    database
-        .save_store_command(
-            StoreCommand::SaveUnsignedEvent(event1, Scope::Default),
-            None,
-        )
+    db_sender
+        .send(StoreCommand::SaveUnsignedEvent(event1, Scope::Default))
         .await
         .unwrap();
-    database
-        .save_store_command(
-            StoreCommand::SaveUnsignedEvent(event2, Scope::Default),
-            None,
-        )
+    db_sender
+        .send(StoreCommand::SaveUnsignedEvent(event2, Scope::Default))
         .await
         .unwrap();
 

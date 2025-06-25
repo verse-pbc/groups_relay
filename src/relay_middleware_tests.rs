@@ -6,7 +6,9 @@
 #[cfg(test)]
 mod tests {
     use crate::groups_event_processor::GroupsRelayProcessor;
-    use crate::test_utils::{create_test_event, create_test_keys, setup_test};
+    use crate::test_utils::{
+        create_test_event, create_test_keys, setup_test, setup_test_with_sender,
+    };
     use crate::{Groups, StoreCommand};
     use nostr_lmdb::Scope;
     use nostr_relay_builder::{
@@ -14,6 +16,11 @@ mod tests {
     };
     use nostr_sdk::prelude::*;
     use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    fn empty_state() -> Arc<RwLock<()>> {
+        Arc::new(RwLock::new(()))
+    }
 
     /// Helper function to create a RelayMiddleware with GroupsRelayProcessor for testing
     async fn create_test_relay_middleware(
@@ -21,9 +28,13 @@ mod tests {
         admin_pubkey: PublicKey,
     ) -> RelayMiddleware<GroupsRelayProcessor, ()> {
         let groups = Arc::new(
-            Groups::load_groups(database.clone(), admin_pubkey)
-                .await
-                .unwrap(),
+            Groups::load_groups(
+                database.clone(),
+                admin_pubkey,
+                "wss://test.relay.com".to_string(),
+            )
+            .await
+            .unwrap(),
         );
 
         let groups_processor = GroupsRelayProcessor::new(groups, admin_pubkey);
@@ -56,7 +67,7 @@ mod tests {
 
         let commands = middleware
             .processor()
-            .handle_event(event.clone(), &mut (), context)
+            .handle_event(event.clone(), empty_state(), context)
             .await
             .unwrap();
 
@@ -95,7 +106,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&event, &(), non_member_context)
+            .can_see_event(&event, empty_state(), non_member_context)
             .unwrap();
         assert!(can_see);
 
@@ -107,7 +118,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&event, &(), anon_context)
+            .can_see_event(&event, empty_state(), anon_context)
             .unwrap();
         assert!(can_see);
     }
@@ -134,7 +145,7 @@ mod tests {
 
         let commands = middleware
             .processor()
-            .handle_event(event.clone(), &mut (), context)
+            .handle_event(event.clone(), empty_state(), context)
             .await
             .unwrap();
 
@@ -169,7 +180,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&event, &(), context)
+            .can_see_event(&event, empty_state(), context)
             .unwrap();
         assert!(can_see);
     }
@@ -203,7 +214,7 @@ mod tests {
 
         let result = middleware
             .processor()
-            .handle_event(create_event, &mut (), context)
+            .handle_event(create_event, empty_state(), context)
             .await;
 
         // Should succeed - anyone can create new groups
@@ -242,7 +253,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(create_event, &mut (), admin_context)
+            .handle_event(create_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -259,7 +270,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(add_event, &mut (), admin_context)
+            .handle_event(add_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -281,7 +292,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&content_event, &(), non_member_context)
+            .can_see_event(&content_event, empty_state(), non_member_context)
             .unwrap();
         assert!(!can_see);
 
@@ -295,7 +306,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&content_event, &(), member_context)
+            .can_see_event(&content_event, empty_state(), member_context)
             .unwrap();
         assert!(can_see);
     }
@@ -332,7 +343,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(create_event, &mut (), admin_context)
+            .handle_event(create_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -349,7 +360,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(add_event, &mut (), admin_context)
+            .handle_event(add_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -366,9 +377,10 @@ mod tests {
             subdomain: admin_state.subdomain(),
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
-        let result = middleware
-            .processor()
-            .verify_filters(&filters, &(), non_member_context);
+        let result =
+            middleware
+                .processor()
+                .verify_filters(&filters, empty_state(), non_member_context);
         assert!(result.is_err());
 
         // Member should be able to query
@@ -381,13 +393,13 @@ mod tests {
         };
         let result = middleware
             .processor()
-            .verify_filters(&filters, &(), member_context);
+            .verify_filters(&filters, empty_state(), member_context);
         assert!(result.is_ok());
 
         // Admin should be able to query
         let result = middleware
             .processor()
-            .verify_filters(&filters, &(), admin_context);
+            .verify_filters(&filters, empty_state(), admin_context);
         assert!(result.is_ok());
     }
 
@@ -424,7 +436,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(create_event, &mut (), admin_context)
+            .handle_event(create_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -439,7 +451,7 @@ mod tests {
         // Store the event first
         middleware
             .processor()
-            .handle_event(content_event.clone(), &mut (), admin_context)
+            .handle_event(content_event.clone(), empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -453,7 +465,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&content_event, &(), non_member_context)
+            .can_see_event(&content_event, empty_state(), non_member_context)
             .unwrap();
         assert!(can_see);
 
@@ -465,7 +477,7 @@ mod tests {
         };
         let can_see = middleware
             .processor()
-            .can_see_event(&content_event, &(), anon_context)
+            .can_see_event(&content_event, empty_state(), anon_context)
             .unwrap();
         assert!(can_see);
     }
@@ -501,7 +513,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(create_event, &mut (), admin_context)
+            .handle_event(create_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -518,7 +530,7 @@ mod tests {
 
         let result = middleware
             .processor()
-            .handle_event(add_event.clone(), &mut (), admin_context)
+            .handle_event(add_event.clone(), empty_state(), admin_context)
             .await;
         assert!(result.is_ok());
 
@@ -542,7 +554,7 @@ mod tests {
 
         let result = middleware
             .processor()
-            .handle_event(add_event_by_member, &mut (), member_context)
+            .handle_event(add_event_by_member, empty_state(), member_context)
             .await;
         assert!(result.is_err());
     }
@@ -578,7 +590,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(create_event, &mut (), admin_context)
+            .handle_event(create_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -595,7 +607,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(add_event, &mut (), admin_context)
+            .handle_event(add_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -609,7 +621,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(content_event.clone(), &mut (), admin_context)
+            .handle_event(content_event.clone(), empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -626,7 +638,7 @@ mod tests {
 
         let result = middleware
             .processor()
-            .handle_event(delete_event, &mut (), admin_context)
+            .handle_event(delete_event, empty_state(), admin_context)
             .await;
         assert!(result.is_ok());
 
@@ -647,7 +659,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(member_content.clone(), &mut (), member_context)
+            .handle_event(member_content.clone(), empty_state(), member_context)
             .await
             .unwrap();
 
@@ -663,7 +675,7 @@ mod tests {
 
         let result = middleware
             .processor()
-            .handle_event(member_delete, &mut (), member_context)
+            .handle_event(member_delete, empty_state(), member_context)
             .await;
         // Current implementation: only admins can delete events (including group deletion events)
         // TODO: Should allow event authors to delete their own events
@@ -702,7 +714,7 @@ mod tests {
         // Create the group
         middleware
             .processor()
-            .handle_event(create_group_event, &mut (), admin_context)
+            .handle_event(create_group_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -719,7 +731,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(add_member_event, &mut (), admin_context)
+            .handle_event(add_member_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -741,7 +753,7 @@ mod tests {
         // Member should be able to see the event
         let can_see = middleware
             .processor()
-            .can_see_event(&group_event, &(), member_context)
+            .can_see_event(&group_event, empty_state(), member_context)
             .unwrap();
         assert!(can_see, "Member should be able to see group events");
     }
@@ -778,7 +790,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(create_group_event, &mut (), admin_context)
+            .handle_event(create_group_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -795,7 +807,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(add_member_event, &mut (), admin_context)
+            .handle_event(add_member_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -817,7 +829,7 @@ mod tests {
         // Non-member should NOT be able to see private group events
         let can_see = middleware
             .processor()
-            .can_see_event(&group_event, &(), non_member_context)
+            .can_see_event(&group_event, empty_state(), non_member_context)
             .unwrap();
         assert!(!can_see, "Non-member should not see private group events");
     }
@@ -853,7 +865,7 @@ mod tests {
 
         middleware
             .processor()
-            .handle_event(create_group_event, &mut (), admin_context)
+            .handle_event(create_group_event, empty_state(), admin_context)
             .await
             .unwrap();
 
@@ -868,7 +880,7 @@ mod tests {
         // Relay (admin in this case) should be able to see all events
         let can_see = middleware
             .processor()
-            .can_see_event(&group_event, &(), admin_context)
+            .can_see_event(&group_event, empty_state(), admin_context)
             .unwrap();
         assert!(can_see, "Relay should be able to see all events");
     }
@@ -895,9 +907,10 @@ mod tests {
             .custom_tag(SingleLetterTag::lowercase(Alphabet::D), "test_group");
 
         // Test filter verification - should pass for metadata queries
-        let result = middleware
-            .processor()
-            .verify_filters(&[meta_filter], &(), member_context);
+        let result =
+            middleware
+                .processor()
+                .verify_filters(&[meta_filter], empty_state(), member_context);
 
         assert!(
             result.is_ok(),
@@ -927,10 +940,11 @@ mod tests {
             .custom_tag(SingleLetterTag::lowercase(Alphabet::D), "test_group");
 
         // Test filter verification - should pass for addressable queries
-        let result =
-            middleware
-                .processor()
-                .verify_filters(&[addressable_filter], &(), member_context);
+        let result = middleware.processor().verify_filters(
+            &[addressable_filter],
+            empty_state(),
+            member_context,
+        );
 
         assert!(
             result.is_ok(),
@@ -963,7 +977,7 @@ mod tests {
         // Should pass because unmanaged groups are allowed
         let result = middleware
             .processor()
-            .verify_filters(&filters, &(), member_context);
+            .verify_filters(&filters, empty_state(), member_context);
         assert!(
             result.is_ok(),
             "Non-existing groups should be allowed (unmanaged groups)"
@@ -992,7 +1006,7 @@ mod tests {
         // Should always pass for non-group queries
         let result = middleware
             .processor()
-            .verify_filters(&filters, &(), member_context);
+            .verify_filters(&filters, empty_state(), member_context);
         assert!(result.is_ok(), "Non-group queries should always be allowed");
     }
 
@@ -1016,7 +1030,7 @@ mod tests {
 
         let commands = middleware
             .processor()
-            .handle_event(event.clone(), &mut (), member_context)
+            .handle_event(event.clone(), empty_state(), member_context)
             .await
             .unwrap();
 
@@ -1030,7 +1044,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_group_create_with_existing_events_requires_relay_admin() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, db_sender, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
 
         let middleware =
@@ -1055,7 +1069,7 @@ mod tests {
         };
 
         // Save the unmanaged event directly to database (like the old test)
-        database
+        db_sender
             .save_signed_event(unmanaged_event.clone(), member_state.subdomain().clone())
             .await
             .unwrap();
@@ -1076,7 +1090,7 @@ mod tests {
 
         let result = middleware
             .processor()
-            .handle_event(create_event, &mut (), member_context)
+            .handle_event(create_event, empty_state(), member_context)
             .await;
 
         // Should fail because only relay admin can convert unmanaged to managed

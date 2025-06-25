@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use nostr_relay_builder::{EventContext, EventProcessor, Result, StoreCommand};
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::debug;
 
 /// Groups event processor implementing NIP-29 (Relay-based Groups) functionality.
@@ -85,7 +86,7 @@ impl EventProcessor for GroupsRelayProcessor {
     fn verify_filters(
         &self,
         filters: &[Filter],
-        _custom_state: &(),
+        _custom_state: Arc<RwLock<()>>,
         context: EventContext<'_>,
     ) -> Result<()> {
         // For groups relay, we need to verify access to group queries
@@ -136,7 +137,7 @@ impl EventProcessor for GroupsRelayProcessor {
     fn can_see_event(
         &self,
         event: &Event,
-        _custom_state: &(),
+        _custom_state: Arc<RwLock<()>>,
         context: EventContext<'_>,
     ) -> Result<bool> {
         // Check if this is a group event
@@ -156,7 +157,7 @@ impl EventProcessor for GroupsRelayProcessor {
     async fn handle_event(
         &self,
         event: Event,
-        _custom_state: &mut (),
+        _custom_state: Arc<RwLock<()>>,
         context: EventContext<'_>,
     ) -> Result<Vec<StoreCommand>> {
         let subdomain = context.subdomain.clone();
@@ -262,13 +263,21 @@ mod tests {
     use crate::test_utils::{create_test_event, create_test_keys, setup_test};
     use nostr_lmdb::Scope;
 
+    fn empty_state() -> Arc<RwLock<()>> {
+        Arc::new(RwLock::new(()))
+    }
+
     #[tokio::test]
     async fn test_groups_relay_logic_creation() {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let groups = Arc::new(
-            Groups::load_groups(database.clone(), admin_keys.public_key())
-                .await
-                .unwrap(),
+            Groups::load_groups(
+                database.clone(),
+                admin_keys.public_key(),
+                "wss://test.relay.com".to_string(),
+            )
+            .await
+            .unwrap(),
         );
 
         let processor = GroupsRelayProcessor::new(groups.clone(), admin_keys.public_key());
@@ -282,9 +291,13 @@ mod tests {
     async fn test_groups_relay_logic_non_group_event_visibility() {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let groups = Arc::new(
-            Groups::load_groups(database.clone(), admin_keys.public_key())
-                .await
-                .unwrap(),
+            Groups::load_groups(
+                database.clone(),
+                admin_keys.public_key(),
+                "wss://test.relay.com".to_string(),
+            )
+            .await
+            .unwrap(),
         );
 
         let processor = GroupsRelayProcessor::new(groups, admin_keys.public_key());
@@ -301,16 +314,22 @@ mod tests {
         };
 
         // Non-group events should be visible to everyone
-        assert!(processor.can_see_event(&event, &(), context).unwrap());
+        assert!(processor
+            .can_see_event(&event, empty_state(), context)
+            .unwrap());
     }
 
     #[tokio::test]
     async fn test_groups_relay_logic_unmanaged_group_event() {
         let (_tmp_dir, database, admin_keys) = setup_test().await;
         let groups = Arc::new(
-            Groups::load_groups(database.clone(), admin_keys.public_key())
-                .await
-                .unwrap(),
+            Groups::load_groups(
+                database.clone(),
+                admin_keys.public_key(),
+                "wss://test.relay.com".to_string(),
+            )
+            .await
+            .unwrap(),
         );
 
         let processor = GroupsRelayProcessor::new(groups, admin_keys.public_key());
@@ -332,11 +351,13 @@ mod tests {
         };
 
         // Unmanaged group events should be visible (everyone is considered a member)
-        assert!(processor.can_see_event(&event, &(), context).unwrap());
+        assert!(processor
+            .can_see_event(&event, empty_state(), context)
+            .unwrap());
 
         // Test handle_event for unmanaged group
         let commands = processor
-            .handle_event(event.clone(), &mut (), context)
+            .handle_event(event.clone(), empty_state(), context)
             .await
             .unwrap();
         assert_eq!(commands.len(), 1);
