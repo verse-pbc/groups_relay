@@ -8,7 +8,6 @@ pub mod groups_event_processor;
 pub mod handler;
 pub mod metrics;
 pub mod metrics_handler;
-pub mod nostr_session_state;
 #[cfg(test)]
 pub mod relay_middleware_integration_tests;
 #[cfg(test)]
