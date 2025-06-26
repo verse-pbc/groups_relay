@@ -189,6 +189,7 @@ async fn main() -> Result<()> {
         info!("This was a dry run - no changes were made");
     }
 
+    drop(db_sender);
     task_tracker.wait().await;
 
     Ok(())
