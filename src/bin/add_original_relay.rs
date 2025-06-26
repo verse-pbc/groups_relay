@@ -73,6 +73,7 @@ async fn main() -> Result<()> {
     // Open database
     let (database, db_sender) = RelayDatabase::new(&args.db_path, crypto_sender)?;
     let database = Arc::new(database);
+    task_tracker.close();
 
     // Load groups
     let groups =
@@ -187,6 +188,8 @@ async fn main() -> Result<()> {
     if args.dry_run {
         info!("This was a dry run - no changes were made");
     }
+
+    task_tracker.wait().await;
 
     Ok(())
 }
