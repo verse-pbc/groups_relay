@@ -2266,8 +2266,8 @@ dependencies = [
 
 [[package]]
 name = "nostr_relay_builder"
-version = "0.4.0"
-source = "git+https://github.com/verse-pbc/nostr_relay_builder#a696ea66a2cac9e4e2c1d6ff558d19d50a9a1571"
+version = "0.4.1"
+source = "git+https://github.com/verse-pbc/nostr_relay_builder#62121534c781dd08aa5afad09002042fae073601"
 dependencies = [
  "anyhow",
  "async-trait",
