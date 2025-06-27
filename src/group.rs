@@ -397,10 +397,10 @@ impl std::fmt::Debug for Group {
         writeln!(f, "  metadata: {{")?;
         writeln!(f, "    name: \"{}\",", self.metadata.name)?;
         if let Some(about) = &self.metadata.about {
-            writeln!(f, "    about: \"{}\",", about)?;
+            writeln!(f, "    about: \"{about}\",")?;
         }
         if let Some(picture) = &self.metadata.picture {
-            writeln!(f, "    picture: \"{}\",", picture)?;
+            writeln!(f, "    picture: \"{picture}\",")?;
         }
         writeln!(f, "    private: {},", self.metadata.private)?;
         writeln!(f, "    closed: {},", self.metadata.closed)?;
@@ -415,7 +415,7 @@ impl std::fmt::Debug for Group {
                 member
                     .roles
                     .iter()
-                    .map(|r| format!("\"{}\"", r))
+                    .map(|r| format!("\"{r}\""))
                     .collect::<Vec<_>>()
                     .join(", ")
             )?;
@@ -426,20 +426,20 @@ impl std::fmt::Debug for Group {
             "  join_requests: [{}],",
             self.join_requests
                 .iter()
-                .map(|pk| format!("\"{}\"", pk))
+                .map(|pk| format!("\"{pk}\""))
                 .collect::<Vec<_>>()
                 .join(", ")
         )?;
         writeln!(f, "  invites: {{")?;
         for (code, invite) in &self.invites {
-            write!(f, "    {}: {{ ", code)?;
+            write!(f, "    {code}: {{ ")?;
             writeln!(
                 f,
                 "roles: [{}] }},",
                 invite
                     .roles
                     .iter()
-                    .map(|r| format!("\"{}\"", r))
+                    .map(|r| format!("\"{r}\""))
                     .collect::<Vec<_>>()
                     .join(", ")
             )?;
@@ -450,7 +450,7 @@ impl std::fmt::Debug for Group {
             "  roles: [{}],",
             self.roles
                 .iter()
-                .map(|r| format!("\"{}\"", r))
+                .map(|r| format!("\"{r}\""))
                 .collect::<Vec<_>>()
                 .join(", ")
         )?;
@@ -1303,8 +1303,7 @@ impl Group {
             && !self.is_member(pubkey)
         {
             return Err(Error::restricted(format!(
-                "User {} is not a member of this group",
-                pubkey
+                "User {pubkey} is not a member of this group"
             )));
         }
         Ok(())
@@ -1376,7 +1375,7 @@ impl Group {
                     .roles
                     .iter()
                     .filter(|role| matches!(role, GroupRole::Admin))
-                    .map(|role| format!("{:?}", role)),
+                    .map(|role| format!("{role:?}")),
             );
 
             let tag = Tag::custom(TagKind::p(), tag_vals);

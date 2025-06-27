@@ -19,7 +19,7 @@ async fn test_groups_relay_with_nostr_relay_builder() -> anyhow::Result<()> {
     let crypto_worker = CryptoWorker::spawn(Arc::new(keys.clone()), &task_tracker);
 
     // groups_relay's database is used for groups management
-    let (groups_database, db_sender) = RelayDatabase::new(&db_path, crypto_worker)?;
+    let (groups_database, db_sender) = RelayDatabase::new(&db_path, crypto_worker.clone())?;
     let groups_database = Arc::new(groups_database);
 
     let groups = Arc::new(
@@ -33,7 +33,7 @@ async fn test_groups_relay_with_nostr_relay_builder() -> anyhow::Result<()> {
 
     let relay_config = RelayConfig::new(
         "wss://test.groups.relay",
-        (groups_database.clone(), db_sender),
+        (groups_database.clone(), db_sender, crypto_worker),
         keys.clone(),
     )
     .with_subdomains(2)

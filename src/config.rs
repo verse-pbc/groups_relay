@@ -96,7 +96,7 @@ impl Config {
 
         let config_dir = config_dir.as_ref();
         let default_config = config_dir.join("settings.yml");
-        let env_config = config_dir.join(format!("settings.{}.yml", environment));
+        let env_config = config_dir.join(format!("settings.{environment}.yml"));
         let local_config = config_dir.join("settings.local.yml");
 
         let config = ConfigTree::builder()

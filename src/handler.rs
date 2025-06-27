@@ -77,7 +77,7 @@ pub async fn handle_root(
                 response.into_response()
             }
             Err(err) => {
-                eprintln!("Error serving frontend: {:?}", err);
+                eprintln!("Error serving frontend: {err:?}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
             }
         }
@@ -154,7 +154,7 @@ pub async fn serve_frontend() -> impl IntoResponse {
             response.into_response()
         }
         Err(err) => {
-            eprintln!("Error serving frontend: {:?}", err);
+            eprintln!("Error serving frontend: {err:?}");
             (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
         }
     }

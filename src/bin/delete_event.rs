@@ -278,7 +278,7 @@ async fn main() -> Result<()> {
     } else if let Some(event_id) = args.event_id {
         // Handle single event deletion
         let event_id = EventId::from_hex(&event_id)
-            .with_context(|| format!("Invalid event ID format: {}", event_id))?;
+            .with_context(|| format!("Invalid event ID format: {event_id}"))?;
 
         info!(
             "Attempting to delete event ID {} from database at {:?}",

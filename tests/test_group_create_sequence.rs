@@ -156,13 +156,10 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
 
         if !check_events.is_empty() {
             found_metadata = true;
-            println!("Metadata event found after {} retries", retries);
+            println!("Metadata event found after {retries} retries");
         } else {
             retries += 1;
-            println!(
-                "Retry {}/{}: Metadata event not found yet",
-                retries, max_retries
-            );
+            println!("Retry {retries}/{max_retries}: Metadata event not found yet");
         }
     }
 
@@ -232,7 +229,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
         // Look for the group name
         if let Some(name_tag) = event.tags.iter().find(|t| t.kind() == TagKind::Name) {
             if let Some(name) = name_tag.content() {
-                println!("  Group name: {}", name);
+                println!("  Group name: {name}");
             }
         }
 
@@ -245,7 +242,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
             }
         }) {
             if let Some(about) = about_tag.content() {
-                println!("  About: {}", about);
+                println!("  About: {about}");
             }
         }
     }
@@ -283,8 +280,8 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
             }
         });
 
-        println!("  Has updated name: {}", has_updated_name);
-        println!("  Has about field: {}", has_about);
+        println!("  Has updated name: {has_updated_name}");
+        println!("  Has about field: {has_about}");
 
         // The test should verify that the metadata from the 9002 event wins
         assert!(

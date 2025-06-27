@@ -1319,7 +1319,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "http",
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "slab",
  "tokio",
  "tokio-util",
@@ -1786,9 +1786,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.9.0"
+version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cea70ddb795996207ad57735b50c5982d8844f38ba9ee5f1aedcfb708a2aa11e"
+checksum = "fe4cd85333e22411419a0bcae1297d25e58c9443848b11dc6a86fefe8c78a661"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.4",
@@ -2017,9 +2017,9 @@ checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 
 [[package]]
 name = "lru"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "227748d55f2f0ab4735d87fd623798cb6b664512fe979705f829c9f81c934465"
+checksum = "9f8cc7106155f10bdf99a6f379688f543ad6596a415375b36a59a054ceda1198"
 
 [[package]]
 name = "lru-cache"
@@ -2078,7 +2078,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "ipnet",
  "metrics",
  "metrics-util",
@@ -2157,12 +2157,6 @@ dependencies = [
 
 [[package]]
 name = "negentropy"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e664971378a3987224f7a0e10059782035e89899ae403718ee07de85bec42afe"
-
-[[package]]
-name = "negentropy"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0efe882e02d206d8d279c20eb40e03baf7cb5136a1476dc084a324fbc3ec42d"
@@ -2179,8 +2173,8 @@ dependencies = [
 
 [[package]]
 name = "nostr"
-version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?rev=1df4d82#1df4d82d19dd5a16b557d3db3a70d081cb94cbc8"
+version = "0.42.0"
+source = "git+https://github.com/verse-pbc/nostr#98239f3a9fe758d351ad956f292ef698d1ac8337"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -2208,8 +2202,8 @@ dependencies = [
 
 [[package]]
 name = "nostr-database"
-version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?rev=1df4d82#1df4d82d19dd5a16b557d3db3a70d081cb94cbc8"
+version = "0.42.0"
+source = "git+https://github.com/verse-pbc/nostr#98239f3a9fe758d351ad956f292ef698d1ac8337"
 dependencies = [
  "flatbuffers",
  "lru",
@@ -2219,8 +2213,8 @@ dependencies = [
 
 [[package]]
 name = "nostr-lmdb"
-version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?rev=1df4d82#1df4d82d19dd5a16b557d3db3a70d081cb94cbc8"
+version = "0.42.0"
+source = "git+https://github.com/verse-pbc/nostr#98239f3a9fe758d351ad956f292ef698d1ac8337"
 dependencies = [
  "async-utility",
  "flatbuffers",
@@ -2236,15 +2230,14 @@ dependencies = [
 
 [[package]]
 name = "nostr-relay-pool"
-version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?rev=1df4d82#1df4d82d19dd5a16b557d3db3a70d081cb94cbc8"
+version = "0.42.0"
+source = "git+https://github.com/verse-pbc/nostr#98239f3a9fe758d351ad956f292ef698d1ac8337"
 dependencies = [
  "async-utility",
  "async-wsocket",
  "atomic-destructor",
  "lru",
- "negentropy 0.3.1",
- "negentropy 0.5.0",
+ "negentropy",
  "nostr",
  "nostr-database",
  "tokio",
@@ -2253,8 +2246,8 @@ dependencies = [
 
 [[package]]
 name = "nostr-sdk"
-version = "0.41.0"
-source = "git+https://github.com/verse-pbc/nostr?rev=1df4d82#1df4d82d19dd5a16b557d3db3a70d081cb94cbc8"
+version = "0.42.0"
+source = "git+https://github.com/verse-pbc/nostr#98239f3a9fe758d351ad956f292ef698d1ac8337"
 dependencies = [
  "async-utility",
  "nostr",
@@ -2267,7 +2260,7 @@ dependencies = [
 [[package]]
 name = "nostr_relay_builder"
 version = "0.4.1"
-source = "git+https://github.com/verse-pbc/nostr_relay_builder#62121534c781dd08aa5afad09002042fae073601"
+source = "git+https://github.com/verse-pbc/nostr_relay_builder#8acd911d2c8a5dd24f373b52b93cf587bc246d9f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3779,7 +3772,7 @@ version = "0.22.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
 dependencies = [
- "indexmap 2.9.0",
+ "indexmap 2.10.0",
  "serde",
  "serde_spanned",
  "toml_datetime",
@@ -4297,7 +4290,7 @@ dependencies = [
 [[package]]
 name = "websocket_builder"
 version = "0.1.0-alpha.1"
-source = "git+https://github.com/verse-pbc/websocket_builder#20b4f0a85c28bc334d937e07ea51449cca64526d"
+source = "git+https://github.com/verse-pbc/websocket_builder#57cb7062ee5c0ecb22098fe703c270098821dfca"
 dependencies = [
  "anyhow",
  "async-trait",

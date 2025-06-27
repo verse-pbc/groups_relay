@@ -8,8 +8,8 @@ use crate::{
 use anyhow::Result;
 use axum::{routing::get, Router};
 use nostr_relay_builder::{
-    AuthConfig, Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware, RelayBuilder,
-    RelayConfig, RelayInfo, WebSocketConfig,
+    crypto_worker::CryptoSender, AuthConfig, Nip09Middleware, Nip40ExpirationMiddleware,
+    Nip70Middleware, RelayBuilder, RelayConfig, RelayInfo, WebSocketConfig,
 };
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicUsize;
@@ -35,6 +35,7 @@ pub async fn run_server(
     relay_keys: config::Keys,
     database: Arc<RelayDatabase>,
     db_sender: nostr_relay_builder::DatabaseSender,
+    crypto_sender: CryptoSender,
     groups: Arc<Groups>,
 ) -> Result<()> {
     // Setup metrics
@@ -60,7 +61,7 @@ pub async fn run_server(
 
     let relay_config = RelayConfig::new(
         settings.relay_url.clone(),
-        (database.clone(), db_sender),
+        (database.clone(), db_sender, crypto_sender),
         relay_keys.clone(),
     )
     .with_subdomains_from_url(&settings.relay_url)

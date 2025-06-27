@@ -21,6 +21,7 @@ async fn setup_bench() -> (
     tempfile::TempDir,
     Arc<RelayDatabase>,
     DatabaseSender,
+    nostr_relay_builder::crypto_worker::CryptoSender,
     Arc<Groups>,
     Keys,
 ) {
@@ -31,7 +32,7 @@ async fn setup_bench() -> (
     let task_tracker = TaskTracker::new();
     let crypto_worker = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
     let (database, db_sender) =
-        RelayDatabase::new(db_path.to_str().unwrap(), crypto_worker).unwrap();
+        RelayDatabase::new(db_path.to_str().unwrap(), crypto_worker.clone()).unwrap();
     let database = Arc::new(database);
 
     let groups = Arc::new(
@@ -44,7 +45,14 @@ async fn setup_bench() -> (
         .unwrap(),
     );
 
-    (tmp_dir, database, db_sender, groups, admin_keys)
+    (
+        tmp_dir,
+        database,
+        db_sender,
+        crypto_worker,
+        groups,
+        admin_keys,
+    )
 }
 
 /// Create test event
@@ -60,6 +68,7 @@ async fn create_test_data(
     groups: &Arc<Groups>,
     database: &Arc<RelayDatabase>,
     db_sender: &DatabaseSender,
+    crypto_sender: &nostr_relay_builder::crypto_worker::CryptoSender,
     admin_keys: &Keys,
     num_groups: usize,
     members_per_group: usize,
@@ -69,7 +78,7 @@ async fn create_test_data(
     // Create GroupsRelayProcessor for handling events
     let _config = RelayConfig::new(
         "ws://bench",
-        (database.clone(), db_sender.clone()),
+        (database.clone(), db_sender.clone(), crypto_sender.clone()),
         admin_keys.clone(),
     );
     let processor = Arc::new(GroupsRelayProcessor::new(
@@ -79,7 +88,7 @@ async fn create_test_data(
 
     // Create groups
     for i in 0..num_groups {
-        let group_id = format!("bench_group_{}", i);
+        let group_id = format!("bench_group_{i}");
         let create_event = create_test_event(
             admin_keys,
             9007, // Group creation
@@ -88,7 +97,7 @@ async fn create_test_data(
                 Tag::custom(TagKind::d(), [&group_id]),
                 Tag::custom(
                     TagKind::Custom("name".into()),
-                    [&format!("Benchmark Group {}", i)],
+                    [&format!("Benchmark Group {i}")],
                 ),
                 if i % 2 == 0 {
                     Tag::custom(TagKind::Custom("private".into()), [""])
@@ -136,7 +145,7 @@ async fn create_test_data(
                         Tag::custom(TagKind::h(), [&group_id]),
                         Tag::custom(
                             TagKind::custom("content"),
-                            [&format!("Message {} from member {}", i, j)],
+                            [&format!("Message {i} from member {j}")],
                         ),
                     ],
                 );
@@ -151,13 +160,15 @@ async fn create_test_data(
 /// Benchmark visibility checks - direct comparison
 fn bench_visibility_direct(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let (_tmp_dir, database, db_sender, groups, admin_keys) = rt.block_on(setup_bench());
+    let (_tmp_dir, database, db_sender, crypto_sender, groups, admin_keys) =
+        rt.block_on(setup_bench());
 
     // Create test data
     let test_events = rt.block_on(create_test_data(
         &groups,
         &database,
         &db_sender,
+        &crypto_sender,
         &admin_keys,
         5,
         10,
@@ -175,7 +186,7 @@ fn bench_visibility_direct(c: &mut Criterion) {
     for (name, auth_pubkey) in test_cases {
         for (i, event) in test_events.iter().enumerate() {
             group.bench_with_input(
-                BenchmarkId::new(format!("groups_logic_{}", name), i),
+                BenchmarkId::new(format!("groups_logic_{name}"), i),
                 event,
                 |b, event| {
                     let processor =
@@ -201,13 +212,15 @@ fn bench_visibility_direct(c: &mut Criterion) {
 /// Benchmark different NIP-29 event types
 fn bench_nip29_operations(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let (_tmp_dir, database, db_sender, groups, admin_keys) = rt.block_on(setup_bench());
+    let (_tmp_dir, database, db_sender, crypto_sender, groups, admin_keys) =
+        rt.block_on(setup_bench());
 
     // Create test data
     rt.block_on(create_test_data(
         &groups,
         &database,
         &db_sender,
+        &crypto_sender,
         &admin_keys,
         3,
         5,
@@ -280,7 +293,7 @@ fn bench_nip29_operations(c: &mut Criterion) {
 
     for (name, event) in test_events {
         // Benchmark GroupsRelayLogic handle_event
-        group.bench_function(format!("groups_logic_{}", name), |b| {
+        group.bench_function(format!("groups_logic_{name}"), |b| {
             let processor = GroupsRelayProcessor::new(groups.clone(), admin_keys.public_key());
 
             b.to_async(&rt).iter(|| async {
@@ -306,13 +319,15 @@ fn bench_nip29_operations(c: &mut Criterion) {
 /// Benchmark group operations
 fn bench_group_operations(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let (_tmp_dir, database, db_sender, groups, admin_keys) = rt.block_on(setup_bench());
+    let (_tmp_dir, database, db_sender, crypto_sender, groups, admin_keys) =
+        rt.block_on(setup_bench());
 
     // Create test data
     rt.block_on(create_test_data(
         &groups,
         &database,
         &db_sender,
+        &crypto_sender,
         &admin_keys,
         10,
         20,

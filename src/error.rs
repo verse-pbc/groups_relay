@@ -115,7 +115,7 @@ impl From<NostrSdkError> for Error {
             }
             NostrSdkError::Json(json_error) => Error::nostr_sdk(json_error.to_string()),
             NostrSdkError::SharedState(state_error) => Error::nostr_sdk(state_error.to_string()),
-            _ => Error::nostr_sdk(format!("Unhandled Nostr SDK error: {:?}", error)),
+            _ => Error::nostr_sdk(format!("Unhandled Nostr SDK error: {error:?}")),
         }
     }
 }
@@ -123,7 +123,7 @@ impl From<NostrSdkError> for Error {
 impl From<DatabaseError> for Error {
     fn from(error: DatabaseError) -> Self {
         Error::Internal {
-            message: format!("Database error: {}", error),
+            message: format!("Database error: {error}"),
             backtrace: Backtrace::capture(),
         }
     }
@@ -202,14 +202,14 @@ impl Error {
             }
             Error::AuthRequired { message, .. } => {
                 let challenge_event = state.get_challenge_event();
-                let msg = format!("auth-required: {}", message);
+                let msg = format!("auth-required: {message}");
                 vec![
                     challenge_event,
                     RelayMessage::ok(event_id, false, Cow::Owned(msg)),
                 ]
             }
             Error::Restricted { message, .. } => {
-                let msg = format!("restricted: {}", message);
+                let msg = format!("restricted: {message}");
                 vec![RelayMessage::ok(event_id, false, Cow::Owned(msg))]
             }
             Error::Duplicate { message, .. } => {

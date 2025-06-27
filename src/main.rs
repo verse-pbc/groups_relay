@@ -107,7 +107,8 @@ async fn main() -> Result<()> {
     let crypto_sender = CryptoWorker::spawn(Arc::new(relay_keys.clone()), &task_tracker);
 
     // Create database with crypto sender
-    let (database, db_sender) = RelayDatabase::new(settings.db_path.clone(), crypto_sender)?;
+    let (database, db_sender) =
+        RelayDatabase::new(settings.db_path.clone(), crypto_sender.clone())?;
     let database = Arc::new(database);
     let groups = Arc::new(
         Groups::load_groups(
@@ -118,7 +119,15 @@ async fn main() -> Result<()> {
         .await?,
     );
 
-    server::run_server(settings, relay_keys, database, db_sender, groups).await?;
+    server::run_server(
+        settings,
+        relay_keys,
+        database,
+        db_sender,
+        crypto_sender,
+        groups,
+    )
+    .await?;
 
     Ok(())
 }

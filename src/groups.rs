@@ -43,7 +43,7 @@ impl Groups {
         // Get all scopes available in the database
         let scopes = match database.list_scopes().await {
             Ok(s) => s,
-            Err(e) => return Err(Error::internal(format!("Failed to list scopes: {}", e))),
+            Err(e) => return Err(Error::internal(format!("Failed to list scopes: {e}"))),
         };
 
         info!("Found {} scopes to load groups from", scopes.len());
@@ -109,8 +109,7 @@ impl Groups {
             Ok(events) => events,
             Err(e) => {
                 return Err(Error::notice(format!(
-                    "Error querying metadata events for scope {:?}: {}",
-                    scope, e
+                    "Error querying metadata events for scope {scope:?}: {e}"
                 )))
             }
         };
@@ -395,7 +394,7 @@ impl Groups {
             .await
         {
             Ok(events) => events,
-            Err(e) => return Err(Error::notice(format!("Error querying database: {}", e))),
+            Err(e) => return Err(Error::notice(format!("Error querying database: {e}"))),
         };
 
         if !deleted_events.is_empty() {
@@ -415,7 +414,7 @@ impl Groups {
             .await
         {
             Ok(events) => events,
-            Err(e) => return Err(Error::notice(format!("Error querying database: {}", e))),
+            Err(e) => return Err(Error::notice(format!("Error querying database: {e}"))),
         };
 
         let mut group = Group::new(&event)?;
@@ -751,8 +750,7 @@ impl Groups {
                 Ok(events) => events,
                 Err(e) => {
                     return Err(Error::notice(format!(
-                        "Error querying database for scope {:?}: {}",
-                        scope, e
+                        "Error querying database for scope {scope:?}: {e}"
                     )))
                 }
             };
@@ -820,8 +818,7 @@ impl Groups {
                 Ok(events) => events,
                 Err(e) => {
                     return Err(Error::notice(format!(
-                        "Error querying database for scope {:?}: {}",
-                        scope, e
+                        "Error querying database for scope {scope:?}: {e}"
                     )))
                 }
             };
@@ -891,7 +888,7 @@ impl Groups {
         pubkey: Option<PublicKey>,
     ) -> Result<(), GroupError> {
         let group = self.get_group(scope, group_id).ok_or_else(|| {
-            GroupError::NotFound(format!("Group {} not found in scope {:?}", group_id, scope))
+            GroupError::NotFound(format!("Group {group_id} not found in scope {scope:?}"))
         })?;
         // Get the value from the Ref, not the reference to Ref
         let group_value = group.value();

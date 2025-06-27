@@ -102,17 +102,17 @@ async fn test_join_request_generates_correct_events() {
     for (i, cmd) in commands.iter().enumerate() {
         match cmd {
             StoreCommand::SaveSignedEvent(event, scope) => {
-                println!("\nCommand {}: SaveSignedEvent", i);
+                println!("\nCommand {i}: SaveSignedEvent");
                 println!("  Kind: {}", event.kind);
                 println!("  Author: {}", event.pubkey);
-                println!("  Scope: {:?}", scope);
+                println!("  Scope: {scope:?}");
                 assert_eq!(event.kind, KIND_GROUP_USER_JOIN_REQUEST_9021);
             }
             StoreCommand::SaveUnsignedEvent(event, scope) => {
-                println!("\nCommand {}: SaveUnsignedEvent", i);
+                println!("\nCommand {i}: SaveUnsignedEvent");
                 println!("  Kind: {}", event.kind);
                 println!("  Pubkey: {}", event.pubkey);
-                println!("  Scope: {:?}", scope);
+                println!("  Scope: {scope:?}");
 
                 if event.kind == KIND_GROUP_MEMBERS_39002 {
                     found_members_event = true;
@@ -120,7 +120,7 @@ async fn test_join_request_generates_correct_events() {
                     for tag in event.tags.iter() {
                         if tag.kind() == TagKind::p() {
                             if let Some(pubkey) = tag.content() {
-                                println!("    - {}", pubkey);
+                                println!("    - {pubkey}");
                                 if pubkey == user_keys.public_key().to_string() {
                                     user_in_members = true;
                                 }
@@ -130,11 +130,11 @@ async fn test_join_request_generates_correct_events() {
                 } else if event.kind == KIND_GROUP_ADD_USER_9000 {
                     println!("  Add user event details:");
                     for tag in event.tags.iter() {
-                        println!("    Tag: {:?}", tag);
+                        println!("    Tag: {tag:?}");
                     }
                 }
             }
-            _ => println!("\nCommand {}: Other", i),
+            _ => println!("\nCommand {i}: Other"),
         }
     }
 

@@ -56,7 +56,7 @@ async fn test_validation_middleware_creation() {
     let middleware = ValidationMiddleware::new(relay_keys.public_key());
 
     // Test Debug implementation
-    let debug_str = format!("{:?}", middleware);
+    let debug_str = format!("{middleware:?}");
     assert!(debug_str.contains("ValidationMiddleware"));
 }
 
@@ -115,8 +115,7 @@ async fn test_event_without_h_tag_non_group_kind_allowed() {
         let result = middlewares[0].process_inbound(&mut ctx).await;
         assert!(
             result.is_ok(),
-            "Kind {:?} should be allowed without h tag",
-            kind
+            "Kind {kind:?} should be allowed without h tag"
         );
     }
 }
@@ -256,7 +255,7 @@ async fn test_all_group_event_kinds() {
                 assert_eq!(id, event_id);
                 assert!(!status);
             }
-            _ => panic!("Expected OK message with error for kind {:?}", kind),
+            _ => panic!("Expected OK message with error for kind {kind:?}"),
         }
 
         // Test with h tag - should pass
@@ -370,7 +369,7 @@ async fn test_middleware_clone() {
 
     // Test that Clone works
     let cloned = middleware.clone();
-    let debug_str = format!("{:?}", cloned);
+    let debug_str = format!("{cloned:?}");
     assert!(debug_str.contains("ValidationMiddleware"));
 }
 
