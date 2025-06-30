@@ -96,7 +96,6 @@ pub async fn run_server(
         .with_connection_counter(connection_counter.clone())
         .with_metrics(SampledMetricsHandler::new(10))
         .with_subscription_metrics(PrometheusSubscriptionMetricsHandler)
-        .with_middleware(ValidationMiddleware::new(relay_keys.public_key))
         .with_middleware(Nip09Middleware::new(database.clone()))
         .with_middleware(Nip40ExpirationMiddleware::new())
         .with_middleware(Nip70Middleware)
