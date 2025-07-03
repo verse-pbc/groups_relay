@@ -2261,6 +2261,7 @@ dependencies = [
 [[package]]
 name = "nostr_relay_builder"
 version = "0.4.1"
+source = "git+https://github.com/verse-pbc/nostr_relay_builder#712c152794c54a18ad63731f3836d28aae99162e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4292,6 +4293,7 @@ dependencies = [
 [[package]]
 name = "websocket_builder"
 version = "0.1.0-alpha.1"
+source = "git+https://github.com/verse-pbc/websocket_builder#71b21b4b48bf000fe52e979498931dc7b5f51a6d"
 dependencies = [
  "anyhow",
  "async-trait",
