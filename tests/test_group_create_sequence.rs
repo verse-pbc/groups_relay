@@ -1,24 +1,24 @@
-use groups_relay::RelayDatabase;
 use nostr_lmdb::Scope;
-use nostr_relay_builder::{
-    crypto_worker::CryptoWorker, DatabaseSender, StoreCommand, SubscriptionService,
-};
+use nostr_relay_builder::{DatabaseSender, RelayDatabase, StoreCommand, SubscriptionCoordinator, SubscriptionRegistry};
 use nostr_sdk::prelude::*;
 use nostr_sdk::RelayMessage;
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
+use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
+use websocket_builder::MessageSender;
 
 async fn setup_test() -> (TempDir, Arc<RelayDatabase>, DatabaseSender, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let admin_keys = Keys::generate();
     let task_tracker = TaskTracker::new();
-    let crypto_worker = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
-    let (database, db_sender) = RelayDatabase::new(
+
+    let (database, db_sender) = RelayDatabase::with_task_tracker(
         tmp_dir.path().join("test.db").to_string_lossy().to_string(),
-        crypto_worker,
+        Arc::new(admin_keys.clone()),
+        task_tracker,
     )
     .unwrap();
     let database = Arc::new(database);
@@ -37,14 +37,24 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
     )
     .await
     .unwrap();
+    // Create SubscriptionRegistry and SubscriptionCoordinator
+    let registry = Arc::new(SubscriptionRegistry::new(None));
     let (tx, _rx) = flume::bounded(10);
-    let subscription_service = SubscriptionService::new(
+    let message_sender = MessageSender::new(tx, 0);
+    let cancellation_token = CancellationToken::new();
+    
+    let subscription_coordinator = SubscriptionCoordinator::new(
         database.clone(),
         db_sender.clone(),
-        websocket_builder::MessageSender::new(tx, 0),
-    )
-    .await
-    .unwrap();
+        registry.clone(),
+        "test_conn".to_string(),
+        message_sender.clone(),
+        Some(admin_keys.public_key()),
+        Scope::Default,
+        cancellation_token.clone(),
+        None,
+        5000,
+    );
 
     // Create a group (kind 9007) - this will generate kind 39000 events
     let group_id = "test_group_123";
@@ -70,9 +80,9 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
             "Command {}: {:?}",
             i,
             match command {
-                StoreCommand::SaveSignedEvent(event, _) =>
+                StoreCommand::SaveSignedEvent(event, _, None) =>
                     format!("SaveSignedEvent(kind={}, id={})", event.kind, event.id),
-                StoreCommand::SaveUnsignedEvent(event, _) =>
+                StoreCommand::SaveUnsignedEvent(event, _, None) =>
                     format!("SaveUnsignedEvent(kind={}, id={:?})", event.kind, event.id),
                 _ => "Other".to_string(),
             }
@@ -81,7 +91,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
 
     // Execute the commands through the subscription manager (using the buffer)
     for command in create_commands {
-        subscription_service
+        subscription_coordinator
             .save_and_broadcast(command, None)
             .await
             .unwrap();
@@ -116,9 +126,9 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
             "Metadata Command {}: {:?}",
             i,
             match command {
-                StoreCommand::SaveSignedEvent(event, _) =>
+                StoreCommand::SaveSignedEvent(event, _, None) =>
                     format!("SaveSignedEvent(kind={}, id={})", event.kind, event.id),
-                StoreCommand::SaveUnsignedEvent(event, _) =>
+                StoreCommand::SaveUnsignedEvent(event, _, None) =>
                     format!("SaveUnsignedEvent(kind={}, id={:?})", event.kind, event.id),
                 _ => "Other".to_string(),
             }
@@ -128,7 +138,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
     // Execute the metadata commands through the subscription manager (using the buffer)
     println!("Executing metadata commands...");
     for command in metadata_commands {
-        subscription_service
+        subscription_coordinator
             .save_and_broadcast(command, None)
             .await
             .unwrap();
@@ -330,7 +340,7 @@ async fn test_same_timestamp_event_id_ordering() {
     let (tx1, rx1) = flume::bounded(1);
     db_sender
         .send_with_sender(
-            StoreCommand::SaveSignedEvent(Box::new(event1.clone()), Scope::Default),
+            StoreCommand::SaveSignedEvent(Box::new(event1.clone()), Scope::Default, None),
             Some(websocket_builder::MessageSender::new(tx1, 0)),
         )
         .await
@@ -348,7 +358,7 @@ async fn test_same_timestamp_event_id_ordering() {
     let (tx2, rx2) = flume::bounded(1);
     db_sender
         .send_with_sender(
-            StoreCommand::SaveSignedEvent(Box::new(event2.clone()), Scope::Default),
+            StoreCommand::SaveSignedEvent(Box::new(event2.clone()), Scope::Default, None),
             Some(websocket_builder::MessageSender::new(tx2, 0)),
         )
         .await

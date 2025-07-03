@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::Parser;
 use groups_relay::groups::{Groups, KIND_GROUP_METADATA_39000};
 use groups_relay::RelayDatabase;
-use nostr_relay_builder::crypto_worker::CryptoWorker;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tokio_util::task::TaskTracker;
@@ -66,12 +65,11 @@ async fn main() -> Result<()> {
     info!("Relay public key: {}", relay_pubkey);
     info!("Dry run: {}", args.dry_run);
 
-    // Create task tracker and crypto worker
+    // Create task tracker
     let task_tracker = TaskTracker::new();
-    let crypto_sender = CryptoWorker::spawn(Arc::new(relay_keys.clone()), &task_tracker);
 
     // Open database
-    let (database, db_sender) = RelayDatabase::new(&args.db_path, crypto_sender)?;
+    let (database, db_sender) = RelayDatabase::with_task_tracker(&args.db_path, Arc::new(relay_keys.clone()), task_tracker.clone())?;
     let database = Arc::new(database);
     task_tracker.close();
 

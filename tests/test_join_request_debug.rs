@@ -3,7 +3,7 @@ use groups_relay::groups::{
     KIND_GROUP_MEMBERS_39002, KIND_GROUP_USER_JOIN_REQUEST_9021,
 };
 use nostr_lmdb::Scope;
-use nostr_relay_builder::{crypto_worker::CryptoWorker, RelayDatabase, StoreCommand};
+use nostr_relay_builder::{RelayDatabase, StoreCommand};
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -17,14 +17,15 @@ async fn test_join_request_generates_correct_events() {
     let user_keys = Keys::generate();
 
     let task_tracker = TaskTracker::new();
-    let crypto_worker = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
-    let (db, _db_sender) = RelayDatabase::new(
+    
+    let (db, _db_sender) = RelayDatabase::with_task_tracker(
         temp_dir
             .path()
             .join("test.db")
             .to_string_lossy()
             .to_string(),
-        crypto_worker,
+        Arc::new(admin_keys.clone()),
+        task_tracker,
     )
     .unwrap();
     let db = Arc::new(db);
@@ -101,14 +102,14 @@ async fn test_join_request_generates_correct_events() {
     // Analyze the commands
     for (i, cmd) in commands.iter().enumerate() {
         match cmd {
-            StoreCommand::SaveSignedEvent(event, scope) => {
+            StoreCommand::SaveSignedEvent(event, scope, None) => {
                 println!("\nCommand {i}: SaveSignedEvent");
                 println!("  Kind: {}", event.kind);
                 println!("  Author: {}", event.pubkey);
                 println!("  Scope: {scope:?}");
                 assert_eq!(event.kind, KIND_GROUP_USER_JOIN_REQUEST_9021);
             }
-            StoreCommand::SaveUnsignedEvent(event, scope) => {
+            StoreCommand::SaveUnsignedEvent(event, scope, None) => {
                 println!("\nCommand {i}: SaveUnsignedEvent");
                 println!("  Kind: {}", event.kind);
                 println!("  Pubkey: {}", event.pubkey);

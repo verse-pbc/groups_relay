@@ -450,12 +450,12 @@ impl Groups {
 
         // Make sure we're using the correct scope for all StoreCommands
         let scope_clone = scope.clone(); // Minimize cloning where possible
-        let mut commands = vec![StoreCommand::SaveSignedEvent(event, scope_clone.clone())];
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event, scope_clone.clone(), None)];
         commands.extend(
             group
                 .generate_all_state_events(&self.relay_pubkey, &self.relay_url)
                 .into_iter()
-                .map(|e| StoreCommand::SaveUnsignedEvent(e, scope_clone.clone())),
+                .map(|e| StoreCommand::SaveUnsignedEvent(e, scope_clone.clone(), None)),
         );
 
         Ok(commands)
@@ -502,13 +502,13 @@ impl Groups {
         commands
             .into_iter()
             .map(|cmd| match cmd {
-                StoreCommand::SaveSignedEvent(e, _) => {
-                    StoreCommand::SaveSignedEvent(e, scope.clone())
+                StoreCommand::SaveSignedEvent(e, _, _) => {
+                    StoreCommand::SaveSignedEvent(e, scope.clone(), None)
                 }
-                StoreCommand::SaveUnsignedEvent(e, _) => {
-                    StoreCommand::SaveUnsignedEvent(e, scope.clone())
+                StoreCommand::SaveUnsignedEvent(e, _, _) => {
+                    StoreCommand::SaveUnsignedEvent(e, scope.clone(), None)
                 }
-                StoreCommand::DeleteEvents(f, _) => StoreCommand::DeleteEvents(f, scope.clone()),
+                StoreCommand::DeleteEvents(f, _, _) => StoreCommand::DeleteEvents(f, scope.clone(), None),
             })
             .collect()
     }
@@ -555,12 +555,12 @@ impl Groups {
         group.set_metadata(&event, &self.relay_pubkey)?;
 
         let scope_clone = scope.clone();
-        let mut commands = vec![StoreCommand::SaveSignedEvent(event, scope_clone.clone())];
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event, scope_clone.clone(), None)];
         commands.extend(
             group
                 .generate_metadata_events(&self.relay_pubkey, &self.relay_url)
                 .into_iter()
-                .map(|e| StoreCommand::SaveUnsignedEvent(e, scope_clone.clone())),
+                .map(|e| StoreCommand::SaveUnsignedEvent(e, scope_clone.clone(), None)),
         );
 
         Ok(commands)
@@ -582,7 +582,7 @@ impl Groups {
 
         // Regardless of whether the invite was newly created or already existed (created=false),
         // we save the event that attempted the creation, as per NIP-29.
-        Ok(vec![StoreCommand::SaveSignedEvent(event, scope.clone())])
+        Ok(vec![StoreCommand::SaveSignedEvent(event, scope.clone(), None)])
     }
 
     // Nothing - removing backward compatibility method
@@ -915,7 +915,7 @@ impl DerefMut for Groups {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr_relay_builder::{crypto_worker::CryptoWorker, RelayDatabase};
+    use nostr_relay_builder::RelayDatabase;
     use std::time::Instant;
     use tempfile::TempDir;
     use tokio_util::task::TaskTracker;
@@ -937,14 +937,14 @@ mod tests {
     async fn create_test_groups_with_db(admin_keys: &Keys) -> Groups {
         let temp_dir = TempDir::new().unwrap();
         let task_tracker = TaskTracker::new();
-        let crypto_sender = CryptoWorker::spawn(Arc::new(admin_keys.clone()), &task_tracker);
-        let (db, _db_sender) = RelayDatabase::new(
+        let (db, _db_sender) = RelayDatabase::with_task_tracker(
             temp_dir
                 .path()
                 .join("test.db")
                 .to_string_lossy()
                 .to_string(),
-            crypto_sender,
+            Arc::new(admin_keys.clone()),
+            task_tracker,
         )
         .unwrap();
         let db = Arc::new(db);
@@ -1470,7 +1470,7 @@ mod tests {
         assert_eq!(result.len(), 1, "Join request should be saved");
 
         match &result[0] {
-            StoreCommand::SaveSignedEvent(event, _) => {
+            StoreCommand::SaveSignedEvent(event, _, _) => {
                 assert_eq!(event.kind, KIND_GROUP_USER_JOIN_REQUEST_9021);
             }
             _ => panic!("Expected SaveSignedEvent command"),
@@ -1494,7 +1494,7 @@ mod tests {
         assert_eq!(result.len(), 1, "Join request should be saved");
 
         match &result[0] {
-            StoreCommand::SaveSignedEvent(event, _) => {
+            StoreCommand::SaveSignedEvent(event, _, _) => {
                 assert_eq!(event.kind, KIND_GROUP_USER_JOIN_REQUEST_9021);
             }
             _ => panic!("Expected SaveSignedEvent command"),
@@ -1536,11 +1536,11 @@ mod tests {
             "Should have 2 commands: save leave event and update members"
         );
         match &commands[0] {
-            StoreCommand::SaveSignedEvent(event, _) => assert_eq!(event.id, leave_event_id),
+            StoreCommand::SaveSignedEvent(event, _, _) => assert_eq!(event.id, leave_event_id),
             _ => panic!("First command should be SaveSignedEvent"),
         }
         match &commands[1] {
-            StoreCommand::SaveUnsignedEvent(event, _) => {
+            StoreCommand::SaveUnsignedEvent(event, _, _) => {
                 assert_eq!(event.kind, KIND_GROUP_MEMBERS_39002);
                 // Verify the member is not in the members list
                 assert!(!event

@@ -3,7 +3,7 @@
 use groups_relay::{
     config::Keys, groups::Groups, groups_event_processor::GroupsRelayProcessor, RelayDatabase,
 };
-use nostr_relay_builder::{crypto_worker::CryptoWorker, AuthConfig, RelayBuilder, RelayConfig};
+use nostr_relay_builder::{AuthConfig, RelayBuilder, RelayConfig};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio_util::task::TaskTracker;
@@ -16,10 +16,10 @@ async fn test_groups_relay_with_nostr_relay_builder() -> anyhow::Result<()> {
 
     let keys = Keys::generate();
     let task_tracker = TaskTracker::new();
-    let crypto_worker = CryptoWorker::spawn(Arc::new(keys.clone()), &task_tracker);
+    
 
     // groups_relay's database is used for groups management
-    let (groups_database, db_sender) = RelayDatabase::new(&db_path, crypto_worker.clone())?;
+    let (groups_database, db_sender) = RelayDatabase::with_task_tracker(&db_path, Arc::new(keys.clone()), task_tracker.clone())?;
     let groups_database = Arc::new(groups_database);
 
     let groups = Arc::new(
@@ -33,7 +33,7 @@ async fn test_groups_relay_with_nostr_relay_builder() -> anyhow::Result<()> {
 
     let relay_config = RelayConfig::new(
         "wss://test.groups.relay",
-        (groups_database.clone(), db_sender, crypto_worker),
+        (groups_database.clone(), db_sender, nostr_relay_builder::CryptoHelper::new(Arc::new(keys.clone()))),
         keys.clone(),
     )
     .with_subdomains(2)
@@ -69,26 +69,27 @@ fn test_store_command_compatibility() {
 
     // Create groups_relay StoreCommand
     let groups_cmd =
-        groups_relay::StoreCommand::SaveSignedEvent(Box::new(event.clone()), scope.clone());
+        groups_relay::StoreCommand::SaveSignedEvent(Box::new(event.clone()), scope.clone(), None);
 
     // Convert to nostr_relay_builder StoreCommand
     let relay_cmd = match groups_cmd {
-        groups_relay::StoreCommand::SaveSignedEvent(e, s) => {
-            nostr_relay_builder::StoreCommand::SaveSignedEvent(e, s)
+        groups_relay::StoreCommand::SaveSignedEvent(e, s, handler) => {
+            nostr_relay_builder::StoreCommand::SaveSignedEvent(e, s, handler)
         }
-        groups_relay::StoreCommand::SaveUnsignedEvent(e, s) => {
-            nostr_relay_builder::StoreCommand::SaveUnsignedEvent(e, s)
+        groups_relay::StoreCommand::SaveUnsignedEvent(e, s, handler) => {
+            nostr_relay_builder::StoreCommand::SaveUnsignedEvent(e, s, handler)
         }
-        groups_relay::StoreCommand::DeleteEvents(f, s) => {
-            nostr_relay_builder::StoreCommand::DeleteEvents(f, s)
+        groups_relay::StoreCommand::DeleteEvents(f, s, handler) => {
+            nostr_relay_builder::StoreCommand::DeleteEvents(f, s, handler)
         }
     };
 
     // Verify the conversion worked
     match relay_cmd {
-        nostr_relay_builder::StoreCommand::SaveSignedEvent(e, s) => {
+        nostr_relay_builder::StoreCommand::SaveSignedEvent(e, s, handler) => {
             assert_eq!(e.id.to_string(), event.id.to_string());
             assert!(matches!(s, Scope::Default));
+            assert!(handler.is_none());
         }
         _ => panic!("Unexpected command type"),
     }

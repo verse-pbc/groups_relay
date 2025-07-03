@@ -26,5 +26,4 @@ pub use groups::{Group, Groups, KIND_GROUP_USER_JOIN_REQUEST_9021};
 pub use nostr_relay_builder::Error;
 pub use nostr_relay_builder::RelayDatabase;
 pub use nostr_relay_builder::StoreCommand;
-pub use nostr_relay_builder::SubscriptionService as SubscriptionManager;
 pub use server::ServerState;

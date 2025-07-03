@@ -11,7 +11,7 @@ use nostr_relay_builder::NostrConnectionState;
 use nostr_sdk::prelude::*;
 use std::borrow::Cow;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 use websocket_builder::{InboundContext, Middleware};
 extern crate flume;
 

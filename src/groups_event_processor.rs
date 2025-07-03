@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use nostr_relay_builder::{EventContext, EventProcessor, Result, StoreCommand};
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 use tracing::debug;
 
 /// Groups event processor implementing NIP-29 (Relay-based Groups) functionality.
@@ -174,6 +174,7 @@ impl EventProcessor for GroupsRelayProcessor {
             return Ok(vec![StoreCommand::SaveSignedEvent(
                 Box::new(event),
                 subdomain,
+                None,
             )]);
         }
 
@@ -247,7 +248,7 @@ impl EventProcessor for GroupsRelayProcessor {
 
             _ => {
                 debug!(target: "groups_relay_logic", "Processing non-group event: kind={}, id={}", event.kind, event.id);
-                vec![StoreCommand::SaveSignedEvent(Box::new(event), subdomain)]
+                vec![StoreCommand::SaveSignedEvent(Box::new(event), subdomain, None)]
             }
         };
 
@@ -360,7 +361,7 @@ mod tests {
             .unwrap();
         assert_eq!(commands.len(), 1);
         match &commands[0] {
-            StoreCommand::SaveSignedEvent(saved_event, scope) => {
+            StoreCommand::SaveSignedEvent(saved_event, scope, _) => {
                 assert_eq!(saved_event.id, event.id);
                 assert_eq!(*scope, Scope::Default);
             }

@@ -4,9 +4,7 @@ use std::time::Instant;
 use tempfile::TempDir;
 
 use crate::group::Group;
-use nostr_relay_builder::{
-    crypto_worker::CryptoWorker, DatabaseSender, NostrConnectionState, RelayDatabase,
-};
+use nostr_relay_builder::{DatabaseSender, NostrConnectionState, RelayDatabase};
 use tokio_util::task::TaskTracker;
 
 pub async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
@@ -14,9 +12,8 @@ pub async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let db_path = tmp_dir.path().join("test.db");
     let keys = Keys::generate();
     let task_tracker = TaskTracker::new();
-    let crypto_sender = CryptoWorker::spawn(Arc::new(keys.clone()), &task_tracker);
     let (database, _db_sender) =
-        RelayDatabase::new(db_path.to_str().unwrap(), crypto_sender).unwrap();
+        RelayDatabase::with_task_tracker(db_path.to_str().unwrap(), Arc::new(keys.clone()), task_tracker).unwrap();
     let database = Arc::new(database);
     (tmp_dir, database, keys)
 }
@@ -26,9 +23,8 @@ pub async fn setup_test_with_sender() -> (TempDir, Arc<RelayDatabase>, DatabaseS
     let db_path = tmp_dir.path().join("test.db");
     let keys = Keys::generate();
     let task_tracker = TaskTracker::new();
-    let crypto_sender = CryptoWorker::spawn(Arc::new(keys.clone()), &task_tracker);
     let (database, db_sender) =
-        RelayDatabase::new(db_path.to_str().unwrap(), crypto_sender).unwrap();
+        RelayDatabase::with_task_tracker(db_path.to_str().unwrap(), Arc::new(keys.clone()), task_tracker).unwrap();
     let database = Arc::new(database);
     (tmp_dir, database, db_sender, keys)
 }

@@ -247,7 +247,7 @@ impl Error {
         CM: Send + Sync + 'static,
     {
         let relay_messages: Vec<RelayMessage<'static>> = {
-            let mut state = ctx.state.write().await;
+            let mut state = ctx.state.write();
             match client_message_id {
                 ClientMessageId::Event(event_id) => {
                     self.to_relay_messages_from_event(&mut state, event_id)

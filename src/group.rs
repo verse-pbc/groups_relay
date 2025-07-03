@@ -529,9 +529,9 @@ impl Group {
             Filter::new().custom_tag(SingleLetterTag::lowercase(Alphabet::D), self.id.to_string());
 
         Ok(vec![
-            StoreCommand::DeleteEvents(non_addressable_filter, Scope::Default),
-            StoreCommand::DeleteEvents(addressable_filter, Scope::Default),
-            StoreCommand::SaveSignedEvent(delete_group_request_event, Scope::Default),
+            StoreCommand::DeleteEvents(non_addressable_filter, Scope::Default, None),
+            StoreCommand::DeleteEvents(addressable_filter, Scope::Default, None),
+            StoreCommand::SaveSignedEvent(delete_group_request_event, Scope::Default, None),
         ])
     }
 
@@ -580,8 +580,8 @@ impl Group {
         let filter = Filter::new().ids(event_ids);
 
         Ok(vec![
-            StoreCommand::DeleteEvents(filter, Scope::Default),
-            StoreCommand::SaveSignedEvent(delete_request_event, Scope::Default),
+            StoreCommand::DeleteEvents(filter, Scope::Default, None),
+            StoreCommand::SaveSignedEvent(delete_request_event, Scope::Default, None),
         ])
     }
 
@@ -613,16 +613,18 @@ impl Group {
 
         self.add_members(group_members)?;
 
-        let mut events = vec![StoreCommand::SaveSignedEvent(members_event, Scope::Default)];
+        let mut events = vec![StoreCommand::SaveSignedEvent(members_event, Scope::Default, None)];
         let admins_event = self.generate_admins_event(relay_pubkey);
         events.push(StoreCommand::SaveUnsignedEvent(
             admins_event,
             Scope::Default,
+            None,
         ));
         let members_event = self.generate_members_event(relay_pubkey);
         events.push(StoreCommand::SaveUnsignedEvent(
             members_event,
             Scope::Default,
+            None,
         ));
 
         Ok(events)
@@ -715,18 +717,20 @@ impl Group {
         self.update_roles();
         self.update_state();
 
-        let mut events = vec![StoreCommand::SaveSignedEvent(members_event, Scope::Default)];
+        let mut events = vec![StoreCommand::SaveSignedEvent(members_event, Scope::Default, None)];
         if removed_admins {
             let admins_event = self.generate_admins_event(relay_pubkey);
             events.push(StoreCommand::SaveUnsignedEvent(
                 admins_event,
                 Scope::Default,
+                None,
             ));
         }
         let members_event = self.generate_members_event(relay_pubkey);
         events.push(StoreCommand::SaveUnsignedEvent(
             members_event,
             Scope::Default,
+            None,
         ));
 
         Ok(events)
@@ -801,9 +805,9 @@ impl Group {
         let members_event = self.generate_members_event(relay_pubkey);
 
         Ok(vec![
-            StoreCommand::SaveSignedEvent(event, Scope::Default),
-            StoreCommand::SaveUnsignedEvent(roles_event, Scope::Default),
-            StoreCommand::SaveUnsignedEvent(members_event, Scope::Default),
+            StoreCommand::SaveSignedEvent(event, Scope::Default, None),
+            StoreCommand::SaveUnsignedEvent(roles_event, Scope::Default, None),
+            StoreCommand::SaveUnsignedEvent(members_event, Scope::Default, None),
         ])
     }
 
@@ -990,7 +994,7 @@ impl Group {
             return Err(Error::restricted("Only admins can post in broadcast mode"));
         }
 
-        let mut commands = vec![StoreCommand::SaveSignedEvent(event, Scope::Default)];
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event, Scope::Default, None)];
 
         // For private and closed groups, only members can post
         if self.metadata.private && self.metadata.closed && !is_member {
@@ -1003,7 +1007,7 @@ impl Group {
             commands.extend(
                 self.generate_membership_events(relay_pubkey)
                     .into_iter()
-                    .map(|e| StoreCommand::SaveUnsignedEvent(e, Scope::Default)),
+                    .map(|e| StoreCommand::SaveUnsignedEvent(e, Scope::Default, None)),
             );
         } else if !is_member {
             // For closed groups, non-members can't post
@@ -1034,7 +1038,7 @@ impl Group {
             )));
         }
 
-        let mut commands = vec![StoreCommand::SaveSignedEvent(event, Scope::Default)];
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event, Scope::Default, None)];
         // println!("[create_join_request_commands] Added SaveSignedEvent to commands");
 
         if auto_joined {
@@ -1050,7 +1054,7 @@ impl Group {
             commands.extend(
                 membership_events
                     .into_iter()
-                    .map(|e| StoreCommand::SaveUnsignedEvent(e, Scope::Default)),
+                    .map(|e| StoreCommand::SaveUnsignedEvent(e, Scope::Default, None)),
             );
             // println!(
             //     "[create_join_request_commands] Extended commands, now have {} total",
@@ -1131,7 +1135,7 @@ impl Group {
         self.update_state();
 
         if removed {
-            let mut commands = vec![StoreCommand::SaveSignedEvent(event, Scope::Default)];
+            let mut commands = vec![StoreCommand::SaveSignedEvent(event, Scope::Default, None)];
 
             // If the user was an admin, also generate an updated admins event
             if is_admin {
@@ -1139,6 +1143,7 @@ impl Group {
                 commands.push(StoreCommand::SaveUnsignedEvent(
                     admins_event,
                     Scope::Default,
+                    None,
                 ));
             }
 
@@ -1147,6 +1152,7 @@ impl Group {
             commands.push(StoreCommand::SaveUnsignedEvent(
                 members_event,
                 Scope::Default,
+                None,
             ));
 
             Ok(commands)
@@ -2176,7 +2182,7 @@ mod tests {
 
         // Check the delete command
         match &commands[0] {
-            StoreCommand::DeleteEvents(filter, _) => {
+            StoreCommand::DeleteEvents(filter, _, None) => {
                 // Check that the filter would match the deleted event
                 assert!(filter.ids.as_ref().unwrap().contains(&event.id));
             }
@@ -2185,7 +2191,7 @@ mod tests {
 
         // Check the save delete request event command
         match &commands[1] {
-            StoreCommand::SaveSignedEvent(saved_event, _) => {
+            StoreCommand::SaveSignedEvent(saved_event, _, None) => {
                 assert_eq!(saved_event.id, delete_event.id);
                 assert_eq!(saved_event.kind, KIND_GROUP_DELETE_EVENT_9005);
             }

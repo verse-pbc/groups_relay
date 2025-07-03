@@ -15,7 +15,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use groups_relay::{config, groups::Groups, server, RelayDatabase};
-use nostr_relay_builder::crypto_worker::CryptoWorker;
 use nostr_sdk::RelayUrl;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -103,12 +102,9 @@ async fn main() -> Result<()> {
     // Create task tracker for managing background tasks
     let task_tracker = TaskTracker::new();
 
-    // Spawn crypto workers
-    let crypto_sender = CryptoWorker::spawn(Arc::new(relay_keys.clone()), &task_tracker);
-
-    // Create database with crypto sender
+    // Create database (CryptoHelper is created internally)
     let (database, db_sender) =
-        RelayDatabase::new(settings.db_path.clone(), crypto_sender.clone())?;
+        RelayDatabase::with_task_tracker(settings.db_path.clone(), Arc::new(relay_keys.clone()), task_tracker.clone())?;
     let database = Arc::new(database);
     let groups = Arc::new(
         Groups::load_groups(
@@ -124,7 +120,6 @@ async fn main() -> Result<()> {
         relay_keys,
         database,
         db_sender,
-        crypto_sender,
         groups,
     )
     .await?;

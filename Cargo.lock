@@ -1287,6 +1287,7 @@ dependencies = [
  "nostr-sdk",
  "nostr_relay_builder",
  "once_cell",
+ "parking_lot",
  "pretty_assertions",
  "rand 0.8.5",
  "serde",
@@ -2260,7 +2261,6 @@ dependencies = [
 [[package]]
 name = "nostr_relay_builder"
 version = "0.4.1"
-source = "git+https://github.com/verse-pbc/nostr_relay_builder#8acd911d2c8a5dd24f373b52b93cf587bc246d9f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2268,6 +2268,7 @@ dependencies = [
  "axum-server",
  "chrono",
  "clap",
+ "dashmap",
  "flume",
  "futures-util",
  "indicatif",
@@ -2276,6 +2277,7 @@ dependencies = [
  "nostr-lmdb",
  "nostr-sdk",
  "once_cell",
+ "parking_lot",
  "rand 0.8.5",
  "rustls",
  "serde",
@@ -4290,7 +4292,6 @@ dependencies = [
 [[package]]
 name = "websocket_builder"
 version = "0.1.0-alpha.1"
-source = "git+https://github.com/verse-pbc/websocket_builder#57cb7062ee5c0ecb22098fe703c270098821dfca"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4298,6 +4299,7 @@ dependencies = [
  "flume",
  "futures-util",
  "hickory-resolver",
+ "parking_lot",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",

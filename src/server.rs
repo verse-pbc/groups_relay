@@ -2,13 +2,13 @@ use crate::{
     app_state::HttpServerState, config, groups::Groups,
     groups_event_processor::GroupsRelayProcessor, handler, metrics,
     metrics_handler::PrometheusSubscriptionMetricsHandler,
-    sampled_metrics_handler::SampledMetricsHandler, validation_middleware::ValidationMiddleware,
+    sampled_metrics_handler::SampledMetricsHandler,
     RelayDatabase,
 };
 use anyhow::Result;
 use axum::{routing::get, Router};
 use nostr_relay_builder::{
-    crypto_worker::CryptoSender, AuthConfig, Nip09Middleware, Nip40ExpirationMiddleware,
+    AuthConfig, CryptoHelper, Nip09Middleware, Nip40ExpirationMiddleware,
     Nip70Middleware, RelayBuilder, RelayConfig, RelayInfo, WebSocketConfig,
 };
 use std::net::SocketAddr;
@@ -35,7 +35,6 @@ pub async fn run_server(
     relay_keys: config::Keys,
     database: Arc<RelayDatabase>,
     db_sender: nostr_relay_builder::DatabaseSender,
-    crypto_sender: CryptoSender,
     groups: Arc<Groups>,
 ) -> Result<()> {
     // Setup metrics
@@ -59,9 +58,10 @@ pub async fn run_server(
         max_connection_time: settings.websocket.max_connection_time.map(|d| d.as_secs()),
     };
 
+    let crypto_helper = CryptoHelper::new(Arc::new(relay_keys.clone()));
     let relay_config = RelayConfig::new(
         settings.relay_url.clone(),
-        (database.clone(), db_sender, crypto_sender),
+        (database.clone(), db_sender, crypto_helper),
         relay_keys.clone(),
     )
     .with_subdomains_from_url(&settings.relay_url)

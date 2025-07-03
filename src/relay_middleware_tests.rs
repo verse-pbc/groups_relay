@@ -13,10 +13,11 @@ mod tests {
     use nostr_lmdb::Scope;
     use nostr_relay_builder::{
         EventContext, EventProcessor, NostrConnectionState, RelayDatabase, RelayMiddleware,
+        SubscriptionRegistry,
     };
     use nostr_sdk::prelude::*;
     use std::sync::Arc;
-    use tokio::sync::RwLock;
+    use parking_lot::RwLock;
 
     fn empty_state() -> Arc<RwLock<()>> {
         Arc::new(RwLock::new(()))
@@ -38,7 +39,8 @@ mod tests {
         );
 
         let groups_processor = GroupsRelayProcessor::new(groups, admin_pubkey);
-        RelayMiddleware::new(groups_processor, admin_pubkey, database)
+        let registry = Arc::new(SubscriptionRegistry::new(None));
+        RelayMiddleware::new(groups_processor, admin_pubkey, database, registry, 5000)
     }
 
     #[tokio::test]
@@ -74,7 +76,7 @@ mod tests {
         // Should allow unmanaged group events
         assert_eq!(commands.len(), 1);
         match &commands[0] {
-            StoreCommand::SaveSignedEvent(e, _) => assert_eq!(e.id, event.id),
+            StoreCommand::SaveSignedEvent(e, _, _) => assert_eq!(e.id, event.id),
             _ => panic!("Expected SaveSignedEvent"),
         }
     }
@@ -152,7 +154,7 @@ mod tests {
         // Should save non-group events normally
         assert_eq!(commands.len(), 1);
         match &commands[0] {
-            StoreCommand::SaveSignedEvent(e, scope) => {
+            StoreCommand::SaveSignedEvent(e, scope, _) => {
                 assert_eq!(e.id, event.id);
                 assert_eq!(*scope, Scope::Default);
             }
@@ -1037,7 +1039,7 @@ mod tests {
         // Should accept non-group events
         assert_eq!(commands.len(), 1);
         match &commands[0] {
-            StoreCommand::SaveSignedEvent(e, _) => assert_eq!(e.id, event.id),
+            StoreCommand::SaveSignedEvent(e, _, _) => assert_eq!(e.id, event.id),
             _ => panic!("Expected SaveSignedEvent"),
         }
     }
