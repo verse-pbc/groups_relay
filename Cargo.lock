@@ -390,7 +390,7 @@ dependencies = [
  "bitflags 2.9.1",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "lazy_static",
  "lazycell",
  "log",
@@ -1875,15 +1875,6 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
@@ -2261,7 +2252,7 @@ dependencies = [
 [[package]]
 name = "nostr_relay_builder"
 version = "0.4.1"
-source = "git+https://github.com/verse-pbc/nostr_relay_builder#712c152794c54a18ad63731f3836d28aae99162e"
+source = "git+https://github.com/verse-pbc/nostr_relay_builder#58f52a8f60acbc68ddbd5d298071b2f99032fdd8"
 dependencies = [
  "anyhow",
  "async-trait",
