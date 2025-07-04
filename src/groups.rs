@@ -134,7 +134,11 @@ impl Groups {
                 debug!("[{}] Processing metadata in scope {:?}", group_id, scope);
                 groups
                     .entry(group_id.to_string())
-                    .or_insert_with(|| Group::from(&event))
+                    .or_insert_with(|| {
+                        let mut g = Group::from(&event);
+                        g.scope = scope.clone();
+                        g
+                    })
                     .load_metadata_from_event(&event)?;
             } else if event.kind == KIND_GROUP_ADMINS_39001
                 || event.kind == KIND_GROUP_MEMBERS_39002
@@ -142,7 +146,11 @@ impl Groups {
                 debug!("[{}] Processing members in scope {:?}", group_id, scope);
                 groups
                     .entry(group_id.to_string())
-                    .or_insert_with(|| Group::from(&event))
+                    .or_insert_with(|| {
+                        let mut g = Group::from(&event);
+                        g.scope = scope.clone();
+                        g
+                    })
                     .load_members_from_event(&event)?;
             }
         }
@@ -417,7 +425,7 @@ impl Groups {
             Err(e) => return Err(Error::notice(format!("Error querying database: {e}"))),
         };
 
-        let mut group = Group::new(&event)?;
+        let mut group = Group::new(&event, scope.clone())?;
 
         // Only allow migrating unmanaged groups to managed ones if creator is relay admin
         if !previous_events.is_empty() && event.pubkey != self.relay_pubkey {
@@ -449,13 +457,12 @@ impl Groups {
         metrics::groups_created().increment(1);
 
         // Make sure we're using the correct scope for all StoreCommands
-        let scope_clone = scope.clone(); // Minimize cloning where possible
-        let mut commands = vec![StoreCommand::SaveSignedEvent(event, scope_clone.clone(), None)];
+        let mut commands = vec![StoreCommand::SaveSignedEvent(event, scope.clone(), None)];
         commands.extend(
             group
-                .generate_all_state_events(&self.relay_pubkey, &self.relay_url)
+                .generate_all_state_events(&self.relay_pubkey, &self.relay_url)?
                 .into_iter()
-                .map(|e| StoreCommand::SaveUnsignedEvent(e, scope_clone.clone(), None)),
+                .map(|e| StoreCommand::SaveUnsignedEvent(e, scope.clone(), None)),
         );
 
         Ok(commands)
@@ -470,11 +477,8 @@ impl Groups {
             .find_group_from_event_mut(&event, scope)?
             .ok_or(Error::notice("[SetRoles] Group not found"))?;
 
-        // Use the passed scope for store commands
-        let result = group.set_roles(event, &self.relay_pubkey)?;
-
-        // Update the scope for each StoreCommand
-        Ok(Self::update_scope_in_commands(result, scope))
+        // Group now uses the correct scope internally
+        group.set_roles(event, &self.relay_pubkey)
     }
 
     // Nothing - removing backward compatibility method
@@ -488,30 +492,11 @@ impl Groups {
             .find_group_from_event_mut(&event, scope)?
             .ok_or(Error::notice("[PutUser] Group not found"))?;
 
-        // Use the passed scope for store commands
-        let result = group.add_members_from_event(event, &self.relay_pubkey)?;
-
-        // Update the scope for each StoreCommand
-        Ok(Self::update_scope_in_commands(result, scope))
+        // Group now uses the correct scope internally
+        group.add_members_from_event(event, &self.relay_pubkey)
     }
 
     // Nothing - removing backward compatibility method
-
-    // Helper method to update scopes in StoreCommands
-    fn update_scope_in_commands(commands: Vec<StoreCommand>, scope: &Scope) -> Vec<StoreCommand> {
-        commands
-            .into_iter()
-            .map(|cmd| match cmd {
-                StoreCommand::SaveSignedEvent(e, _, _) => {
-                    StoreCommand::SaveSignedEvent(e, scope.clone(), None)
-                }
-                StoreCommand::SaveUnsignedEvent(e, _, _) => {
-                    StoreCommand::SaveUnsignedEvent(e, scope.clone(), None)
-                }
-                StoreCommand::DeleteEvents(f, _, _) => StoreCommand::DeleteEvents(f, scope.clone(), None),
-            })
-            .collect()
-    }
 
     pub fn handle_remove_user(
         &self,
@@ -522,8 +507,7 @@ impl Groups {
             .find_group_from_event_mut(&event, scope)?
             .ok_or(Error::notice("[RemoveUser] Group not found"))?;
 
-        let result = group.remove_members(event, &self.relay_pubkey)?;
-        Ok(Self::update_scope_in_commands(result, scope))
+        group.remove_members(event, &self.relay_pubkey)
     }
 
     // Nothing - removing backward compatibility method
@@ -537,8 +521,7 @@ impl Groups {
             .find_group_from_event_mut(&event, scope)?
             .ok_or(Error::notice("[GroupManagement] Group not found"))?;
 
-        let result = group.handle_group_content(event, &self.relay_pubkey)?;
-        Ok(Self::update_scope_in_commands(result, scope))
+        group.handle_group_content(event, &self.relay_pubkey)
     }
 
     // Nothing - removing backward compatibility method
@@ -555,7 +538,11 @@ impl Groups {
         group.set_metadata(&event, &self.relay_pubkey)?;
 
         let scope_clone = scope.clone();
-        let mut commands = vec![StoreCommand::SaveSignedEvent(event, scope_clone.clone(), None)];
+        let mut commands = vec![StoreCommand::SaveSignedEvent(
+            event,
+            scope_clone.clone(),
+            None,
+        )];
         commands.extend(
             group
                 .generate_metadata_events(&self.relay_pubkey, &self.relay_url)
@@ -582,7 +569,11 @@ impl Groups {
 
         // Regardless of whether the invite was newly created or already existed (created=false),
         // we save the event that attempted the creation, as per NIP-29.
-        Ok(vec![StoreCommand::SaveSignedEvent(event, scope.clone(), None)])
+        Ok(vec![StoreCommand::SaveSignedEvent(
+            event,
+            scope.clone(),
+            None,
+        )])
     }
 
     // Nothing - removing backward compatibility method
@@ -601,10 +592,7 @@ impl Groups {
             result = group.join_request(event, &self.relay_pubkey);
         }
 
-        match result {
-            Ok(commands) => Ok(Self::update_scope_in_commands(commands, scope)),
-            Err(e) => Err(e),
-        }
+        result
     }
 
     // Nothing - removing backward compatibility method
@@ -618,8 +606,7 @@ impl Groups {
             .find_group_from_event_mut(&event, scope)?
             .ok_or(Error::notice("[LeaveRequest] Group not found"))?;
 
-        let result = group.leave_request(event, &self.relay_pubkey)?;
-        Ok(Self::update_scope_in_commands(result, scope))
+        group.leave_request(event, &self.relay_pubkey)
     }
 
     // Nothing - removing backward compatibility method
@@ -633,8 +620,7 @@ impl Groups {
             .find_group_from_event_mut(&event, scope)?
             .ok_or_else(|| Error::notice("Group not found for this group content"))?;
 
-        let commands = group.delete_event_request(event, &self.relay_pubkey)?;
-        Ok(Self::update_scope_in_commands(commands, scope))
+        group.delete_event_request(event, &self.relay_pubkey)
     }
 
     // Nothing - removing backward compatibility method
@@ -657,7 +643,7 @@ impl Groups {
         let key = (scope.clone(), group_id);
         self.groups.remove(&key);
 
-        Ok(Self::update_scope_in_commands(commands, scope))
+        Ok(commands)
     }
 
     // Nothing - removing backward compatibility method

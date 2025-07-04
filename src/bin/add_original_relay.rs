@@ -69,7 +69,11 @@ async fn main() -> Result<()> {
     let task_tracker = TaskTracker::new();
 
     // Open database
-    let (database, db_sender) = RelayDatabase::with_task_tracker(&args.db_path, Arc::new(relay_keys.clone()), task_tracker.clone())?;
+    let (database, db_sender) = RelayDatabase::with_task_tracker(
+        &args.db_path,
+        Arc::new(relay_keys.clone()),
+        task_tracker.clone(),
+    )?;
     let database = Arc::new(database);
     task_tracker.close();
 

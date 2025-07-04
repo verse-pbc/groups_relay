@@ -134,7 +134,7 @@ async fn test_group_creator_remains_admin_after_members_list() {
     .unwrap();
 
     // Create group and verify creator is admin
-    let mut group = Group::new(&create_event).unwrap();
+    let mut group = Group::new(&create_event, nostr_lmdb::Scope::Default).unwrap();
     assert!(
         group.is_admin(&creator_keys.public_key()),
         "Creator should be admin immediately after group creation"
@@ -144,7 +144,7 @@ async fn test_group_creator_remains_admin_after_members_list() {
     group.add_pubkey(other_member_keys.public_key()).unwrap();
 
     // Generate the events that would be created by the backend
-    let admins_unsigned = group.generate_admins_event(&relay_keys.public_key());
+    let admins_unsigned = group.generate_admins_event(&relay_keys.public_key()).unwrap();
     let members_unsigned = group.generate_members_event(&relay_keys.public_key());
 
     // Convert UnsignedEvent to Event
@@ -313,10 +313,10 @@ async fn test_admins_event_only_contains_admin_roles() {
         .sign_with_keys(&creator_keys)
         .unwrap();
 
-    let group = Group::new(&create_event).unwrap();
+    let group = Group::new(&create_event, nostr_lmdb::Scope::Default).unwrap();
 
     // Generate the 39001 event
-    let admins_unsigned = group.generate_admins_event(&relay_keys.public_key());
+    let admins_unsigned = group.generate_admins_event(&relay_keys.public_key()).unwrap();
     let admins_event = admins_unsigned.sign(&relay_keys).await.unwrap();
 
     // Check the tags

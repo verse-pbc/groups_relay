@@ -12,8 +12,12 @@ pub async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let db_path = tmp_dir.path().join("test.db");
     let keys = Keys::generate();
     let task_tracker = TaskTracker::new();
-    let (database, _db_sender) =
-        RelayDatabase::with_task_tracker(db_path.to_str().unwrap(), Arc::new(keys.clone()), task_tracker).unwrap();
+    let (database, _db_sender) = RelayDatabase::with_task_tracker(
+        db_path.to_str().unwrap(),
+        Arc::new(keys.clone()),
+        task_tracker,
+    )
+    .unwrap();
     let database = Arc::new(database);
     (tmp_dir, database, keys)
 }
@@ -23,8 +27,12 @@ pub async fn setup_test_with_sender() -> (TempDir, Arc<RelayDatabase>, DatabaseS
     let db_path = tmp_dir.path().join("test.db");
     let keys = Keys::generate();
     let task_tracker = TaskTracker::new();
-    let (database, db_sender) =
-        RelayDatabase::with_task_tracker(db_path.to_str().unwrap(), Arc::new(keys.clone()), task_tracker).unwrap();
+    let (database, db_sender) = RelayDatabase::with_task_tracker(
+        db_path.to_str().unwrap(),
+        Arc::new(keys.clone()),
+        task_tracker,
+    )
+    .unwrap();
     let database = Arc::new(database);
     (tmp_dir, database, db_sender, keys)
 }
@@ -64,7 +72,7 @@ pub async fn create_test_group(admin_keys: &Keys) -> (Group, String) {
         vec![Tag::custom(TagKind::h(), [group_id])],
     )
     .await;
-    let group = Group::new(&event).unwrap();
+    let group = Group::new(&event, nostr_lmdb::Scope::Default).unwrap();
     (group, group_id.to_string())
 }
 

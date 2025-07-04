@@ -1,5 +1,7 @@
 use nostr_lmdb::Scope;
-use nostr_relay_builder::{DatabaseSender, RelayDatabase, StoreCommand, SubscriptionCoordinator, SubscriptionRegistry};
+use nostr_relay_builder::{
+    DatabaseSender, RelayDatabase, StoreCommand, SubscriptionCoordinator, SubscriptionRegistry,
+};
 use nostr_sdk::prelude::*;
 use nostr_sdk::RelayMessage;
 use std::sync::Arc;
@@ -42,7 +44,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
     let (tx, _rx) = flume::bounded(10);
     let message_sender = MessageSender::new(tx, 0);
     let cancellation_token = CancellationToken::new();
-    
+
     let subscription_coordinator = SubscriptionCoordinator::new(
         database.clone(),
         db_sender.clone(),
@@ -341,7 +343,11 @@ async fn test_same_timestamp_event_id_ordering() {
     db_sender
         .send_with_sender(
             StoreCommand::SaveSignedEvent(Box::new(event1.clone()), Scope::Default, None),
-            Some(nostr_relay_builder::subscription_coordinator::ResponseHandler::MessageSender(websocket_builder::MessageSender::new(tx1, 0))),
+            Some(
+                nostr_relay_builder::subscription_coordinator::ResponseHandler::MessageSender(
+                    websocket_builder::MessageSender::new(tx1, 0),
+                ),
+            ),
         )
         .await
         .unwrap();
@@ -359,7 +365,11 @@ async fn test_same_timestamp_event_id_ordering() {
     db_sender
         .send_with_sender(
             StoreCommand::SaveSignedEvent(Box::new(event2.clone()), Scope::Default, None),
-            Some(nostr_relay_builder::subscription_coordinator::ResponseHandler::MessageSender(websocket_builder::MessageSender::new(tx2, 0))),
+            Some(
+                nostr_relay_builder::subscription_coordinator::ResponseHandler::MessageSender(
+                    websocket_builder::MessageSender::new(tx2, 0),
+                ),
+            ),
         )
         .await
         .unwrap();

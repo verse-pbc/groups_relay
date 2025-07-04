@@ -103,8 +103,11 @@ async fn main() -> Result<()> {
     let task_tracker = TaskTracker::new();
 
     // Create database (CryptoHelper is created internally)
-    let (database, db_sender) =
-        RelayDatabase::with_task_tracker(settings.db_path.clone(), Arc::new(relay_keys.clone()), task_tracker.clone())?;
+    let (database, db_sender) = RelayDatabase::with_task_tracker(
+        settings.db_path.clone(),
+        Arc::new(relay_keys.clone()),
+        task_tracker.clone(),
+    )?;
     let database = Arc::new(database);
     let groups = Arc::new(
         Groups::load_groups(
@@ -115,14 +118,7 @@ async fn main() -> Result<()> {
         .await?,
     );
 
-    server::run_server(
-        settings,
-        relay_keys,
-        database,
-        db_sender,
-        groups,
-    )
-    .await?;
+    server::run_server(settings, relay_keys, database, db_sender, groups).await?;
 
     Ok(())
 }

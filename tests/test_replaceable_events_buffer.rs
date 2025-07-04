@@ -3,7 +3,7 @@
 // and SubscriptionCoordinator are now part of that crate
 use groups_relay::RelayDatabase;
 use nostr_lmdb::Scope;
-use nostr_relay_builder::{StoreCommand};
+use nostr_relay_builder::StoreCommand;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
@@ -16,7 +16,7 @@ async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let admin_keys = Keys::generate();
     let task_tracker = TaskTracker::new();
-    
+
     let (database, db_sender) = RelayDatabase::with_task_tracker(
         tmp_dir.path().join("test.db").to_string_lossy().to_string(),
         Arc::new(admin_keys.clone()),

@@ -325,6 +325,10 @@ impl Invite {
     }
 }
 
+fn default_scope() -> Scope {
+    Scope::Default
+}
+
 /// A Nostr group that implements NIP-29 group management.
 ///
 /// Groups have the following key characteristics:
@@ -343,6 +347,8 @@ pub struct Group {
     pub roles: HashSet<GroupRole>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+    #[serde(skip, default = "default_scope")]
+    pub scope: Scope,
 }
 
 impl Default for Group {
@@ -356,6 +362,7 @@ impl Default for Group {
             roles: HashSet::new(),
             created_at: Timestamp::now(),
             updated_at: Timestamp::now(),
+            scope: Scope::Default,
         }
     }
 }
@@ -489,10 +496,11 @@ impl Group {
             roles: HashSet::new(),
             created_at: Timestamp::now(),
             updated_at: Timestamp::now(),
+            scope: Scope::Default,
         }
     }
 
-    pub fn new(event: &Event) -> Result<Self, Error> {
+    pub fn new(event: &Event, scope: Scope) -> Result<Self, Error> {
         if event.kind != KIND_GROUP_CREATE_9007 {
             return Err(Error::notice("Invalid event kind for group creation"));
         }
@@ -501,6 +509,9 @@ impl Group {
         if group.id.is_empty() {
             return Err(Error::notice("Group ID not found"));
         }
+
+        // Set the scope for this group
+        group.scope = scope;
 
         // Add the creator as an admin
         group
@@ -529,9 +540,9 @@ impl Group {
             Filter::new().custom_tag(SingleLetterTag::lowercase(Alphabet::D), self.id.to_string());
 
         Ok(vec![
-            StoreCommand::DeleteEvents(non_addressable_filter, Scope::Default, None),
-            StoreCommand::DeleteEvents(addressable_filter, Scope::Default, None),
-            StoreCommand::SaveSignedEvent(delete_group_request_event, Scope::Default, None),
+            StoreCommand::DeleteEvents(non_addressable_filter, self.scope.clone(), None),
+            StoreCommand::DeleteEvents(addressable_filter, self.scope.clone(), None),
+            StoreCommand::SaveSignedEvent(delete_group_request_event, self.scope.clone(), None),
         ])
     }
 
@@ -580,8 +591,8 @@ impl Group {
         let filter = Filter::new().ids(event_ids);
 
         Ok(vec![
-            StoreCommand::DeleteEvents(filter, Scope::Default, None),
-            StoreCommand::SaveSignedEvent(delete_request_event, Scope::Default, None),
+            StoreCommand::DeleteEvents(filter, self.scope.clone(), None),
+            StoreCommand::SaveSignedEvent(delete_request_event, self.scope.clone(), None),
         ])
     }
 
@@ -613,17 +624,21 @@ impl Group {
 
         self.add_members(group_members)?;
 
-        let mut events = vec![StoreCommand::SaveSignedEvent(members_event, Scope::Default, None)];
-        let admins_event = self.generate_admins_event(relay_pubkey);
+        let mut events = vec![StoreCommand::SaveSignedEvent(
+            members_event,
+            self.scope.clone(),
+            None,
+        )];
+        let admins_event = self.generate_admins_event(relay_pubkey)?;
         events.push(StoreCommand::SaveUnsignedEvent(
             admins_event,
-            Scope::Default,
+            self.scope.clone(),
             None,
         ));
         let members_event = self.generate_members_event(relay_pubkey);
         events.push(StoreCommand::SaveUnsignedEvent(
             members_event,
-            Scope::Default,
+            self.scope.clone(),
             None,
         ));
 
@@ -653,6 +668,10 @@ impl Group {
 
         self.update_roles();
         self.update_state();
+        
+        // Validate the group still has at least one admin
+        self.validate_has_admin()?;
+        
         Ok(())
     }
 
@@ -667,6 +686,21 @@ impl Group {
             .filter(|member| member.is(GroupRole::Admin))
             .map(|member| member.pubkey)
             .collect::<Vec<_>>()
+    }
+
+    /// Check if the group has at least one admin
+    pub fn has_admin(&self) -> bool {
+        self.members
+            .values()
+            .any(|member| member.is(GroupRole::Admin))
+    }
+
+    /// Validate that the group has at least one admin, return error if not
+    pub fn validate_has_admin(&self) -> Result<(), Error> {
+        if !self.has_admin() {
+            return Err(Error::notice("Group must have at least one admin"));
+        }
+        Ok(())
     }
 
     pub fn remove_members(
@@ -716,20 +750,27 @@ impl Group {
 
         self.update_roles();
         self.update_state();
+        
+        // Validate the group still has at least one admin after removal
+        self.validate_has_admin()?;
 
-        let mut events = vec![StoreCommand::SaveSignedEvent(members_event, Scope::Default, None)];
+        let mut events = vec![StoreCommand::SaveSignedEvent(
+            members_event,
+            self.scope.clone(),
+            None,
+        )];
         if removed_admins {
-            let admins_event = self.generate_admins_event(relay_pubkey);
+            let admins_event = self.generate_admins_event(relay_pubkey)?;
             events.push(StoreCommand::SaveUnsignedEvent(
                 admins_event,
-                Scope::Default,
+                self.scope.clone(),
                 None,
             ));
         }
         let members_event = self.generate_members_event(relay_pubkey);
         events.push(StoreCommand::SaveUnsignedEvent(
             members_event,
-            Scope::Default,
+            self.scope.clone(),
             None,
         ));
 
@@ -800,14 +841,17 @@ impl Group {
 
         self.update_roles();
         self.update_state();
+        
+        // Validate the group still has at least one admin after role changes
+        self.validate_has_admin()?;
 
         let roles_event = self.generate_roles_event(relay_pubkey);
         let members_event = self.generate_members_event(relay_pubkey);
 
         Ok(vec![
-            StoreCommand::SaveSignedEvent(event, Scope::Default, None),
-            StoreCommand::SaveUnsignedEvent(roles_event, Scope::Default, None),
-            StoreCommand::SaveUnsignedEvent(members_event, Scope::Default, None),
+            StoreCommand::SaveSignedEvent(event, self.scope.clone(), None),
+            StoreCommand::SaveUnsignedEvent(roles_event, self.scope.clone(), None),
+            StoreCommand::SaveUnsignedEvent(members_event, self.scope.clone(), None),
         ])
     }
 
@@ -994,7 +1038,11 @@ impl Group {
             return Err(Error::restricted("Only admins can post in broadcast mode"));
         }
 
-        let mut commands = vec![StoreCommand::SaveSignedEvent(event, Scope::Default, None)];
+        let mut commands = vec![StoreCommand::SaveSignedEvent(
+            event,
+            self.scope.clone(),
+            None,
+        )];
 
         // For private and closed groups, only members can post
         if self.metadata.private && self.metadata.closed && !is_member {
@@ -1005,9 +1053,9 @@ impl Group {
         if !self.metadata.closed && !is_member {
             self.add_pubkey(event_pubkey)?;
             commands.extend(
-                self.generate_membership_events(relay_pubkey)
+                self.generate_membership_events(relay_pubkey)?
                     .into_iter()
-                    .map(|e| StoreCommand::SaveUnsignedEvent(e, Scope::Default, None)),
+                    .map(|e| StoreCommand::SaveUnsignedEvent(e, self.scope.clone(), None)),
             );
         } else if !is_member {
             // For closed groups, non-members can't post
@@ -1038,14 +1086,18 @@ impl Group {
             )));
         }
 
-        let mut commands = vec![StoreCommand::SaveSignedEvent(event, Scope::Default, None)];
+        let mut commands = vec![StoreCommand::SaveSignedEvent(
+            event,
+            self.scope.clone(),
+            None,
+        )];
         // println!("[create_join_request_commands] Added SaveSignedEvent to commands");
 
         if auto_joined {
             // println!(
             //     "[create_join_request_commands] User auto-joined, generating membership events"
             // );
-            let membership_events = self.generate_membership_events(relay_pubkey);
+            let membership_events = self.generate_membership_events(relay_pubkey)?;
             // println!(
             //     "[create_join_request_commands] Generated {} membership events",
             //     membership_events.len()
@@ -1054,7 +1106,7 @@ impl Group {
             commands.extend(
                 membership_events
                     .into_iter()
-                    .map(|e| StoreCommand::SaveUnsignedEvent(e, Scope::Default, None)),
+                    .map(|e| StoreCommand::SaveUnsignedEvent(e, self.scope.clone(), None)),
             );
             // println!(
             //     "[create_join_request_commands] Extended commands, now have {} total",
@@ -1135,14 +1187,18 @@ impl Group {
         self.update_state();
 
         if removed {
-            let mut commands = vec![StoreCommand::SaveSignedEvent(event, Scope::Default, None)];
+            let mut commands = vec![StoreCommand::SaveSignedEvent(
+                event,
+                self.scope.clone(),
+                None,
+            )];
 
             // If the user was an admin, also generate an updated admins event
             if is_admin {
-                let admins_event = self.generate_admins_event(relay_pubkey);
+                let admins_event = self.generate_admins_event(relay_pubkey)?;
                 commands.push(StoreCommand::SaveUnsignedEvent(
                     admins_event,
-                    Scope::Default,
+                    self.scope.clone(),
                     None,
                 ));
             }
@@ -1151,7 +1207,7 @@ impl Group {
             let members_event = self.generate_members_event(relay_pubkey);
             commands.push(StoreCommand::SaveUnsignedEvent(
                 members_event,
-                Scope::Default,
+                self.scope.clone(),
                 None,
             ));
 
@@ -1325,17 +1381,17 @@ impl Group {
     }
 
     /// Generates all membership-related events for the group
-    pub fn generate_membership_events(&self, relay_pubkey: &PublicKey) -> Vec<UnsignedEvent> {
+    pub fn generate_membership_events(&self, relay_pubkey: &PublicKey) -> Result<Vec<UnsignedEvent>, Error> {
         // println!("[generate_membership_events] Starting to generate membership events");
         // println!("[generate_membership_events] Generating put_user_event");
         let put_user = self.generate_put_user_event(relay_pubkey);
         // println!("[generate_membership_events] Generating admins_event");
-        let admins = self.generate_admins_event(relay_pubkey);
+        let admins = self.generate_admins_event(relay_pubkey)?;
         // println!("[generate_membership_events] Generating members_event");
         let members = self.generate_members_event(relay_pubkey);
         // println!("[generate_membership_events] Finished generating all events");
 
-        vec![put_user, admins, members]
+        Ok(vec![put_user, admins, members])
     }
 
     pub fn generate_put_user_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
@@ -1360,8 +1416,12 @@ impl Group {
         )
     }
 
-    pub fn generate_admins_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
+    pub fn generate_admins_event(&self, pubkey: &PublicKey) -> Result<UnsignedEvent, Error> {
         // println!("[generate_admins_event] Starting");
+        
+        // First validate the group has at least one admin
+        self.validate_has_admin()?;
+        
         let admins = self.members.values().filter(|member| {
             member
                 .roles
@@ -1372,8 +1432,10 @@ impl Group {
         let mut tags = Vec::new();
         tags.push(Tag::identifier(self.id.clone()));
 
+        let mut admin_count = 0;
         // println!("[generate_admins_event] Creating tags for admins");
         for admin in admins {
+            admin_count += 1;
             let mut tag_vals: Vec<String> = vec![admin.pubkey.to_string()];
             // Only include admin-related roles (not Member role) in the 39001 event
             tag_vals.extend(
@@ -1389,14 +1451,19 @@ impl Group {
         }
         // println!("[generate_admins_event] Finished creating tags");
 
+        // Double-check we have at least one admin in the generated event
+        if admin_count == 0 {
+            return Err(Error::notice("Cannot generate 39001 event: group has no admins"));
+        }
+
         // println!("[generate_admins_event] Finished");
-        UnsignedEvent::new(
+        Ok(UnsignedEvent::new(
             *pubkey,
             Timestamp::now_with_supplier(&Instant::now()),
             KIND_GROUP_ADMINS_39001,
             tags,
             "".to_string(),
-        )
+        ))
     }
 
     pub fn generate_members_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
@@ -1442,10 +1509,10 @@ impl Group {
         &self,
         relay_pubkey: &PublicKey,
         relay_url: &str,
-    ) -> Vec<UnsignedEvent> {
+    ) -> Result<Vec<UnsignedEvent>, Error> {
         let mut events = self.generate_metadata_events(relay_pubkey, relay_url);
-        events.extend(self.generate_membership_events(relay_pubkey));
-        events
+        events.extend(self.generate_membership_events(relay_pubkey)?);
+        Ok(events)
     }
 }
 

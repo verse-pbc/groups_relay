@@ -131,9 +131,9 @@ impl Middleware for ValidationMiddleware {
 mod tests {
     use super::*;
     use nostr_relay_builder::NostrConnectionState;
+    use parking_lot::RwLock;
     use std::borrow::Cow;
     use std::sync::Arc;
-    use parking_lot::RwLock;
     use websocket_builder::InboundContext;
     extern crate flume;
 

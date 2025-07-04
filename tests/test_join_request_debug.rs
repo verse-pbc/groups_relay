@@ -17,7 +17,7 @@ async fn test_join_request_generates_correct_events() {
     let user_keys = Keys::generate();
 
     let task_tracker = TaskTracker::new();
-    
+
     let (db, _db_sender) = RelayDatabase::with_task_tracker(
         temp_dir
             .path()

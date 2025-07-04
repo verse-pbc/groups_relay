@@ -16,8 +16,8 @@ mod tests {
         SubscriptionRegistry,
     };
     use nostr_sdk::prelude::*;
-    use std::sync::Arc;
     use parking_lot::RwLock;
+    use std::sync::Arc;
 
     fn empty_state() -> Arc<RwLock<()>> {
         Arc::new(RwLock::new(()))
@@ -1072,7 +1072,10 @@ mod tests {
 
         // Save the unmanaged event directly to database (like the old test)
         db_sender
-            .save_signed_event(unmanaged_event.clone(), member_state.subdomain().as_ref().clone())
+            .save_signed_event(
+                unmanaged_event.clone(),
+                member_state.subdomain().as_ref().clone(),
+            )
             .await
             .unwrap();
 

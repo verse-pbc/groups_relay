@@ -4,9 +4,7 @@
 use groups_relay::Groups;
 use groups_relay::RelayDatabase;
 use nostr_lmdb::Scope;
-use nostr_relay_builder::{
-    DatabaseSender, StoreCommand,
-};
+use nostr_relay_builder::{DatabaseSender, StoreCommand};
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -18,7 +16,7 @@ async fn setup_test() -> (TempDir, Arc<RelayDatabase>, DatabaseSender, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let admin_keys = Keys::generate();
     let task_tracker = TaskTracker::new();
-    
+
     let (db, db_sender) = RelayDatabase::with_task_tracker(
         tmp_dir.path().join("test.db").to_string_lossy().to_string(),
         Arc::new(admin_keys.clone()),
@@ -240,11 +238,19 @@ async fn test_direct_database_save_bypasses_buffer() {
 
     // Save directly to database (simulating the old broken behavior)
     db_sender
-        .send(StoreCommand::SaveUnsignedEvent(event1, Scope::Default, None))
+        .send(StoreCommand::SaveUnsignedEvent(
+            event1,
+            Scope::Default,
+            None,
+        ))
         .await
         .unwrap();
     db_sender
-        .send(StoreCommand::SaveUnsignedEvent(event2, Scope::Default, None))
+        .send(StoreCommand::SaveUnsignedEvent(
+            event2,
+            Scope::Default,
+            None,
+        ))
         .await
         .unwrap();
 

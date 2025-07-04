@@ -5,12 +5,11 @@ mod integration_tests {
     use crate::test_utils::*;
     use nostr_lmdb::Scope;
     use nostr_relay_builder::{
-        EventContext, EventProcessor, NostrConnectionState, RelayMiddleware,
-        SubscriptionRegistry,
+        EventContext, EventProcessor, NostrConnectionState, RelayMiddleware, SubscriptionRegistry,
     };
     use nostr_sdk::prelude::*;
-    use std::sync::Arc;
     use parking_lot::RwLock;
+    use std::sync::Arc;
 
     fn empty_state() -> Arc<RwLock<()>> {
         Arc::new(RwLock::new(()))
@@ -34,8 +33,13 @@ mod integration_tests {
 
         let groups_processor = GroupsRelayProcessor::new(groups.clone(), relay_pubkey);
         let registry = Arc::new(SubscriptionRegistry::new(None));
-        let relay_middleware =
-            RelayMiddleware::new(groups_processor, relay_pubkey, database.clone(), registry.clone(), 5000);
+        let relay_middleware = RelayMiddleware::new(
+            groups_processor,
+            relay_pubkey,
+            database.clone(),
+            registry.clone(),
+            5000,
+        );
 
         // Test group creation
         let group_id = "test_group";
@@ -94,8 +98,13 @@ mod integration_tests {
 
         let groups_processor = GroupsRelayProcessor::new(groups.clone(), relay_pubkey);
         let registry = Arc::new(SubscriptionRegistry::new(None));
-        let relay_middleware =
-            RelayMiddleware::new(groups_processor, relay_pubkey, database.clone(), registry.clone(), 5000);
+        let relay_middleware = RelayMiddleware::new(
+            groups_processor,
+            relay_pubkey,
+            database.clone(),
+            registry.clone(),
+            5000,
+        );
 
         // Create a private group
         let group_id = "private_group";
@@ -195,8 +204,13 @@ mod integration_tests {
 
         let groups_processor = GroupsRelayProcessor::new(groups.clone(), relay_pubkey);
         let registry = Arc::new(SubscriptionRegistry::new(None));
-        let relay_middleware =
-            RelayMiddleware::new(groups_processor, relay_pubkey, database.clone(), registry.clone(), 5000);
+        let relay_middleware = RelayMiddleware::new(
+            groups_processor,
+            relay_pubkey,
+            database.clone(),
+            registry.clone(),
+            5000,
+        );
 
         // Create a private group
         let group_id = "visibility_test";
