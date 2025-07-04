@@ -2,7 +2,7 @@ use crate::groups::Invite;
 use crate::server::ServerState;
 use axum::{
     body::Body,
-    extract::{ConnectInfo, State, WebSocketUpgrade},
+    extract::{ConnectInfo, State},
     http::{Method, Request, StatusCode},
     response::{IntoResponse, Json},
 };
@@ -14,6 +14,7 @@ use std::sync::Arc;
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
 use tracing::debug;
+use websocket_builder::WebSocketUpgrade;
 
 #[derive(Serialize)]
 pub struct GroupResponse {

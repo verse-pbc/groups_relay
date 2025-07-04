@@ -27,7 +27,7 @@ indicatif = "0.17"
 tokio-util = { version = "0.7.1", features = ["rt"] }
 dashmap = "6.1.0"
 config = "0.15.11"
-axum = { version = "0.7.9", features = ["ws", "http1"] }
+axum = { version = "0.8.4", features = ["ws", "http1"] }
 axum-server = "0.6.0"
 strum = { version = "0.27.1", features = ["derive", "strum_macros"] }
 snafu = { version = "0.8.5", features = ["backtrace"] }

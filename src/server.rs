@@ -2,14 +2,13 @@ use crate::{
     app_state::HttpServerState, config, groups::Groups,
     groups_event_processor::GroupsRelayProcessor, handler, metrics,
     metrics_handler::PrometheusSubscriptionMetricsHandler,
-    sampled_metrics_handler::SampledMetricsHandler,
-    RelayDatabase,
+    sampled_metrics_handler::SampledMetricsHandler, RelayDatabase,
 };
 use anyhow::Result;
 use axum::{routing::get, Router};
 use nostr_relay_builder::{
-    AuthConfig, CryptoHelper, Nip09Middleware, Nip40ExpirationMiddleware,
-    Nip70Middleware, RelayBuilder, RelayConfig, RelayInfo, WebSocketConfig,
+    AuthConfig, CryptoHelper, Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware,
+    RelayBuilder, RelayConfig, RelayInfo, WebSocketConfig,
 };
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicUsize;

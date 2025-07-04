@@ -50,7 +50,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
         "test_conn".to_string(),
         message_sender.clone(),
         Some(admin_keys.public_key()),
-        Scope::Default,
+        Arc::new(Scope::Default),
         cancellation_token.clone(),
         None,
         5000,
@@ -341,7 +341,7 @@ async fn test_same_timestamp_event_id_ordering() {
     db_sender
         .send_with_sender(
             StoreCommand::SaveSignedEvent(Box::new(event1.clone()), Scope::Default, None),
-            Some(websocket_builder::MessageSender::new(tx1, 0)),
+            Some(nostr_relay_builder::subscription_coordinator::ResponseHandler::MessageSender(websocket_builder::MessageSender::new(tx1, 0))),
         )
         .await
         .unwrap();
@@ -359,7 +359,7 @@ async fn test_same_timestamp_event_id_ordering() {
     db_sender
         .send_with_sender(
             StoreCommand::SaveSignedEvent(Box::new(event2.clone()), Scope::Default, None),
-            Some(websocket_builder::MessageSender::new(tx2, 0)),
+            Some(nostr_relay_builder::subscription_coordinator::ResponseHandler::MessageSender(websocket_builder::MessageSender::new(tx2, 0))),
         )
         .await
         .unwrap();

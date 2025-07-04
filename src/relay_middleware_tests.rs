@@ -1072,7 +1072,7 @@ mod tests {
 
         // Save the unmanaged event directly to database (like the old test)
         db_sender
-            .save_signed_event(unmanaged_event.clone(), member_state.subdomain().clone())
+            .save_signed_event(unmanaged_event.clone(), member_state.subdomain().as_ref().clone())
             .await
             .unwrap();
 
