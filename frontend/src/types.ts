@@ -15,6 +15,10 @@ export interface Group {
   // Enhanced state - populated as needed
   memberProfiles?: Map<string, MemberProfile>;
   eventNutzaps?: Map<string, number>; // eventId -> total sats
+  // Loading states for lazy loading
+  isFullyLoaded?: boolean;
+  isLoading?: boolean;
+  loadError?: string;
 }
 
 export interface GroupMember {

@@ -5,7 +5,8 @@ mod integration_tests {
     use crate::test_utils::*;
     use nostr_lmdb::Scope;
     use nostr_relay_builder::{
-        EventContext, EventProcessor, NostrConnectionState, RelayMiddleware, SubscriptionRegistry,
+        CryptoHelper, EventContext, EventProcessor, NostrConnectionState, RelayMiddleware,
+        SubscriptionRegistry,
     };
     use nostr_sdk::prelude::*;
     use parking_lot::RwLock;
@@ -18,7 +19,7 @@ mod integration_tests {
     /// Test that RelayMiddleware can process events correctly
     #[tokio::test]
     async fn test_relay_middleware_event_processing() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let relay_pubkey = admin_keys.public_key();
 
         let groups = Arc::new(
@@ -33,12 +34,17 @@ mod integration_tests {
 
         let groups_processor = GroupsRelayProcessor::new(groups.clone(), relay_pubkey);
         let registry = Arc::new(SubscriptionRegistry::new(None));
+        let relay_url = RelayUrl::parse("wss://test.relay.com").unwrap();
+        let crypto_helper = CryptoHelper::new(Arc::new(admin_keys.clone()));
         let relay_middleware = RelayMiddleware::new(
             groups_processor,
             relay_pubkey,
             database.clone(),
             registry.clone(),
             5000,
+            relay_url,
+            crypto_helper,
+            None, // max_subscriptions
         );
 
         // Test group creation
@@ -55,13 +61,14 @@ mod integration_tests {
         )
         .await;
 
-        let mut state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let mut state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         state.authed_pubkey = Some(admin_keys.public_key());
 
         // Process event
         let context = EventContext {
             authed_pubkey: state.authed_pubkey.as_ref(),
-            subdomain: state.subdomain(),
+            subdomain: &state.subdomain,
             relay_pubkey: &relay_pubkey,
         };
         let store_commands = relay_middleware
@@ -82,7 +89,7 @@ mod integration_tests {
     /// Test filter verification and access control
     #[tokio::test]
     async fn test_relay_middleware_filter_verification() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, non_member_keys) = create_test_keys().await;
         let relay_pubkey = admin_keys.public_key();
 
@@ -98,12 +105,17 @@ mod integration_tests {
 
         let groups_processor = GroupsRelayProcessor::new(groups.clone(), relay_pubkey);
         let registry = Arc::new(SubscriptionRegistry::new(None));
+        let relay_url = RelayUrl::parse("wss://test.relay.com").unwrap();
+        let crypto_helper = CryptoHelper::new(Arc::new(admin_keys.clone()));
         let relay_middleware = RelayMiddleware::new(
             groups_processor,
             relay_pubkey,
             database.clone(),
             registry.clone(),
             5000,
+            relay_url,
+            crypto_helper,
+            None, // max_subscriptions
         );
 
         // Create a private group
@@ -119,12 +131,13 @@ mod integration_tests {
         )
         .await;
 
-        let mut state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let mut state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         state.authed_pubkey = Some(admin_keys.public_key());
 
         let context = EventContext {
             authed_pubkey: state.authed_pubkey.as_ref(),
-            subdomain: state.subdomain(),
+            subdomain: &state.subdomain,
             relay_pubkey: &relay_pubkey,
         };
         relay_middleware
@@ -155,11 +168,12 @@ mod integration_tests {
             .kinds(vec![Kind::TextNote])
             .custom_tag(SingleLetterTag::lowercase(Alphabet::H), group_id)];
 
-        let member_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let member_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
             authed_pubkey: Some(&member_pubkey),
-            subdomain: member_state.subdomain(),
+            subdomain: &member_state.subdomain,
             relay_pubkey: &relay_pubkey,
         };
 
@@ -174,7 +188,7 @@ mod integration_tests {
         let non_member_pubkey = non_member_keys.public_key();
         let non_member_context = EventContext {
             authed_pubkey: Some(&non_member_pubkey),
-            subdomain: member_state.subdomain(),
+            subdomain: &member_state.subdomain,
             relay_pubkey: &relay_pubkey,
         };
         let result = relay_middleware.processor().verify_filters(
@@ -188,7 +202,7 @@ mod integration_tests {
     /// Test event visibility in groups
     #[tokio::test]
     async fn test_relay_middleware_event_visibility() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, non_member_keys) = create_test_keys().await;
         let relay_pubkey = admin_keys.public_key();
 
@@ -204,12 +218,17 @@ mod integration_tests {
 
         let groups_processor = GroupsRelayProcessor::new(groups.clone(), relay_pubkey);
         let registry = Arc::new(SubscriptionRegistry::new(None));
+        let relay_url = RelayUrl::parse("wss://test.relay.com").unwrap();
+        let crypto_helper = CryptoHelper::new(Arc::new(admin_keys.clone()));
         let relay_middleware = RelayMiddleware::new(
             groups_processor,
             relay_pubkey,
             database.clone(),
             registry.clone(),
             5000,
+            relay_url,
+            crypto_helper,
+            None, // max_subscriptions
         );
 
         // Create a private group
@@ -225,12 +244,13 @@ mod integration_tests {
         )
         .await;
 
-        let mut admin_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let mut admin_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         admin_state.authed_pubkey = Some(admin_keys.public_key());
 
         let admin_context = EventContext {
             authed_pubkey: admin_state.authed_pubkey.as_ref(),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: &relay_pubkey,
         };
         relay_middleware
@@ -275,7 +295,7 @@ mod integration_tests {
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
             authed_pubkey: Some(&member_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: &relay_pubkey,
         };
         let can_see = relay_middleware
@@ -288,7 +308,7 @@ mod integration_tests {
         let non_member_pubkey = non_member_keys.public_key();
         let non_member_context = EventContext {
             authed_pubkey: Some(&non_member_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: &relay_pubkey,
         };
         let can_see = relay_middleware

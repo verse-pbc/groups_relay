@@ -7,7 +7,6 @@ use nostr_relay_builder::{RelayDatabase, StoreCommand};
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use tempfile::TempDir;
-use tokio_util::task::TaskTracker;
 
 #[tokio::test]
 async fn test_join_request_generates_correct_events() {
@@ -16,16 +15,12 @@ async fn test_join_request_generates_correct_events() {
     let admin_keys = Keys::generate();
     let user_keys = Keys::generate();
 
-    let task_tracker = TaskTracker::new();
-
-    let (db, _db_sender) = RelayDatabase::with_task_tracker(
+    let db = RelayDatabase::new(
         temp_dir
             .path()
             .join("test.db")
             .to_string_lossy()
             .to_string(),
-        Arc::new(admin_keys.clone()),
-        task_tracker,
     )
     .unwrap();
     let db = Arc::new(db);

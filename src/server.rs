@@ -7,8 +7,8 @@ use crate::{
 use anyhow::Result;
 use axum::{routing::get, Router};
 use nostr_relay_builder::{
-    AuthConfig, CryptoHelper, Nip09Middleware, Nip40ExpirationMiddleware, Nip70Middleware,
-    RelayBuilder, RelayConfig, RelayInfo, WebSocketConfig,
+    AuthConfig, CryptoHelper, Nip40ExpirationMiddleware, Nip70Middleware, RelayBuilder,
+    RelayConfig, RelayInfo, WebSocketConfig,
 };
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicUsize;
@@ -33,7 +33,6 @@ pub async fn run_server(
     settings: config::Settings,
     relay_keys: config::Keys,
     database: Arc<RelayDatabase>,
-    db_sender: nostr_relay_builder::DatabaseSender,
     groups: Arc<Groups>,
 ) -> Result<()> {
     // Setup metrics
@@ -57,19 +56,15 @@ pub async fn run_server(
         max_connection_time: settings.websocket.max_connection_time.map(|d| d.as_secs()),
     };
 
-    let crypto_helper = CryptoHelper::new(Arc::new(relay_keys.clone()));
-    let relay_config = RelayConfig::new(
-        settings.relay_url.clone(),
-        (database.clone(), db_sender, crypto_helper),
-        relay_keys.clone(),
-    )
-    .with_subdomains_from_url(&settings.relay_url)
-    .with_auth(AuthConfig {
-        relay_url: settings.relay_url.clone(),
-        validate_subdomains: true,
-    })
-    .with_websocket_config(websocket_config)
-    .with_subscription_limits(settings.max_subscriptions, settings.max_limit);
+    let _crypto_helper = CryptoHelper::new(Arc::new(relay_keys.clone()));
+    let relay_config = RelayConfig::new(settings.relay_url.clone(), database, relay_keys.clone())
+        .with_subdomains_from_url(&settings.relay_url)
+        .with_auth(AuthConfig {
+            relay_url: settings.relay_url.clone(),
+            validate_subdomains: true,
+        })
+        .with_websocket_config(websocket_config)
+        .with_subscription_limits(settings.max_subscriptions, settings.max_limit);
 
     let groups_processor = GroupsRelayProcessor::new(groups.clone(), relay_keys.public_key);
 
@@ -95,7 +90,6 @@ pub async fn run_server(
         .with_connection_counter(connection_counter.clone())
         .with_metrics(SampledMetricsHandler::new(10))
         .with_subscription_metrics(PrometheusSubscriptionMetricsHandler)
-        .with_middleware(Nip09Middleware::new(database.clone()))
         .with_middleware(Nip40ExpirationMiddleware::new())
         .with_middleware(Nip70Middleware)
         .with_event_processor(groups_processor)

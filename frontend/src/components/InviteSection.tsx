@@ -52,7 +52,28 @@ export class InviteSection extends Component<InviteSectionProps, InviteSectionSt
 
     this.setState({ isCreatingInvite: true })
     try {
-      await this.props.client.createInvite(this.props.group.id, this.state.inviteCode)
+      const inviteEvent = await this.props.client.createInvite(this.props.group.id, this.state.inviteCode)
+      
+      // Update the group's invites map
+      this.props.updateGroupsMap(groupsMap => {
+        const group = groupsMap.get(this.props.group.id)
+        if (group) {
+          const updatedGroup = {
+            ...group,
+            invites: {
+              ...group.invites,
+              [this.state.inviteCode]: {
+                code: this.state.inviteCode,
+                pubkey: inviteEvent.pubkey,
+                roles: ['member'], // Default role from the createInvite method
+                id: inviteEvent.id
+              }
+            }
+          }
+          groupsMap.set(this.props.group.id, updatedGroup)
+        }
+      })
+      
       this.setState({ inviteCode: '' })
       this.props.showMessage('Invite created successfully', 'success')
     } catch (error) {

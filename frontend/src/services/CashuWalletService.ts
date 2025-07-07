@@ -184,15 +184,11 @@ export class CashuWalletService implements ICashuWalletService {
     const { wallet: existingWallet, hasDecryptionError } = await this.fetchExistingWallet(user);
     
     if (hasDecryptionError) {
-      console.warn("⚠️ Found existing wallet events but cannot decrypt them");
-      console.warn("⚠️ This might mean the wallet belongs to a different key");
-      console.warn("⚠️ Creating a new wallet instead...");
     }
     
     if (existingWallet && !hasDecryptionError) {
       // Only use the existing wallet if there are no decryption errors
       this.wallet = existingWallet;
-      console.log("✅ Restored existing NIP-60 wallet with", this.wallet.mints.length, "mints");
 
         await this.wallet.start();
 
@@ -228,11 +224,9 @@ export class CashuWalletService implements ICashuWalletService {
         try {
           walletP2pk = await this.wallet.getP2pk();
         } catch (error) {
-          console.log("⚠️ Could not get P2PK from wallet:", error);
         }
         
         if (!walletP2pk) {
-          console.log("🔧 Adding P2PK key to existing wallet...");
           await this.addP2PKKeyToExistingWallet();
         }
 
@@ -248,22 +242,17 @@ export class CashuWalletService implements ICashuWalletService {
         // Check if we need a new backup
         const hasRecentBackup = await this.hasRecentWalletBackup(user);
         if (!hasRecentBackup) {
-          console.log("📦 Creating wallet backup (kind 375)");
           await this.wallet.backup(true);
         } else {
-          console.log("✅ Recent wallet backup exists, skipping");
         }
         
         // Check if nutzap config needs updating
         const needsConfigUpdate = await this.needsNutzapConfigUpdate(user);
         if (needsConfigUpdate) {
-          console.log("🔧 Publishing nutzap config (kind 10019)");
           await this.publishNutzapConfig();
           
           // After publishing, check if wallet.mints was updated and log it
-          console.log("🔍 [initializeWallet] Wallet mints after publishNutzapConfig:", this.wallet?.mints);
         } else {
-          console.log("✅ Nutzap config is up to date, skipping");
         }
 
         return;
@@ -285,7 +274,6 @@ export class CashuWalletService implements ICashuWalletService {
         this.wallet.mints = [...(this.wallet.mints || []), mint];
       }
     } else {
-      console.warn("⚠️ Creating wallet with no authorized mints. User needs to add mints.");
       this.wallet.mints = [];
     }
 
@@ -318,11 +306,9 @@ export class CashuWalletService implements ICashuWalletService {
     await this.updateBalance();
     await this.ensureNutzapMonitor();
 
-    console.log("✅ Created new NIP-60 wallet");
     
     // Always publish nutzap config (even with empty mints)
     // This allows users to receive nutzaps once they add mints
-    console.log("🔧 Publishing initial nutzap config (kind 10019)");
     await this.publishNutzapConfig(); // Creates kind:10019 nutzap config event
   }
 
@@ -357,7 +343,6 @@ export class CashuWalletService implements ICashuWalletService {
       this.updateCachedBalance(balance);
       return balance;
     } catch (error) {
-      console.error("Failed to get balance:", error);
       return this.cachedBalance;
     }
   }
@@ -419,7 +404,6 @@ export class CashuWalletService implements ICashuWalletService {
       }
       return availableBalance;
     } catch (error) {
-      console.error("Failed to get balance for recipient:", error);
       return 0;
     }
   }
@@ -439,7 +423,6 @@ export class CashuWalletService implements ICashuWalletService {
       return this.parseNutzapMints(mintList);
       
     } catch (error) {
-      console.error("Failed to fetch recipient accepted mints:", error);
       return [];
     }
   }
@@ -524,7 +507,6 @@ export class CashuWalletService implements ICashuWalletService {
       };
       
     } catch (error) {
-      console.error("Failed to check recipient compatibility:", error);
       return {
         canSend: false,
         compatibleBalance: 0,
@@ -561,7 +543,6 @@ export class CashuWalletService implements ICashuWalletService {
       return compatible;
       
     } catch (error) {
-      console.error("Failed to get compatible mints with balances:", error);
       return {};
     }
   }
@@ -593,7 +574,6 @@ export class CashuWalletService implements ICashuWalletService {
       }
       return authorizedBalances;
     } catch (error) {
-      console.error("Failed to get mint balances:", error);
       return {};
     }
   }
@@ -608,7 +588,6 @@ export class CashuWalletService implements ICashuWalletService {
       // Use NDK's built-in getMintsWithBalance method
       return this.wallet.getMintsWithBalance(amount);
     } catch (error) {
-      console.error("Failed to get mints with balance:", error);
       return [];
     }
   }
@@ -647,7 +626,6 @@ export class CashuWalletService implements ICashuWalletService {
 
       return { authorized, unauthorized };
     } catch (error) {
-      console.error("Failed to get all mint balances:", error);
       return { authorized: {}, unauthorized: {} };
     }
   }
@@ -666,7 +644,6 @@ export class CashuWalletService implements ICashuWalletService {
           return balance;
         }
       } catch (error) {
-        console.error("Failed to load cached balance:", error);
       }
     }
     return 0;
@@ -706,7 +683,6 @@ export class CashuWalletService implements ICashuWalletService {
         this.user10019Cache.delete(this.userPubkey);
       }
 
-      console.log(`✅ Added mint to wallet`);
     }
   }
 
@@ -735,7 +711,6 @@ export class CashuWalletService implements ICashuWalletService {
       // Force balance refresh to exclude removed mint
       await this.updateBalance();
 
-      console.log(`✅ Removed mint from wallet`);
     }
   }
 
@@ -891,7 +866,6 @@ export class CashuWalletService implements ICashuWalletService {
             }
           );
 
-          console.log('🏷️ [sendNutzap] Nutzap created:', nutzap instanceof NDKNutzap ? JSON.stringify(nutzap.rawEvent()) : 'Error creating nutzap');
 
           if (nutzap instanceof NDKNutzap) {
             // Note: zapNip61 already publishes the event internally
@@ -943,23 +917,13 @@ export class CashuWalletService implements ICashuWalletService {
 
     // If event not provided, fetch it
     if (!event) {
-      console.log(`🔍 [sendNutzapToEvent] Fetching event ${eventId}...`);
-      
-      // Log connected relays for debugging
-      const connectedRelays = Array.from(this.ndk.pool.relays.values())
-        .filter(r => r.status === 1)
-        .map(r => r.url);
-      console.log(`🌐 [sendNutzapToEvent] Searching on relays:`, connectedRelays);
       
       const fetchedEvent = await this.ndk.fetchEvent(eventId);
       if (!fetchedEvent) {
-        console.error(`❌ [sendNutzapToEvent] Event ${eventId} not found on any connected relays`);
-        console.error(`❌ [sendNutzapToEvent] Tried relays:`, connectedRelays);
         throw new Error("Event not found - it may have been deleted or is not available on connected relays");
       }
       event = fetchedEvent;
     }
-    console.log(`✅ [sendNutzapToEvent] Found event by ${event.pubkey}`);
 
     // Create a user for the event author
     const user = new NDKUser({ pubkey: event.pubkey });
@@ -1066,7 +1030,6 @@ export class CashuWalletService implements ICashuWalletService {
             }
           );
 
-          console.log('🏷️ [sendNutzapToEvent] Nutzap created:', nutzap instanceof NDKNutzap ? JSON.stringify(nutzap.rawEvent()) : 'Error creating nutzap');
 
           if (nutzap instanceof NDKNutzap) {
             // Note: zapNip61 already publishes the event internally
@@ -1105,17 +1068,13 @@ export class CashuWalletService implements ICashuWalletService {
     if (!this.wallet) return;
 
     try {
-      console.log("🔄 Refreshing wallet state...");
 
       // The wallet should refresh its state when we access balance
-      const balance = await this.getBalance();
-      console.log("  Total balance after refresh:", balance);
+      await this.getBalance();
 
       // Get mint balances to trigger calculation
-      const mintBalances = await this.getMintBalances();
-      console.log("  Mint balances after refresh:", mintBalances);
+      await this.getMintBalances();
     } catch (error) {
-      console.error("Failed to refresh wallet state:", error);
     }
   }
 
@@ -1134,7 +1093,6 @@ export class CashuWalletService implements ICashuWalletService {
       return this.parseNutzapMints(mintList);
       
     } catch (error) {
-      console.error("Failed to fetch nutzap config mints:", error);
       return [];
     }
   }
@@ -1166,8 +1124,6 @@ export class CashuWalletService implements ICashuWalletService {
       invoice = await deposit.start();
       quoteId = deposit.quoteId || null;
     } catch (startError) {
-      console.error("Failed to start deposit:", startError);
-      console.error("Mint URL:", mintUrl);
 
       // Provide helpful error messages
       if (startError instanceof Error) {
@@ -1247,7 +1203,6 @@ export class CashuWalletService implements ICashuWalletService {
           return { proofs: [], claimed: true };
         }
       } catch (error) {
-        console.warn("Payment check failed:", error);
       }
 
       return { proofs: [], claimed: false };
@@ -1286,7 +1241,6 @@ export class CashuWalletService implements ICashuWalletService {
         return { wallet: null };
       }
 
-      console.log(`📦 Found ${events.size} NIP-60 wallet events`);
 
       // Create wallet instance with globalNdk (has outbox model)
       const wallet = new NDKCashuWallet(this.ndk);
@@ -1331,10 +1285,6 @@ export class CashuWalletService implements ICashuWalletService {
               }
               
               // Debug log the metadata structure
-              console.log(`🔍 Wallet ${event.kind === 375 ? 'backup' : 'metadata'} content structure:`, 
-                Array.isArray(metadata) ? 'Array of tags' : 'Object',
-                metadata
-              );
               
               // Check for privkey in various possible locations
               let privkey: string | undefined;
@@ -1351,17 +1301,13 @@ export class CashuWalletService implements ICashuWalletService {
               if (privkey) {
                 // Store the P2PK private key to add to wallet later
                 restoredPrivkey = privkey;
-                console.log(`🔑 Found P2PK private key in ${event.kind === 375 ? 'wallet backup' : 'wallet metadata'}`);
                 if (event.kind === 375) {
-                  console.log("💾 Successfully decrypted wallet backup event - can recover wallet");
                   hasSuccessfulBackup = true;
                 }
               } else {
-                console.warn(`⚠️ No P2PK private key found in ${event.kind === 375 ? 'wallet backup' : 'wallet metadata'}`);
               }
             }
           } catch (err) {
-            console.warn(`⚠️ Could not decrypt ${event.kind === 375 ? 'wallet backup' : 'wallet metadata'}:`, err);
             if (event.kind === 17375) {
               hasDecryptionError = true;
             }
@@ -1405,36 +1351,24 @@ export class CashuWalletService implements ICashuWalletService {
 
               // Log proof amounts for debugging
             } catch (err) {
-              console.warn(`⚠️ Could not decrypt/parse token event:`, err);
               hasDecryptionError = true;
             }
           }
         }
       }
 
-      console.log(
-        `Found ${tokenCount} token events across ${tokenMints.size} mints`
-      );
-      console.log(`Wallet metadata contains ${walletMints.size} mints`);
 
       // Only set mints from wallet metadata, NOT from tokens
       // This respects the user's mint preferences
       if (walletMints.size > 0) {
         wallet.mints = Array.from(walletMints);
-        console.log("✅ Setting wallet mints from metadata:", wallet.mints);
       } else if (tokenMints.size > 0) {
         // If no wallet metadata but we have tokens, warn but don't auto-add
-        console.warn(
-          "⚠️ No mints in wallet metadata but found tokens from:",
-          Array.from(tokenMints)
-        );
-        console.warn("⚠️ These mints are NOT authorized. User needs to explicitly add them.");
         // Don't set wallet.mints - leave it empty so balance shows as 0
         wallet.mints = [];
         
         // IMPORTANT: If we have tokens but no mints in metadata, we should check kind:10019
         // This handles the case where wallet metadata is missing but kind:10019 has the mints
-        console.log("🔍 Checking if kind:10019 has mint configuration...");
         try {
           const user = await this.ndk.signer?.user();
           if (user) {
@@ -1451,25 +1385,20 @@ export class CashuWalletService implements ICashuWalletService {
               const kind10019Mints = mintTags.map(tag => tag[1]);
               
               if (kind10019Mints.length > 0) {
-                console.log("✅ Found mints in kind:10019, restoring to wallet:", kind10019Mints);
                 wallet.mints = kind10019Mints;
               }
             }
           }
         } catch (err) {
-          console.warn("⚠️ Could not check kind:10019 for mints:", err);
         }
       } else {
         // No mints found at all
-        console.warn("⚠️ No mints found in wallet events");
         wallet.mints = [];
       }
       
-      console.log("🔍 [fetchExistingWallet] Final wallet.mints before starting:", wallet.mints);
 
       // If we found a P2PK private key, add it to the wallet BEFORE starting
       if (restoredPrivkey) {
-        console.log("🔐 Restoring P2PK private key to wallet before starting...");
         await wallet.addPrivkey(restoredPrivkey);
       }
 
@@ -1481,7 +1410,6 @@ export class CashuWalletService implements ICashuWalletService {
       // Wait for the wallet to be ready
       await new Promise<void>((resolve) => {
         wallet.once("ready", () => {
-          console.log("📦 Wallet ready event received");
           resolve();
         });
 
@@ -1496,14 +1424,12 @@ export class CashuWalletService implements ICashuWalletService {
 
       // Check if we have decryption errors that prevent wallet usage
       if (hasDecryptionError && hasWalletMetadata && !hasSuccessfulBackup) {
-        console.warn("⚠️ Found wallet events but cannot decrypt them and no backup available - wallet may belong to a different key");
         // Return null to trigger new wallet creation
         return { wallet: null, hasDecryptionError: true };
       }
 
       // If we couldn't decrypt the main wallet metadata but have a successful backup, we can still use the wallet
       if (hasDecryptionError && hasSuccessfulBackup) {
-        console.log("🔑 Main wallet metadata cannot be decrypted but backup is available - wallet can be recovered");
         // The wallet should still be functional since NDK processed the backup event
       }
 
@@ -1512,7 +1438,6 @@ export class CashuWalletService implements ICashuWalletService {
 
       return { wallet, hasDecryptionError: hasDecryptionError && !hasSuccessfulBackup };
     } catch (error) {
-      console.error("Failed to fetch existing wallet:", error);
       return { wallet: null };
     }
   }
@@ -1528,25 +1453,20 @@ export class CashuWalletService implements ICashuWalletService {
       if (!user || !this.wallet) return;
 
       // Use NDK's built-in getP2pk() method to generate and set up P2PK key
-      const p2pk = await this.wallet.getP2pk();
-      
-      console.log("🔑 Generated new P2PK private key for existing wallet using NDK:", p2pk);
+      await this.wallet.getP2pk();
 
       // Update wallet metadata using NDK's built-in methods
       await this.wallet.publish(); // Updates kind:17375 wallet metadata event  
       await this.wallet.backup(true); // Creates/updates kind:375 backup event
       
-      console.log("✅ Updated wallet metadata and backup with P2PK key");
 
       // Now we can start the nutzap monitor with the new key
       if (this.nutzapMonitor) {
-        console.log("🔄 Restarting nutzap monitor with new P2PK key...");
         this.nutzapMonitor.stop();
         this.nutzapMonitor = null;
         await this.startNutzapMonitor();
       }
     } catch (error) {
-      console.error("❌ Failed to add P2PK key to existing wallet:", error);
     }
   }
 
@@ -1568,7 +1488,6 @@ export class CashuWalletService implements ICashuWalletService {
    */
   async publishNutzapConfig(): Promise<void> {
     if (!this.wallet || this.wallet.privkeys.size === 0) {
-      console.warn("⚠️ Cannot publish nutzap config: no wallet P2PK key");
       return;
     }
 
@@ -1595,7 +1514,6 @@ export class CashuWalletService implements ICashuWalletService {
         try {
           const existingMints = await this.getNutzapConfigMints();
           if (existingMints.length > 0) {
-            console.log("🔄 Restoring mints from existing kind:10019:", existingMints);
             mints = existingMints;
             // Update the wallet's mints array properly
             this.wallet.mints = [...existingMints];
@@ -1611,11 +1529,8 @@ export class CashuWalletService implements ICashuWalletService {
             // Update wallet metadata and backup
             await this.wallet.publish(); // Update wallet metadata
             await this.wallet.backup();  // Update backup
-            console.log("✅ Restored wallet metadata with previous mints");
-            console.log("✅ Wallet mints after restoration:", this.wallet.mints);
           }
         } catch (error) {
-          console.warn("⚠️ Could not restore mints from existing kind:10019:", error);
         }
       }
 
@@ -1634,14 +1549,7 @@ export class CashuWalletService implements ICashuWalletService {
       await mintList.toNostrEvent();
       await mintList.publishReplaceable();
 
-      console.log("✅ Published kind 10019 nutzap config event using NDKCashuMintList");
-      console.log("📝 Nutzap config:", {
-        relays,
-        mints,
-        p2pk,
-      });
     } catch (error) {
-      console.error("❌ Failed to publish nutzap config:", error);
     }
   }
 
@@ -1652,9 +1560,6 @@ export class CashuWalletService implements ICashuWalletService {
 
   private async startNutzapMonitor(): Promise<void> {
     if (!this.wallet || !this.userPubkey || this.nutzapMonitor) {
-      console.warn(
-        "🚨 Cannot start nutzap monitor: wallet not initialized or monitor already running"
-      );
       return;
     }
 
@@ -1662,7 +1567,6 @@ export class CashuWalletService implements ICashuWalletService {
       // Create nutzap monitor
       const user = await this.ndk.signer?.user();
       if (!user) {
-        console.error("🔴 Cannot create nutzap monitor: no user");
         return;
       }
       // Create monitor with relay configuration
@@ -1688,17 +1592,12 @@ export class CashuWalletService implements ICashuWalletService {
       try {
         if (this.wallet.privkeys.size > 0) {
           // Add all wallet private keys to the nutzap monitor
-          for (const [pubkey, signer] of this.wallet.privkeys.entries()) {
+          for (const [, signer] of this.wallet.privkeys.entries()) {
             this.nutzapMonitor.addPrivkey(signer);
-            console.log(`🔑 Added wallet P2PK private key ${pubkey} to nutzap monitor`);
           }
         } else {
-          console.warn(
-            "⚠️ Wallet does not have P2PK private keys - cannot redeem nutzaps"
-          );
         }
       } catch (error) {
-        console.error("🔴 Error setting up wallet private keys:", error);
       }
 
       // Listen for all nutzap monitor events
@@ -1710,7 +1609,6 @@ export class CashuWalletService implements ICashuWalletService {
 
       // Listen for redeemed nutzaps
       this.nutzapMonitor.on("redeemed", async (event: any) => {
-        console.log("🎉 Nutzap redeemed!", event);
         // Update balance after redemption
         await this.updateBalance();
 
@@ -1730,8 +1628,7 @@ export class CashuWalletService implements ICashuWalletService {
       });
 
       // Listen for errors
-      this.nutzapMonitor.on("failed", (event: any) => {
-        console.error("🔴 Nutzap redemption failed:", event);
+      this.nutzapMonitor.on("failed", () => {
       });
 
       // Log subscription status
@@ -1758,14 +1655,11 @@ export class CashuWalletService implements ICashuWalletService {
             groupable: false,
           },
         })
-        .catch((error: any) => {
+        .catch(() => {
           // Log but don't fail - backup keys are optional
-          console.warn("⚠️ Nutzap monitor backup key warning:", error.message);
         });
 
-      console.log("✅ Nutzap monitor started successfully");
     } catch (error) {
-      console.error("🔴 Failed to start nutzap monitor:", error);
       // Don't throw - the wallet can still function without nutzap monitoring
     }
   }
@@ -1778,26 +1672,21 @@ export class CashuWalletService implements ICashuWalletService {
 
     // Listen for wallet events using NDK's EventEmitter capabilities
     this.wallet.on('ready', () => {
-      console.log('🎉 Wallet is ready');
       this.updateBalance();
     });
 
     this.wallet.on('balance_updated', () => {
-      console.log('💰 Wallet balance updated by NDK');
       this.updateBalance();
     });
 
-    this.wallet.on('warning', (warning: any) => {
-      console.warn('⚠️ Wallet warning:', warning);
+    this.wallet.on('warning', () => {
     });
 
     // Listen for deposit events
     this.wallet.depositMonitor?.on('change', () => {
-      console.log('🔄 Deposit monitor change detected');
       this.updateBalance();
     });
 
-    console.log('✅ Set up wallet event listeners');
   }
 
   private updateCachedBalance(balance: number): void {
@@ -1821,7 +1710,6 @@ export class CashuWalletService implements ICashuWalletService {
           this.cachedBalance = balance;
         }
       } catch (error) {
-        console.error("Failed to load cached balance:", error);
       }
     }
   }
@@ -1842,7 +1730,6 @@ export class CashuWalletService implements ICashuWalletService {
       try {
         this.transactionHistory = JSON.parse(stored);
       } catch (error) {
-        console.error("Failed to load transaction history:", error);
       }
     }
   }
@@ -1881,9 +1768,7 @@ export class CashuWalletService implements ICashuWalletService {
       await historyEvent.sign();
       await historyEvent.publish();
 
-      console.log("📝 Created NIP-60 spending history event");
     } catch (error) {
-      console.error("Failed to create spending history event:", error);
     }
   }
 
@@ -1924,7 +1809,6 @@ export class CashuWalletService implements ICashuWalletService {
               await event.decrypt();
               content = JSON.parse(event.content);
             } catch (decryptErr) {
-              console.debug("Failed to decrypt history event:", decryptErr);
               continue;
             }
           }
@@ -1979,7 +1863,6 @@ export class CashuWalletService implements ICashuWalletService {
             addedCount++;
           }
         } catch (err) {
-          console.debug("Could not process history event:", err);
         }
       }
 
@@ -1994,7 +1877,6 @@ export class CashuWalletService implements ICashuWalletService {
         this.saveTransactionHistory();
       }
     } catch (error) {
-      console.error("Failed to load transaction history from NIP-60:", error);
     }
   }
 
@@ -2016,7 +1898,6 @@ export class CashuWalletService implements ICashuWalletService {
     }
 
     try {
-      console.log("⚡ Starting Lightning payment...");
       
       // Get invoice amount for logging
       const invoiceAmount = this.parseInvoiceAmount(invoice);
@@ -2067,7 +1948,6 @@ export class CashuWalletService implements ICashuWalletService {
           // Update balance with all authorized mints
           await this.updateBalance();
 
-          console.log("✅ Lightning payment successful!");
           
           return {
             paid: true,
@@ -2076,7 +1956,6 @@ export class CashuWalletService implements ICashuWalletService {
           };
         }
 
-        console.error("❌ No preimage in payment result:", paymentResult);
         return {
           paid: false,
           error: "Payment failed - mint may not support Lightning payments or insufficient balance",
@@ -2088,7 +1967,6 @@ export class CashuWalletService implements ICashuWalletService {
         }
       }
     } catch (error) {
-      console.error("❌ Lightning payment failed:", error);
       
       // Provide more specific error messages
       if (error instanceof Error) {
@@ -2168,7 +2046,6 @@ export class CashuWalletService implements ICashuWalletService {
           return amount; // already in sats
       }
     } catch (error) {
-      console.error("Failed to parse invoice amount:", error);
       return 0;
     }
   }
@@ -2190,7 +2067,6 @@ export class CashuWalletService implements ICashuWalletService {
       // Basic filtering for nutzap relays
       return this.filterNutzapRelays(relays);
     } catch (error) {
-      console.error("Failed to parse nutzap relays from NDKCashuMintList:", error);
       return [];
     }
   }
@@ -2205,7 +2081,6 @@ export class CashuWalletService implements ICashuWalletService {
       // Use NDKCashuMintList's built-in mints getter
       return mintList.mints || [];
     } catch (error) {
-      console.error("Failed to parse nutzap mints from NDKCashuMintList:", error);
       return [];
     }
   }
@@ -2220,7 +2095,6 @@ export class CashuWalletService implements ICashuWalletService {
       // Use NDKCashuMintList's built-in p2pk getter
       return mintList.p2pk || null;
     } catch (error) {
-      console.error("Failed to parse nutzap P2PK from NDKCashuMintList:", error);
       return null;
     }
   }
@@ -2274,7 +2148,6 @@ export class CashuWalletService implements ICashuWalletService {
               }
             }
           } catch (outboxError) {
-            console.warn(`⚠️ Outbox model failed for ${pubkey.slice(0,8)}..., trying direct fetch:`, outboxError);
           }
 
           // If outbox model failed or returned null, try direct fetch from current relays
@@ -2323,7 +2196,6 @@ export class CashuWalletService implements ICashuWalletService {
       
       return await fetchPromise;
     } catch (error) {
-      console.error("Failed to fetch user 10019:", error);
       // Still cache the failure to avoid repeated attempts
       this.user10019Cache.set(pubkey, null);
       return null;
@@ -2360,7 +2232,6 @@ export class CashuWalletService implements ICashuWalletService {
           const mintList = await this.fetchUser10019(pubkey);
           return { pubkey, mintList };
         } catch (error) {
-          console.warn(`Failed to fetch 10019 for ${pubkey}:`, error);
           return { pubkey, mintList: null };
         }
       });
@@ -2373,7 +2244,6 @@ export class CashuWalletService implements ICashuWalletService {
       });
       
     } catch (error) {
-      console.error("Failed to fetch multiple users' 10019 events:", error);
     }
     
     return result;
@@ -2415,7 +2285,6 @@ export class CashuWalletService implements ICashuWalletService {
       // Consider backup recent if less than 24 hours old
       return backupAge < 24 * 60 * 60;
     } catch (error) {
-      console.error("Failed to check for wallet backup:", error);
       return false;
     }
   }
@@ -2459,7 +2328,6 @@ export class CashuWalletService implements ICashuWalletService {
       
       return mintsChanged || p2pkChanged;
     } catch (error) {
-      console.error("Failed to check nutzap config:", error);
       return true; // Err on the side of updating
     }
   }

@@ -2,7 +2,6 @@ import NDK, {
   NDKEvent,
   NDKPrivateKeySigner,
   NDKRelay,
-  NDKRelayAuthPolicies,
   NDKPublishError,
   NDKUser,
 } from "@nostr-dev-kit/ndk";
@@ -92,7 +91,6 @@ export class NostrClient {
       try {
         signer = new NDKPrivateKeySigner(key);
       } catch (signerError) {
-        console.error("Failed to create NDKPrivateKeySigner:", signerError);
         throw new Error(
           "Invalid private key provided. Please check the format and try again."
         );
@@ -109,7 +107,38 @@ export class NostrClient {
       });
 
       this.groupsNdk.pool.on("relay:connect", (relay: NDKRelay) => {
-        relay.authPolicy = NDKRelayAuthPolicies.signIn({ ndk: this.groupsNdk });
+        // Use a custom auth policy that's more flexible with URL matching
+        relay.authPolicy = async (relay: NDKRelay, challenge: string) => {
+          try {
+            // Get the signer from the NDK instance
+            const signer = this.groupsNdk.signer;
+            if (!signer) {
+              throw new Error("No signer available");
+            }
+
+            // Create an auth event
+            const authEvent = new NDKEvent(this.groupsNdk);
+            authEvent.kind = 22242;
+            
+            // Remove trailing slash from relay URL to match server expectations
+            const cleanRelayUrl = relay.url.replace(/\/$/, '');
+            
+            authEvent.tags = [
+              ["relay", cleanRelayUrl],
+              ["challenge", challenge]
+            ];
+            authEvent.created_at = Math.floor(Date.now() / 1000);
+
+            // Sign the event
+            await authEvent.sign(signer);
+
+            // Return the signed event
+            return authEvent;
+          } catch (error) {
+            console.error("Auth policy error:", error);
+            throw error;
+          }
+        };
       });
 
       // Add error tracking for groups NDK instance
@@ -172,7 +201,7 @@ export class NostrClient {
 
       this.storageInitialized = true;
     } catch (error) {
-      console.error('Failed to initialize storage:', error);
+      // Storage initialization failed, but continue
     }
   }
 
@@ -204,7 +233,7 @@ export class NostrClient {
         }
       }
     } catch (error) {
-      console.error('Failed to clear expired wallet keys:', error);
+      // Failed to clear expired wallet keys, continue anyway
     }
   }
 
@@ -221,7 +250,6 @@ export class NostrClient {
       }
       
       // Wait a bit for connection if no relays are connected yet
-      console.log("Waiting for globalNdk to connect...");
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       // Check again
@@ -232,7 +260,6 @@ export class NostrClient {
     }
     
     // Fallback to groupsNdk
-    console.warn("GlobalNdk not ready, falling back to groupsNdk");
     return this.groupsNdk;
   }
   
@@ -287,7 +314,6 @@ export class NostrClient {
       if (!this.walletService) {
         // Ensure globalNdk is connected before creating wallet service
         const ndkForWallet = await this.ensureGlobalNdk();
-        console.log("Creating wallet service with NDK instance:", ndkForWallet === this.globalNdk ? "globalNdk" : "groupsNdk");
         this.walletService = new CashuWalletService(ndkForWallet);
       } else {
         // Clear kind:10019 cache when re-initializing wallet (e.g., user switch)
@@ -301,7 +327,7 @@ export class NostrClient {
         try {
           callback();
         } catch (err) {
-          console.error('Error in wallet init callback:', err);
+          // Error in wallet init callback, continue
         }
       });
       this.walletInitCallbacks.clear();
@@ -394,22 +420,19 @@ export class NostrClient {
                       } catch (e) {
                       }
                     }
-                    // Log proof amounts to understand denominations
-                    if (tokenData.proofs && Array.isArray(tokenData.proofs)) {
-                      const amounts = tokenData.proofs.map((p: any) => p.amount);
-                      console.log(`💰 Proof denominations: ${amounts.join(', ')} (total: ${amounts.reduce((a: number, b: number) => a + b, 0)})`);
-                    }
+                    // Proof amounts are available here if needed for future use
+                    // tokenData.proofs contains the proof data
                   } catch (parseErr) {
-                    console.log(`⚠️ Could not parse decrypted content:`, parseErr);
+                    // Could not parse decrypted content
                   }
                 } catch (decryptErr) {
-                  console.log(`⚠️ Could not decrypt token content:`, decryptErr);
+                  // Could not decrypt token content
                 }
               }
             }
           }
         } catch (err) {
-          console.warn(`⚠️ Error processing wallet event:`, err);
+          // Error processing wallet event
         }
       }
 
@@ -434,7 +457,6 @@ export class NostrClient {
 
       return null; // No wallet data found
     } catch (error) {
-      console.error("❌ Failed to fetch NIP-60 wallet:", error);
       return null;
     }
   }
@@ -547,55 +569,34 @@ export class NostrClient {
 
   // Get balance for a specific mint
   async getCashuBalance(mintUrl?: string): Promise<number> {
-    console.log('🔍 NostrClient.getCashuBalance() called')
-    console.log('  mintUrl:', mintUrl)
-    console.log('  walletService exists:', !!this.walletService)
-    
     if (!this.walletService) {
-      console.log('  ❌ No wallet service, returning 0')
       return 0;
     }
     
     if (mintUrl) {
-      console.log('  ❌ mintUrl specified, returning 0 (not implemented)')
       return 0;
     }
     
-    console.log('  ✅ Calling walletService.getBalance()...')
     const balance = await this.walletService.getBalance();
-    console.log('  walletService.getBalance() returned:', balance)
     return balance;
   }
 
   // Get balance available for sending to a specific recipient
   async getCashuBalanceForRecipient(recipientPubkey: string): Promise<number> {
-    console.log('🔍 NostrClient.getCashuBalanceForRecipient() called')
-    console.log('  recipientPubkey:', recipientPubkey)
-    console.log('  walletService exists:', !!this.walletService)
-    
     if (!this.walletService) {
-      console.log('  ❌ No wallet service, returning 0')
       return 0;
     }
     
-    console.log('  ✅ Calling walletService.getBalanceForRecipient()...')
     const balance = await this.walletService.getBalanceForRecipient(recipientPubkey);
-    console.log('  walletService.getBalanceForRecipient() returned:', balance)
     return balance;
   }
 
   async getCashuMintBalances(): Promise<Record<string, number>> {
-    console.log('🔍 NostrClient.getCashuMintBalances() called')
-    console.log('  walletService exists:', !!this.walletService)
-    
     if (!this.walletService) {
-      console.log('  ❌ No wallet service, returning {}')
       return {};
     }
     
-    console.log('  ✅ Calling walletService.getMintBalances()...')
     const balances = await this.walletService.getMintBalances();
-    console.log('  walletService.getMintBalances() returned:', balances)
     return balances;
   }
 
@@ -705,13 +706,12 @@ export class NostrClient {
         event = Array.from(events)[0];
       }
     } catch (err) {
-      console.log('Event not found on global relays, trying local relay...');
+      // Event not found on global relays, trying local relay...
     }
     
     // If not found, try groupsNdk (local relay) using subscription approach
     if (!event) {
       try {
-        console.log('Trying to fetch from local relay using subscription...');
         
         // Check current authentication status
         const localRelay = Array.from(this.groupsNdk.pool.relays.values()).find(r => 
@@ -719,7 +719,7 @@ export class NostrClient {
         );
         
         if (localRelay) {
-          console.log(`Local relay status before fetch: ${localRelay.status}, connected: ${localRelay.connected}`);
+          // Check local relay status
         }
         
         // Use subscription approach which handles auth better
@@ -731,20 +731,17 @@ export class NostrClient {
         // Wait for event with timeout
         event = await new Promise((resolve) => {
           const timeout = setTimeout(() => {
-            console.log('Subscription timeout reached');
             sub.stop();
             resolve(null);
           }, 5000); // Increased timeout to allow for auth
           
           sub.on('event', (e: any) => {
-            console.log('Received event via subscription');
             clearTimeout(timeout);
             sub.stop();
             resolve(e);
           });
           
           sub.on('eose', () => {
-            console.log('Received EOSE without event');
             clearTimeout(timeout);
             sub.stop();
             resolve(null);
@@ -753,14 +750,13 @@ export class NostrClient {
         
         // If still no event but relay got authenticated during subscription, try fetchEvents
         if (!event && localRelay && localRelay.status >= 5) {
-          console.log('Relay authenticated during subscription, trying fetchEvents...');
           const events = await this.groupsNdk.fetchEvents(filter);
           if (events.size > 0) {
             event = Array.from(events)[0];
           }
         }
       } catch (err) {
-        console.error('Error fetching from local relay:', err);
+        // Error fetching from local relay
       }
     }
     
@@ -835,7 +831,7 @@ export class NostrClient {
         });
       }
     } catch (error) {
-      console.warn('Failed to load temporarily dead relays:', error);
+      // Failed to load temporarily dead relays
     }
   }
 
@@ -849,7 +845,7 @@ export class NostrClient {
       });
       localStorage.setItem('temporarilyDeadRelays', JSON.stringify(data));
     } catch (error) {
-      console.warn('Failed to save temporarily dead relays:', error);
+      // Failed to save temporarily dead relays
     }
   }
 
@@ -870,18 +866,15 @@ export class NostrClient {
 
   // Attempt to reconnect to a relay immediately
   private async attemptReconnection(relayUrl: string): Promise<void> {
-    console.log(`🔄 Attempting to reconnect to ${relayUrl}`);
-    
     try {
       // Find the relay in our groups NDK pool and attempt reconnection
       const relay = this.groupsNdk.pool.relays.get(relayUrl);
       
       if (relay && relay.status !== 1) { // Not connected
         await this.connectToRelay(relay);
-        console.log(`✅ Reconnection attempt completed for ${relayUrl}`);
       }
     } catch (error) {
-      console.warn(`⚠️ Failed to reconnect to ${relayUrl}:`, error);
+      // Failed to reconnect
     }
   }
 
@@ -925,10 +918,8 @@ export class NostrClient {
   private markRelayAsDead(relayUrl: string, isActualFailure: boolean = true, error?: Error): void {
     // Handle normal disconnections differently
     if (!isActualFailure && this.isNormalDisconnection(error)) {
-      console.log(`🔄 Normal server disconnection from ${relayUrl}, attempting reconnection`);
       // Attempt immediate reconnection for normal disconnections
       this.attemptReconnection(relayUrl).catch(err => {
-        console.warn(`⚠️ Reconnection failed for ${relayUrl}:`, err);
         // If reconnection fails, treat as actual failure
         this.markRelayAsDead(relayUrl, true, err instanceof Error ? err : new Error(String(err)));
       });
@@ -937,7 +928,6 @@ export class NostrClient {
     
     // Only count actual failures toward dead relay threshold
     if (!isActualFailure) {
-      console.log(`🔄 Non-failure disconnection from ${relayUrl}, attempting reconnection`);
       this.attemptReconnection(relayUrl);
       return;
     }
@@ -958,9 +948,6 @@ export class NostrClient {
     if (existing.count >= 6) {
       this.temporarilyDeadRelays.add(relayUrl);
       this.saveTemporarilyDeadRelays(); // Persist to localStorage
-      console.warn(`🚫 Temporarily marked relay as dead after ${existing.count} failures: ${relayUrl}`, error?.message);
-    } else {
-      console.warn(`⚠️ Relay failure ${existing.count}/6 for ${relayUrl}:`, error?.message);
     }
   }
 
@@ -1008,7 +995,6 @@ export class NostrClient {
       
       return this.filterHealthyRelays(relays);
     } catch (error) {
-      console.error("Failed to fetch user relays:", error);
       const fallbackRelays = ["wss://relay.damus.io", "wss://relay.nos.social"];
       return this.filterHealthyRelays(fallbackRelays);
     }
@@ -1027,7 +1013,6 @@ export class NostrClient {
 
   async connect() {
     try {
-      console.log(`Connecting to relay: ${this.config.relayUrl}`);
       await this.groupsNdk.connect();
       
       // Don't create wallet service here - it will be created when needed with proper NDK instance
@@ -1057,8 +1042,6 @@ export class NostrClient {
 
       if (!mainRelay) {
         // List all relays in pool for debugging
-        const availableRelays = Array.from(this.groupsNdk.pool.relays.values()).map(r => r.url);
-        console.error(`Main relay not found. Looking for: ${mainRelayUrl}, Available: ${availableRelays.join(', ')}`);
         throw new Error(`Main relay ${mainRelayUrl} not found in pool after ${attempts} attempts`);
       }
 
@@ -1112,25 +1095,14 @@ export class NostrClient {
         }, 10000); // 10 seconds for main relay
       });
 
-      // Log all relay statuses
-      const relays = Array.from(this.groupsNdk.pool.relays.values());
-      console.log(
-        "Connected to relays:",
-        relays.map((r) => ({
-          url: r.url,
-          status: r.status,
-          connected: r.connected,
-          isMainRelay: r.url === mainRelayUrl
-        }))
-      );
-
-      console.log("Main relay connected successfully");
+      // All relay statuses are now available
       
       // Now create a separate NDK instance for all non-group operations with public relays
       try {
         this.globalNdk = new NDK({
           explicitRelayUrls: [
-            this.config.relayUrl,      // Include local relay for complete coverage
+            // Don't include local relay here - it's already handled by groupsNdk
+            // and having it in both causes auth conflicts with subdomain validation
             "wss://relay.damus.io",   // Popular relay
             "wss://relay.nos.social",  // NOS relay
             "wss://purplepag.es",      // Profile relay
@@ -1143,13 +1115,11 @@ export class NostrClient {
         });
         
         // Connect global NDK in the background
-        this.globalNdk.connect().then(() => {
-          console.log("Global NDK connected successfully");
-        }).catch(err => {
-          console.warn("Global NDK connection failed, some features may not work:", err);
+        this.globalNdk.connect().catch(() => {
+          // Global NDK connection failed, some features may not work
         });
-      } catch (err) {
-        console.warn("Failed to create global NDK:", err);
+      } catch {
+        // Failed to create global NDK
       }
     } catch (error) {
       throw new NostrGroupError(`Failed to connect: ${error}`);
@@ -1202,7 +1172,7 @@ export class NostrClient {
       try {
         await localforage.clear();
       } catch (error) {
-        console.warn('Failed to clear localforage:', error);
+        // Failed to clear localforage
       }
 
       // Clear relay failure tracking
@@ -1213,7 +1183,6 @@ export class NostrClient {
       this.storageInitialized = false;
 
     } catch (error) {
-      console.error("Error during disconnect:", error);
       throw new NostrGroupError(`Failed to disconnect: ${error}`);
     }
   }
@@ -1248,8 +1217,16 @@ export class NostrClient {
     } catch (error) {
       // If it's a NDKPublishError, we can get specific relay errors
       if (error instanceof NDKPublishError) {
+        // Get the first relay error (there's usually only one relay in our case)
         for (const [relay, err] of error.errors) {
-          throw new NostrGroupError(err.message, relay.url);
+          // The backend now sends proper error messages in OK responses
+          // Format is usually "error: <message>" from the error handling middleware
+          const errorMessage = err.message;
+          
+          // Remove "error: " prefix if present
+          const cleanMessage = errorMessage.replace(/^error:\s*/i, '');
+          
+          throw new NostrGroupError(cleanMessage, relay.url);
         }
       }
 
@@ -1388,7 +1365,6 @@ export class NostrClient {
 
       return user.profile;
     } catch (error) {
-      console.error("Failed to fetch profile:", error);
       return null;
     }
   }
@@ -1479,7 +1455,6 @@ export class NostrClient {
 
       return false;
     } catch (error) {
-      console.error("Failed to check relay admin status:", error);
       return false;
     }
   }

@@ -6,14 +6,12 @@
 #[cfg(test)]
 mod tests {
     use crate::groups_event_processor::GroupsRelayProcessor;
-    use crate::test_utils::{
-        create_test_event, create_test_keys, setup_test, setup_test_with_sender,
-    };
+    use crate::test_utils::{create_test_event, create_test_keys, setup_test_with_sender};
     use crate::{Groups, StoreCommand};
     use nostr_lmdb::Scope;
     use nostr_relay_builder::{
-        EventContext, EventProcessor, NostrConnectionState, RelayDatabase, RelayMiddleware,
-        SubscriptionRegistry,
+        CryptoHelper, EventContext, EventProcessor, NostrConnectionState, RelayDatabase,
+        RelayMiddleware, SubscriptionRegistry,
     };
     use nostr_sdk::prelude::*;
     use parking_lot::RwLock;
@@ -26,8 +24,9 @@ mod tests {
     /// Helper function to create a RelayMiddleware with GroupsRelayProcessor for testing
     async fn create_test_relay_middleware(
         database: Arc<RelayDatabase>,
-        admin_pubkey: PublicKey,
+        admin_keys: Keys,
     ) -> RelayMiddleware<GroupsRelayProcessor, ()> {
+        let admin_pubkey = admin_keys.public_key();
         let groups = Arc::new(
             Groups::load_groups(
                 database.clone(),
@@ -40,15 +39,26 @@ mod tests {
 
         let groups_processor = GroupsRelayProcessor::new(groups, admin_pubkey);
         let registry = Arc::new(SubscriptionRegistry::new(None));
-        RelayMiddleware::new(groups_processor, admin_pubkey, database, registry, 5000)
+        let relay_url = RelayUrl::parse("wss://test.relay.com").unwrap();
+        let crypto_helper = CryptoHelper::new(Arc::new(admin_keys));
+        RelayMiddleware::new(
+            groups_processor,
+            admin_pubkey,
+            database,
+            registry,
+            5000,
+            relay_url,
+            crypto_helper,
+            None, // max_subscriptions
+        )
     }
 
     #[tokio::test]
     async fn test_relay_middleware_group_content_event_without_group() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
 
-        let middleware = create_test_relay_middleware(database, admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
         // Create group content event without existing group (unmanaged group)
         let event = create_test_event(
@@ -58,12 +68,12 @@ mod tests {
         )
         .await;
 
-        let state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let state = NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let member_keys_pubkey = member_keys.public_key();
 
         let context = EventContext {
             authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: state.subdomain(),
+            subdomain: &state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -83,10 +93,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_can_see_event_unmanaged_group() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, non_member_keys) = create_test_keys().await;
 
-        let middleware = create_test_relay_middleware(database, admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
         // Create an unmanaged group event
         let event = create_test_event(
@@ -96,14 +106,14 @@ mod tests {
         )
         .await;
 
-        let state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let state = NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
 
         // Non-member should be able to see unmanaged group events
         let non_member_keys_pubkey = non_member_keys.public_key();
 
         let non_member_context = EventContext {
             authed_pubkey: Some(&non_member_keys_pubkey),
-            subdomain: state.subdomain(),
+            subdomain: &state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
         let can_see = middleware
@@ -115,7 +125,7 @@ mod tests {
         // Anonymous should also see unmanaged group events
         let anon_context = EventContext {
             authed_pubkey: None,
-            subdomain: state.subdomain(),
+            subdomain: &state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
         let can_see = middleware
@@ -127,21 +137,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_non_group_event() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
 
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database.clone(), admin_keys.clone()).await;
 
         // Create non-group event
         let event = create_test_event(&member_keys, Kind::TextNote.as_u16(), vec![]).await;
 
-        let state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let state = NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let member_keys_pubkey = member_keys.public_key();
 
         let context = EventContext {
             authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: state.subdomain(),
+            subdomain: &state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -164,20 +173,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_can_see_non_group_event() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
-
-        let middleware = create_test_relay_middleware(database, admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
         // Create non-group event
         let event = create_test_event(&member_keys, Kind::TextNote.as_u16(), vec![]).await;
 
-        let state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let state = NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
 
         // Everyone should see non-group events
         let context = EventContext {
             authed_pubkey: None,
-            subdomain: state.subdomain(),
+            subdomain: &state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
         let can_see = middleware
@@ -189,10 +197,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_group_create_by_non_admin() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
-
-        let middleware = create_test_relay_middleware(database, admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
         // Try to create group as non-admin
         let create_event = create_test_event(
@@ -205,12 +212,12 @@ mod tests {
         )
         .await;
 
-        let state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let state = NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let member_keys_pubkey = member_keys.public_key();
 
         let context = EventContext {
             authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: state.subdomain(),
+            subdomain: &state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -225,11 +232,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_private_group_visibility() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, non_member_keys) = create_test_keys().await;
-
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database.clone(), admin_keys.clone()).await;
 
         // Create private group
         let group_id = "private_test";
@@ -244,12 +249,13 @@ mod tests {
         )
         .await;
 
-        let admin_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let admin_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let admin_keys_pubkey = admin_keys.public_key();
 
         let admin_context = EventContext {
             authed_pubkey: Some(&admin_keys_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -289,7 +295,7 @@ mod tests {
 
         let non_member_context = EventContext {
             authed_pubkey: Some(&non_member_keys_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
         let can_see = middleware
@@ -303,7 +309,7 @@ mod tests {
 
         let member_context = EventContext {
             authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
         let can_see = middleware
@@ -315,11 +321,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_verify_filters_private_group() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, non_member_keys) = create_test_keys().await;
-
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database.clone(), admin_keys.clone()).await;
 
         // Create private group
         let group_id = "private_filters_test";
@@ -334,12 +338,13 @@ mod tests {
         )
         .await;
 
-        let admin_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let admin_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let admin_keys_pubkey = admin_keys.public_key();
 
         let admin_context = EventContext {
             authed_pubkey: Some(&admin_keys_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -376,7 +381,7 @@ mod tests {
 
         let non_member_context = EventContext {
             authed_pubkey: Some(&non_member_keys_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
         let result =
@@ -390,7 +395,7 @@ mod tests {
 
         let member_context = EventContext {
             authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
         let result = middleware
@@ -407,11 +412,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_public_group_visibility() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, non_member_keys) = create_test_keys().await;
-
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
         // Create public open group (public = readable by all, open = auto-join on posting)
         let group_id = "public_test";
@@ -427,12 +430,13 @@ mod tests {
         )
         .await;
 
-        let admin_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let admin_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let admin_keys_pubkey = admin_keys.public_key();
 
         let admin_context = EventContext {
             authed_pubkey: Some(&admin_keys_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -462,7 +466,7 @@ mod tests {
 
         let non_member_context = EventContext {
             authed_pubkey: Some(&non_member_keys_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
         let can_see = middleware
@@ -474,7 +478,7 @@ mod tests {
         // Anonymous should also see public group events
         let anon_context = EventContext {
             authed_pubkey: None,
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
         let can_see = middleware
@@ -486,11 +490,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_member_management() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
-
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
         // Create group
         let group_id = "member_test";
@@ -504,12 +506,13 @@ mod tests {
         )
         .await;
 
-        let admin_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let admin_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let admin_keys_pubkey = admin_keys.public_key();
 
         let admin_context = EventContext {
             authed_pubkey: Some(&admin_keys_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -541,7 +544,7 @@ mod tests {
 
         let member_context = EventContext {
             authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
         let add_event_by_member = create_test_event(
@@ -563,11 +566,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_event_deletion() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
-
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
         // Create group and add member
         let group_id = "deletion_test";
@@ -581,12 +582,13 @@ mod tests {
         )
         .await;
 
-        let admin_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let admin_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let admin_keys_pubkey = admin_keys.public_key();
 
         let admin_context = EventContext {
             authed_pubkey: Some(&admin_keys_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -649,7 +651,7 @@ mod tests {
 
         let member_context = EventContext {
             authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
         let member_content = create_test_event(
@@ -686,11 +688,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_visibility_member_can_see_event() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
-
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
         // Create a group first
         let group_id = "test_group";
@@ -705,11 +705,12 @@ mod tests {
         )
         .await;
 
-        let admin_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let admin_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let admin_pubkey = admin_keys.public_key();
         let admin_context = EventContext {
             authed_pubkey: Some(&admin_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -748,7 +749,7 @@ mod tests {
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
             authed_pubkey: Some(&member_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -762,11 +763,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_visibility_non_member_cannot_see_event() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, non_member_keys) = create_test_keys().await;
-
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
         // Create a private group
         let group_id = "private_test_group";
@@ -782,11 +781,12 @@ mod tests {
         )
         .await;
 
-        let admin_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let admin_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let admin_pubkey = admin_keys.public_key();
         let admin_context = EventContext {
             authed_pubkey: Some(&admin_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -824,7 +824,7 @@ mod tests {
         let non_member_pubkey = non_member_keys.public_key();
         let non_member_context = EventContext {
             authed_pubkey: Some(&non_member_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -838,11 +838,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_visibility_relay_can_see_event() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
-
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
         // Create a private group
         let group_id = "relay_test_group";
@@ -857,11 +855,12 @@ mod tests {
         )
         .await;
 
-        let admin_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let admin_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let admin_pubkey = admin_keys.public_key();
         let admin_context = EventContext {
             authed_pubkey: Some(&admin_pubkey),
-            subdomain: admin_state.subdomain(),
+            subdomain: &admin_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -889,17 +888,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_filter_verification_metadata_filter_with_d_tag() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
-
-        let member_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let member_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
             authed_pubkey: Some(&member_pubkey),
-            subdomain: member_state.subdomain(),
+            subdomain: &member_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -922,17 +920,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_filter_verification_metadata_filter_with_addressable_kind() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
-
-        let member_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let member_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
             authed_pubkey: Some(&member_pubkey),
-            subdomain: member_state.subdomain(),
+            subdomain: &member_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -956,17 +953,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_filter_verification_non_existing_group() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
-
-        let member_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let member_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
             authed_pubkey: Some(&member_pubkey),
-            subdomain: member_state.subdomain(),
+            subdomain: &member_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -988,17 +984,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_filter_verification_non_group_query() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
-
-        let member_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let member_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
             authed_pubkey: Some(&member_pubkey),
-            subdomain: member_state.subdomain(),
+            subdomain: &member_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -1014,19 +1009,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_middleware_allowed_non_group_content_event_without_group() {
-        let (_tmp_dir, database, admin_keys) = setup_test().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
-
-        let middleware = create_test_relay_middleware(database, admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database, admin_keys.clone()).await;
 
         // Create non-group content event (kind 1 without h-tag)
         let event = create_test_event(&member_keys, 1, vec![]).await;
 
-        let member_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let member_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
             authed_pubkey: Some(&member_pubkey),
-            subdomain: member_state.subdomain(),
+            subdomain: &member_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
@@ -1046,11 +1041,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_group_create_with_existing_events_requires_relay_admin() {
-        let (_tmp_dir, database, db_sender, admin_keys) = setup_test_with_sender().await;
+        let (_tmp_dir, database, admin_keys) = setup_test_with_sender().await;
         let (_, member_keys, _) = create_test_keys().await;
-
-        let middleware =
-            create_test_relay_middleware(database.clone(), admin_keys.public_key()).await;
+        let middleware = create_test_relay_middleware(database.clone(), admin_keys.clone()).await;
 
         let group_id = "existing_events_group";
 
@@ -1062,20 +1055,18 @@ mod tests {
         )
         .await;
 
-        let member_state = NostrConnectionState::<()>::new("ws://test".to_string()).unwrap();
+        let member_state =
+            NostrConnectionState::<()>::new(RelayUrl::parse("ws://test").unwrap()).unwrap();
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
             authed_pubkey: Some(&member_pubkey),
-            subdomain: member_state.subdomain(),
+            subdomain: &member_state.subdomain,
             relay_pubkey: middleware.processor().relay_pubkey(),
         };
 
         // Save the unmanaged event directly to database (like the old test)
-        db_sender
-            .save_signed_event(
-                unmanaged_event.clone(),
-                member_state.subdomain().as_ref().clone(),
-            )
+        database
+            .save_event(&unmanaged_event, &member_state.subdomain)
             .await
             .unwrap();
 

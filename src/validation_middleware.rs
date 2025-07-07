@@ -195,7 +195,8 @@ mod tests {
             subscription_id: Cow::Owned(SubscriptionId::new("test")),
             filter: Cow::Owned(normal_filter),
         };
-        let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+        let state = NostrConnectionState::new(RelayUrl::parse("wss://test.relay").unwrap())
+            .expect("Valid URL");
         let mut ctx = create_test_inbound_context(
             "test_conn".to_string(),
             Some(message),
@@ -222,7 +223,8 @@ mod tests {
             subscription_id: Cow::Owned(SubscriptionId::new("test")),
             filter: Cow::Owned(meta_filter),
         };
-        let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+        let state = NostrConnectionState::new(RelayUrl::parse("wss://test.relay").unwrap())
+            .expect("Valid URL");
         let mut ctx = create_test_inbound_context(
             "test_conn".to_string(),
             Some(message),
@@ -250,7 +252,8 @@ mod tests {
             subscription_id: Cow::Owned(SubscriptionId::new("test_id")),
             filter: Cow::Owned(ref_filter),
         };
-        let state = NostrConnectionState::new("wss://test.relay".to_string()).expect("Valid URL");
+        let state = NostrConnectionState::new(RelayUrl::parse("wss://test.relay").unwrap())
+            .expect("Valid URL");
         let mut ctx = create_test_inbound_context(
             "test_conn".to_string(),
             Some(message),

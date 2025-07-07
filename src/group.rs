@@ -502,12 +502,15 @@ impl Group {
 
     pub fn new(event: &Event, scope: Scope) -> Result<Self, Error> {
         if event.kind != KIND_GROUP_CREATE_9007 {
-            return Err(Error::notice("Invalid event kind for group creation"));
+            return Err(Error::event_error(
+                "Invalid event kind for group creation",
+                event.id,
+            ));
         }
 
         let mut group = Self::from(event);
         if group.id.is_empty() {
-            return Err(Error::notice("Group ID not found"));
+            return Err(Error::event_error("Group ID not found", event.id));
         }
 
         // Set the scope for this group
@@ -668,10 +671,10 @@ impl Group {
 
         self.update_roles();
         self.update_state();
-        
+
         // Validate the group still has at least one admin
         self.validate_has_admin()?;
-        
+
         Ok(())
     }
 
@@ -750,7 +753,7 @@ impl Group {
 
         self.update_roles();
         self.update_state();
-        
+
         // Validate the group still has at least one admin after removal
         self.validate_has_admin()?;
 
@@ -841,7 +844,7 @@ impl Group {
 
         self.update_roles();
         self.update_state();
-        
+
         // Validate the group still has at least one admin after role changes
         self.validate_has_admin()?;
 
@@ -1146,7 +1149,10 @@ impl Group {
 
         // Check for duplicate invite code
         if self.invites.contains_key(invite_code) {
-            return Err(Error::notice("Invite code already exists"));
+            return Err(Error::event_error(
+                "Invite code already exists",
+                invite_event.id,
+            ));
         }
 
         // Check if the invite is reusable
@@ -1381,7 +1387,10 @@ impl Group {
     }
 
     /// Generates all membership-related events for the group
-    pub fn generate_membership_events(&self, relay_pubkey: &PublicKey) -> Result<Vec<UnsignedEvent>, Error> {
+    pub fn generate_membership_events(
+        &self,
+        relay_pubkey: &PublicKey,
+    ) -> Result<Vec<UnsignedEvent>, Error> {
         // println!("[generate_membership_events] Starting to generate membership events");
         // println!("[generate_membership_events] Generating put_user_event");
         let put_user = self.generate_put_user_event(relay_pubkey);
@@ -1418,10 +1427,10 @@ impl Group {
 
     pub fn generate_admins_event(&self, pubkey: &PublicKey) -> Result<UnsignedEvent, Error> {
         // println!("[generate_admins_event] Starting");
-        
+
         // First validate the group has at least one admin
         self.validate_has_admin()?;
-        
+
         let admins = self.members.values().filter(|member| {
             member
                 .roles
@@ -1453,7 +1462,9 @@ impl Group {
 
         // Double-check we have at least one admin in the generated event
         if admin_count == 0 {
-            return Err(Error::notice("Cannot generate 39001 event: group has no admins"));
+            return Err(Error::notice(
+                "Cannot generate 39001 event: group has no admins",
+            ));
         }
 
         // println!("[generate_admins_event] Finished");

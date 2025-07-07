@@ -6,7 +6,6 @@ use groups_relay::{
 use nostr_relay_builder::{AuthConfig, RelayBuilder, RelayConfig};
 use std::sync::Arc;
 use tempfile::TempDir;
-use tokio_util::task::TaskTracker;
 
 #[tokio::test]
 async fn test_groups_relay_with_nostr_relay_builder() -> anyhow::Result<()> {
@@ -15,11 +14,9 @@ async fn test_groups_relay_with_nostr_relay_builder() -> anyhow::Result<()> {
     let db_path = temp_dir.path().join("test.db");
 
     let keys = Keys::generate();
-    let task_tracker = TaskTracker::new();
 
     // groups_relay's database is used for groups management
-    let (groups_database, db_sender) =
-        RelayDatabase::with_task_tracker(&db_path, Arc::new(keys.clone()), task_tracker.clone())?;
+    let groups_database = RelayDatabase::new(db_path.to_string_lossy().to_string())?;
     let groups_database = Arc::new(groups_database);
 
     let groups = Arc::new(
@@ -33,11 +30,7 @@ async fn test_groups_relay_with_nostr_relay_builder() -> anyhow::Result<()> {
 
     let relay_config = RelayConfig::new(
         "wss://test.groups.relay",
-        (
-            groups_database.clone(),
-            db_sender,
-            nostr_relay_builder::CryptoHelper::new(Arc::new(keys.clone())),
-        ),
+        groups_database.clone(),
         keys.clone(),
     )
     .with_subdomains(2)

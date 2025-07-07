@@ -904,7 +904,6 @@ mod tests {
     use nostr_relay_builder::RelayDatabase;
     use std::time::Instant;
     use tempfile::TempDir;
-    use tokio_util::task::TaskTracker;
 
     const TEST_GROUP_ID: &str = "test_group_123";
 
@@ -922,23 +921,19 @@ mod tests {
 
     async fn create_test_groups_with_db(admin_keys: &Keys) -> Groups {
         let temp_dir = TempDir::new().unwrap();
-        let task_tracker = TaskTracker::new();
-        let (db, _db_sender) = RelayDatabase::with_task_tracker(
+        let db = RelayDatabase::new(
             temp_dir
                 .path()
                 .join("test.db")
                 .to_string_lossy()
                 .to_string(),
-            Arc::new(admin_keys.clone()),
-            task_tracker,
         )
         .unwrap();
-        let db = Arc::new(db);
 
         std::mem::forget(temp_dir);
 
         Groups {
-            db,
+            db: Arc::new(db),
             groups: DashMap::new(),
             relay_pubkey: admin_keys.public_key(),
             relay_url: "wss://test.relay.url".to_string(),

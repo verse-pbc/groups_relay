@@ -36,6 +36,49 @@ export class GroupCard extends Component<GroupCardProps, GroupCardState> {
     const { group, client, showMessage, onDelete, updateGroupsMap } = this.props
     const { isRelayAdmin } = this.state
 
+    // Show loading state if group content is being loaded
+    if (group.isLoading) {
+      return (
+        <article class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] flex flex-col">
+          <GroupHeader
+            group={group}
+            client={client}
+            showMessage={showMessage}
+            onDelete={onDelete}
+            updateGroupsMap={updateGroupsMap}
+          />
+          <div class="flex-grow p-8 flex flex-col items-center justify-center">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-[var(--color-primary)]"></div>
+            <p class="mt-4 text-[var(--color-text-secondary)]">Loading group content...</p>
+          </div>
+        </article>
+      )
+    }
+
+    // Show error state if loading failed
+    if (group.loadError) {
+      return (
+        <article class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] flex flex-col">
+          <GroupHeader
+            group={group}
+            client={client}
+            showMessage={showMessage}
+            onDelete={onDelete}
+            updateGroupsMap={updateGroupsMap}
+          />
+          <div class="flex-grow p-8 flex flex-col items-center justify-center">
+            <div class="text-red-500 mb-4">
+              <svg class="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <p class="text-[var(--color-text-secondary)]">Failed to load group content</p>
+            <p class="text-sm text-[var(--color-text-tertiary)] mt-2">{group.loadError}</p>
+          </div>
+        </article>
+      )
+    }
+
     return (
       <article class="bg-[var(--color-bg-secondary)] rounded-lg shadow-lg border border-[var(--color-border)] flex flex-col">
         {isRelayAdmin && (

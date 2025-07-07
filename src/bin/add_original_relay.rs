@@ -4,7 +4,6 @@ use groups_relay::groups::{Groups, KIND_GROUP_METADATA_39000};
 use groups_relay::RelayDatabase;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
-use tokio_util::task::TaskTracker;
 use tracing::{error, info, warn};
 
 #[derive(Parser, Debug)]
@@ -65,17 +64,9 @@ async fn main() -> Result<()> {
     info!("Relay public key: {}", relay_pubkey);
     info!("Dry run: {}", args.dry_run);
 
-    // Create task tracker
-    let task_tracker = TaskTracker::new();
-
     // Open database
-    let (database, db_sender) = RelayDatabase::with_task_tracker(
-        &args.db_path,
-        Arc::new(relay_keys.clone()),
-        task_tracker.clone(),
-    )?;
+    let database = RelayDatabase::new(&args.db_path)?;
     let database = Arc::new(database);
-    task_tracker.close();
 
     // Load groups
     let groups =
@@ -156,7 +147,10 @@ async fn main() -> Result<()> {
             };
 
             // Generate new metadata event with original_relay tag
-            let new_event = group.generate_metadata_event(&relay_pubkey, &args.relay_url);
+            let new_event = group
+                .generate_metadata_event(&relay_pubkey, &args.relay_url)
+                .sign_with_keys(&relay_keys)
+                .unwrap();
 
             if args.dry_run {
                 info!(
@@ -166,10 +160,7 @@ async fn main() -> Result<()> {
                 info!("New event tags: {:?}", new_event.tags);
             } else {
                 // Save the new unsigned event
-                match db_sender
-                    .save_unsigned_event(new_event, scope.clone())
-                    .await
-                {
+                match database.save_event(&new_event, &scope).await {
                     Ok(_) => {
                         info!("Successfully updated metadata event for group {}", group_id);
                         total_updated += 1;
@@ -190,9 +181,6 @@ async fn main() -> Result<()> {
     if args.dry_run {
         info!("This was a dry run - no changes were made");
     }
-
-    drop(db_sender);
-    task_tracker.wait().await;
 
     Ok(())
 }

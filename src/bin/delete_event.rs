@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
-use nostr_database::NostrEventsDatabase;
 use nostr_lmdb::NostrLMDB;
 use nostr_sdk::prelude::*;
 use std::collections::{HashMap, HashSet};

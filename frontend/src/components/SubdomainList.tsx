@@ -33,7 +33,6 @@ export class SubdomainList extends Component<SubdomainListProps, SubdomainListSt
     try {
       const response = await fetch('/api/config');
       if (!response.ok) {
-        console.warn(`Failed to fetch config: ${response.status}, using defaults`);
         return;
       }
       
@@ -42,7 +41,6 @@ export class SubdomainList extends Component<SubdomainListProps, SubdomainListSt
         baseDomainParts: data.base_domain_parts || 2,
       });
     } catch (error) {
-      console.warn('Error fetching config, using defaults:', error);
       // Keep default baseDomainParts value
     }
   };
@@ -62,7 +60,6 @@ export class SubdomainList extends Component<SubdomainListProps, SubdomainListSt
         isLoadingSubdomains: false,
       });
     } catch (error) {
-      console.error('Error fetching subdomains:', error);
       this.setState({
         error: error instanceof Error ? error.message : 'Failed to fetch subdomains',
         isLoadingSubdomains: false,
@@ -98,7 +95,6 @@ export class SubdomainList extends Component<SubdomainListProps, SubdomainListSt
     
     // For localhost or IP addresses, don't try to create subdomains
     if (hostname === 'localhost' || hostname.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-      console.warn('Cannot navigate to subdomains on localhost or IP addresses');
       return;
     }
     

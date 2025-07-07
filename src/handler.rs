@@ -7,6 +7,7 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use nostr_lmdb::Scope;
+use nostr_relay_builder::WebSocketUpgrade;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -14,7 +15,6 @@ use std::sync::Arc;
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
 use tracing::debug;
-use websocket_builder::WebSocketUpgrade;
 
 #[derive(Serialize)]
 pub struct GroupResponse {

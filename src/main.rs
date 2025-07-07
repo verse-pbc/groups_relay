@@ -18,7 +18,6 @@ use groups_relay::{config, groups::Groups, server, RelayDatabase};
 use nostr_sdk::RelayUrl;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -99,15 +98,9 @@ async fn main() -> Result<()> {
 
     let relay_keys = relay_settings.relay_keys()?;
     let _cancellation_token = CancellationToken::new();
-    // Create task tracker for managing background tasks
-    let task_tracker = TaskTracker::new();
 
     // Create database (CryptoHelper is created internally)
-    let (database, db_sender) = RelayDatabase::with_task_tracker(
-        settings.db_path.clone(),
-        Arc::new(relay_keys.clone()),
-        task_tracker.clone(),
-    )?;
+    let database = RelayDatabase::new(settings.db_path.clone())?;
     let database = Arc::new(database);
     let groups = Arc::new(
         Groups::load_groups(
@@ -118,7 +111,7 @@ async fn main() -> Result<()> {
         .await?,
     );
 
-    server::run_server(settings, relay_keys, database, db_sender, groups).await?;
+    server::run_server(settings, relay_keys, database, groups).await?;
 
     Ok(())
 }

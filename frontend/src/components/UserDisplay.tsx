@@ -85,7 +85,6 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       
       // Subscribe to wallet initialization
       this.unsubscribeWalletInit = client.onWalletInitialized(() => {
-        console.log('💰 [UserDisplay] Wallet initialized, checking compatibility');
         this.compatibilityCheckAttempts = 0; // Reset attempts
         this.checkRecipientCompatibility();
       });
@@ -157,7 +156,6 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
     
     // Re-check if wallet initialization status changes
     if (prevProps.hasWalletBalance !== this.props.hasWalletBalance && this.props.hasWalletBalance) {
-      console.log('💰 [UserDisplay] Wallet balance status changed, re-checking compatibility');
       this.checkRecipientCompatibility();
     }
   }
@@ -214,25 +212,18 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       // Convert npub to hex if needed
       const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
 
-      console.log('🔍 [UserDisplay] Starting compatibility check for:', hexPubkey);
-      console.log('  npub:', pubkey);
-      console.log('  Attempt:', this.compatibilityCheckAttempts + 1);
-
       // Check if wallet is initialized first
       if (!client.isWalletInitialized()) {
-        console.log('⏳ [UserDisplay] Wallet not initialized yet, will retry...');
         
         // Retry up to 10 times with exponential backoff
         if (this.compatibilityCheckAttempts < 10) {
           this.compatibilityCheckAttempts++;
           const delay = Math.min(1000 * Math.pow(1.5, this.compatibilityCheckAttempts), 10000);
-          console.log(`⏳ [UserDisplay] Scheduling retry #${this.compatibilityCheckAttempts} in ${delay}ms`);
           
           this.compatibilityCheckTimer = window.setTimeout(() => {
             this.checkRecipientCompatibility();
           }, delay);
         } else {
-          console.error('❌ [UserDisplay] Wallet initialization timeout after 10 attempts');
           this.setState({ 
             canSendNutzap: false,
             incompatibilityReason: "Wallet initialization timeout"
@@ -244,7 +235,6 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       // Use gossip model to check compatibility
       const walletService = client.getWalletService();
       if (!walletService) {
-        console.error('❌ [UserDisplay] Wallet service not available');
         this.setState({ 
           canSendNutzap: false,
           incompatibilityReason: "Wallet service not available"
@@ -262,21 +252,10 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
         incompatibilityReason: compatibility.reason
       })
       
-      console.log('🔍 [UserDisplay] Recipient compatibility result:', {
-        pubkey: hexPubkey.slice(0, 8) + '...',
-        npub: pubkey,
-        canSend: compatibility.canSend,
-        compatibleBalance: compatibility.compatibleBalance,
-        compatibleMints: compatibility.compatibleMints,
-        recipientMints: compatibility.recipientMints,
-        reason: compatibility.reason
-      })
-      
       // Reset attempts counter on success
       this.compatibilityCheckAttempts = 0;
       
     } catch (error) {
-      console.error('Failed to check recipient compatibility:', error)
       this.setState({ 
         canSendNutzap: false,
         incompatibilityReason: "Error checking compatibility"
@@ -290,16 +269,10 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
       const { pubkey, client } = this.props
       const hexPubkey = pubkey.startsWith('npub') ? client.npubToPubkey(pubkey) : pubkey
 
-      console.log('🔍 UserDisplay.fetchWalletBalance() called from nutzap modal')
-      console.log('  Target pubkey:', hexPubkey.slice(0, 8) + '...')
-      console.log('  Compatible mints:', this.state.compatibleMints)
-      console.log('  Compatible balance (for modal display):', this.state.compatibleBalance)
-      
       // Get compatible mint balances only
       const walletService = client.getWalletService()
       if (walletService) {
         const compatibleMintBalances = await walletService.getCompatibleMintsWithBalances(hexPubkey)
-        console.log('  Compatible mint balances:', compatibleMintBalances)
 
         // Auto-select the first compatible mint with highest balance
         const sortedMints = Object.entries(compatibleMintBalances)
@@ -307,7 +280,6 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
           .sort(([, a], [, b]) => b - a)
         
         const selectedMint = sortedMints.length > 0 ? sortedMints[0][0] : ''
-        console.log('  Auto-selected mint:', selectedMint)
 
         // IMPORTANT: Keep walletBalance as the compatible balance for this modal
         // This is what the user can actually send to this recipient
@@ -324,7 +296,6 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
         })
       }
     } catch (error) {
-      console.error('Failed to fetch wallet balance:', error)
       this.setState({ walletBalance: 0, mintBalances: {} })
     }
   }
@@ -504,7 +475,6 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
           this.state.canSendNutzap ? (
             <button
               onClick={() => {
-                console.log('🔥 NUTZAP BUTTON CLICKED - Opening modal and fetching balance')
                 this.setState({ showNutzapModal: true })
                 this.fetchWalletBalance()
               }}
@@ -530,16 +500,6 @@ export class UserDisplay extends Component<UserDisplayProps, UserDisplayState> {
 
         {showNutzapModal && (
           <>
-            {/* Debug logging when modal renders */}
-            {(() => {
-              console.log('🔥 NUTZAP MODAL RENDERING - Current state:')
-              console.log('  walletBalance:', this.state.walletBalance)
-              console.log('  mintBalances:', this.state.mintBalances)
-              console.log('  Object.keys(mintBalances):', Object.keys(this.state.mintBalances))
-              console.log('  Object.values(mintBalances):', Object.values(this.state.mintBalances))
-              return null;
-            })()}
-            
             {/* Modal backdrop */}
             <div
               class="fixed inset-0 bg-black/50 z-50"

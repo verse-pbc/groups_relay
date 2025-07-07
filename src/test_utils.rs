@@ -4,37 +4,24 @@ use std::time::Instant;
 use tempfile::TempDir;
 
 use crate::group::Group;
-use nostr_relay_builder::{DatabaseSender, NostrConnectionState, RelayDatabase};
-use tokio_util::task::TaskTracker;
+use nostr_relay_builder::{NostrConnectionState, RelayDatabase};
 
 pub async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let db_path = tmp_dir.path().join("test.db");
     let keys = Keys::generate();
-    let task_tracker = TaskTracker::new();
-    let (database, _db_sender) = RelayDatabase::with_task_tracker(
-        db_path.to_str().unwrap(),
-        Arc::new(keys.clone()),
-        task_tracker,
-    )
-    .unwrap();
+    let database = RelayDatabase::new(db_path.to_str().unwrap()).unwrap();
     let database = Arc::new(database);
     (tmp_dir, database, keys)
 }
 
-pub async fn setup_test_with_sender() -> (TempDir, Arc<RelayDatabase>, DatabaseSender, Keys) {
+pub async fn setup_test_with_sender() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let db_path = tmp_dir.path().join("test.db");
     let keys = Keys::generate();
-    let task_tracker = TaskTracker::new();
-    let (database, db_sender) = RelayDatabase::with_task_tracker(
-        db_path.to_str().unwrap(),
-        Arc::new(keys.clone()),
-        task_tracker,
-    )
-    .unwrap();
+    let database = RelayDatabase::new(db_path.to_str().unwrap()).unwrap();
     let database = Arc::new(database);
-    (tmp_dir, database, db_sender, keys)
+    (tmp_dir, database, keys)
 }
 
 pub async fn create_test_keys() -> (Keys, Keys, Keys) {
@@ -58,7 +45,7 @@ pub async fn create_test_event(keys: &Keys, kind: u16, tags: Vec<Tag>) -> nostr_
 }
 
 pub fn create_test_state(pubkey: Option<nostr_sdk::PublicKey>) -> NostrConnectionState {
-    let mut state = NostrConnectionState::new("ws://test.relay".to_string())
+    let mut state = NostrConnectionState::new(RelayUrl::parse("ws://test.relay").unwrap())
         .expect("Failed to create test state");
     state.authed_pubkey = pubkey;
     state

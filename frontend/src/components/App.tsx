@@ -31,7 +31,13 @@ type NDKEvent = { // Define structure based on usage
 // type NDK = Record<string, any>;
 // --- End Local Type Definitions ---
 
-const metadataKinds: NDKKind[] = [39000, 39001, 39002 /*, 39003 removed if not used */];
+// Metadata kinds - loaded immediately for all groups
+const metadataKinds: NDKKind[] = [
+  39000, // Group metadata
+  39001, // Group admins  
+  39002, // Group members
+  GroupEventKind.CreateGroup, // Group creation events to get IDs
+];
 
 // Content kinds - loaded on-demand per group
 // h-tagged events (regular events)
@@ -42,7 +48,6 @@ const hTaggedContentKinds: NDKKind[] = [
   GroupEventKind.RemoveUser,   // 9001 - user removal uses h tags
   9, // Chat message
   11, // DM (Note: DMs might require specific handling/decryption not shown here)
-  // Add other kinds if needed, e.g., deletions (Kind 5) if you handle them
 ];
 
 // d-tagged events (addressable events 30000+)
@@ -52,12 +57,12 @@ const dTaggedContentKinds: NDKKind[] = [
 ];
 
 // Define all kinds to fetch historically and subscribe to live
-const relevantKinds: NDKKind[] = [
-  ...metadataKinds,
-  GroupEventKind.CreateGroup,
-  ...hTaggedContentKinds,
-  ...dTaggedContentKinds
-];
+// const relevantKinds: NDKKind[] = [
+//   ...metadataKinds,
+//   GroupEventKind.CreateGroup,
+//   ...hTaggedContentKinds,
+//   ...dTaggedContentKinds
+// ];
 export interface FlashMessageData {
   message: string;
   type: "success" | "error" | "info";
@@ -82,6 +87,7 @@ interface AppState {
 export class App extends Component<AppProps, AppState> {
   // No cleanup needed for historical fetch using fetchEvents
   private liveSubscriptionCleanup: (() => void) | null = null; // For the live subscription
+  private groupContentSubscriptions: Map<string, () => void> = new Map(); // Track per-group subscriptions
 
   constructor(props: AppProps) {
     super(props);
@@ -110,7 +116,8 @@ export class App extends Component<AppProps, AppState> {
     // Assume base domain is last 2 parts (e.g., example.com)
     // If there are more than 2 parts, everything before the last 2 is subdomain
     if (parts.length > 2) {
-      return parts.slice(0, -2).join('.');
+      const subdomain = parts.slice(0, -2).join('.');
+      return subdomain;
     }
     
     return null;
@@ -565,7 +572,6 @@ export class App extends Component<AppProps, AppState> {
           return;
       }
       
-      
       // Update loading state
       this.updateGroupsMap((map) => {
           const g = map.get(groupId);
@@ -648,6 +654,7 @@ export class App extends Component<AppProps, AppState> {
   }
 
   // New method for paginated historical fetch
+  /*
   private async fetchHistoricalDataPaginated(
       kinds: NDKKind[],
       batchSize: number
@@ -730,97 +737,105 @@ export class App extends Component<AppProps, AppState> {
       console.log(`Paginated fetch complete. ${totalFetched} events fetched. ${groupsMap.size} groups processed. Newest historical timestamp: ${newestHistoricalTimestamp}`);
       return { groupsMap, latestTimestamp: newestHistoricalTimestamp };
   }
+  */
 
 
   async componentDidMount() {
-    this.setState({ isLoadingHistory: true }); // Ensure loading state is true
-    const batchSize = 100; // Adjust batch size as needed
+    this.setState({ isLoadingHistory: true });
 
     try {
-      // Fetch historical data using the new paginated method
-      const { groupsMap: initialGroupsMap, latestTimestamp: newestHistoricalTimestamp } =
-        await this.fetchHistoricalDataPaginated(
-          relevantKinds,
-          batchSize
-        );
+      // Phase 1: Fetch only metadata
+      const { groupsMap: initialGroupsMap, latestTimestamp: metadataTimestamp } =
+        await this.fetchGroupMetadata();
 
-      // Update state with the initially fetched groups
+      // Update state with metadata-only groups
       const sortedGroups = Array.from(initialGroupsMap.values()).sort(
-        (a, b) => b.updated_at - a.updated_at // Sort by latest interaction
+        (a, b) => b.updated_at - a.updated_at
       );
-       const pendingUpdate = this.checkPendingSelection(initialGroupsMap);
-       const initialSelectedGroup = pendingUpdate?.selectedGroup || (sortedGroups.length === 1 ? sortedGroups[0] : null);
-
+      
+      const pendingUpdate = this.checkPendingSelection(initialGroupsMap);
+      const initialSelectedGroup = pendingUpdate?.selectedGroup || 
+        (sortedGroups.length > 0 ? sortedGroups[0] : null);
 
       this.setState({
         groupsMap: initialGroupsMap,
         groups: sortedGroups,
-         selectedGroup: initialSelectedGroup,
-         isLoadingHistory: false, // Turn off loading indicator
-         ...(pendingUpdate || {})
-      }, () => {
-        // Step 2: Start live subscription AFTER initial state is set
-        console.log("Starting live subscription since:", newestHistoricalTimestamp + 1);
-        const liveSub = this.props.client.ndkInstance.subscribe(
-          { kinds: relevantKinds, since: newestHistoricalTimestamp + 1 },
-          { closeOnEose: false } // Keep it open for live updates
+        selectedGroup: initialSelectedGroup,
+        isLoadingHistory: false,
+        ...(pendingUpdate || {})
+      }, async () => {
+        // Phase 2: Load content for selected group
+        if (initialSelectedGroup) {
+          await this.fetchGroupContent(initialSelectedGroup.id);
+          // Prefetch member data after content loads
+          const updatedGroup = this.state.groupsMap.get(initialSelectedGroup.id);
+          if (updatedGroup) {
+            this.prefetchGroupMemberData(updatedGroup);
+          }
+        }
+        
+        // Phase 3: Start live subscription for metadata
+        const metadataSub = this.props.client.ndkInstance.subscribe(
+          { kinds: metadataKinds, since: metadataTimestamp + 1 },
+          { closeOnEose: false }
         );
 
-        liveSub.on("event", (event: NDKEvent, _relay: any, _sub: any, _fromCache: any, _optimisticPublish: any) => {
-          // Use setState callback to ensure we're working with the latest state
+        metadataSub.on("event", (event: NDKEvent) => {
           this.setState((prevState) => {
-              // Create a new map instance based on previous state for modification
               let newGroupsMap = new Map(prevState.groupsMap);
-              // Process the live event, mutating the new map instance
-              newGroupsMap = this.processEvent(event.rawEvent(), newGroupsMap); // Reassign map
+              newGroupsMap = this.processEvent(event.rawEvent(), newGroupsMap);
 
               const sortedGroups = Array.from(newGroupsMap.values()).sort(
                   (a, b) => b.updated_at - a.updated_at
               );
 
-               const pendingUpdate = this.checkPendingSelection(newGroupsMap);
+              const pendingUpdate = this.checkPendingSelection(newGroupsMap);
 
-              // Update selected group reference if it still exists in the map
+              // Update selected group reference if it still exists
               const currentSelectedId = prevState.selectedGroup?.id;
               let newSelectedGroup = prevState.selectedGroup;
               if (currentSelectedId) {
-                  newSelectedGroup = newGroupsMap.get(currentSelectedId) || null; // Update or nullify if group disappears
+                  newSelectedGroup = newGroupsMap.get(currentSelectedId) || null;
               }
-              // If a pending selection was fulfilled, it takes precedence
-               if (pendingUpdate?.selectedGroup) {
-                   newSelectedGroup = pendingUpdate.selectedGroup;
-               } else if (!newSelectedGroup && sortedGroups.length === 1) {
-                   // Auto-select if only one group exists and none was selected
-                   newSelectedGroup = sortedGroups[0];
-               }
-
+              if (pendingUpdate?.selectedGroup) {
+                  newSelectedGroup = pendingUpdate.selectedGroup;
+              } else if (!newSelectedGroup && sortedGroups.length === 1) {
+                  newSelectedGroup = sortedGroups[0];
+              }
 
               return {
                   groupsMap: newGroupsMap,
                   groups: sortedGroups,
-                   selectedGroup: newSelectedGroup,
-                   ...(pendingUpdate || {}) // Apply pending selection changes
+                  selectedGroup: newSelectedGroup,
+                  ...(pendingUpdate || {})
               };
           });
         });
+        
+        // If we have a selected group, also subscribe to its content
+        if (initialSelectedGroup) {
+          this.subscribeToGroupContent(initialSelectedGroup.id);
+        }
 
-        // Store cleanup for the live subscription
+        // Store cleanup for subscriptions
         this.liveSubscriptionCleanup = () => {
-          console.log("Stopping live subscription");
-          liveSub.stop();
+          metadataSub.stop();
+          // Group content subscriptions cleanup handled separately
         };
       });
     } catch (error) {
-      console.error("Failed to fetch historical group data:", error);
-      this.setState({ isLoadingHistory: false }); // Turn off loading even on error
-      this.showMessage("Failed to load historical data.", "error");
-      // Handle failure appropriately
+      this.setState({ isLoadingHistory: false });
+      this.showMessage("Failed to load groups.", "error");
     }
   }
 
   componentWillUnmount() {
-    // Only need to clean up the live subscription
+    // Clean up metadata subscription
     this.liveSubscriptionCleanup?.();
+    
+    // Clean up all group content subscriptions
+    this.groupContentSubscriptions.forEach(cleanup => cleanup());
+    this.groupContentSubscriptions.clear();
   }
 
   // Pre-fetch all member data when a group is selected
@@ -967,21 +982,51 @@ export class App extends Component<AppProps, AppState> {
        const existingGroup = this.state.groupsMap.get(groupId);
 
        if (existingGroup) {
+           // Unsubscribe from previous group's content
+           if (this.state.selectedGroup && this.state.selectedGroup.id !== groupId) {
+               const prevSub = this.groupContentSubscriptions.get(this.state.selectedGroup.id);
+               if (prevSub) {
+                   prevSub();
+                   this.groupContentSubscriptions.delete(this.state.selectedGroup.id);
+               }
+           }
+           
            this.setState({
                selectedGroup: existingGroup,
-               isMobileMenuOpen: false, // Close menu on selection
-               pendingGroupSelection: null // Clear pending
+               isMobileMenuOpen: false,
+               pendingGroupSelection: null
            });
            
-           // Prefetch member data in the background
-           this.prefetchGroupMemberData(existingGroup);
+           // Load content if not already loaded
+           if (!existingGroup.isFullyLoaded && !existingGroup.isLoading) {
+               await this.fetchGroupContent(groupId);
+           }
+           
+           // Subscribe to live updates for this group
+           this.subscribeToGroupContent(groupId);
+           
+           // Prefetch member data after content is loaded
+           if (existingGroup.isFullyLoaded) {
+               this.prefetchGroupMemberData(existingGroup);
+           } else {
+               // Wait for content to load, then prefetch member data
+               const checkInterval = setInterval(() => {
+                   const updatedGroup = this.state.groupsMap.get(groupId);
+                   if (updatedGroup && updatedGroup.isFullyLoaded) {
+                       clearInterval(checkInterval);
+                       this.prefetchGroupMemberData(updatedGroup);
+                   }
+               }, 500);
+               
+               // Clear interval after 30 seconds to prevent memory leak
+               setTimeout(() => clearInterval(checkInterval), 30000);
+           }
        } else {
-           // Group data hasn't arrived yet, queue it
-           console.log(`Group ${groupId} not found in map yet, queuing selection.`);
+           // Group metadata hasn't arrived yet, queue it
            this.setState({
                pendingGroupSelection: groupId,
-               isMobileMenuOpen: false, // Close menu
-               selectedGroup: null // Deselect current while waiting
+               isMobileMenuOpen: false,
+               selectedGroup: null
            });
        }
    };
@@ -1007,7 +1052,6 @@ export class App extends Component<AppProps, AppState> {
       if (pendingGroupSelection) {
           const group = groupsMap.get(pendingGroupSelection);
           if (group) {
-               console.log(`Pending selection ${pendingGroupSelection} fulfilled.`);
               // Prefetch member data for the pending group
               this.prefetchGroupMemberData(group);
               return {
@@ -1019,10 +1063,9 @@ export class App extends Component<AppProps, AppState> {
       return null; // No pending selection or not found yet
   }
 
-  handleSubdomainSelect = (subdomain: string) => {
+  handleSubdomainSelect = () => {
     // This will be called when user clicks on a subdomain in the list
     // The SubdomainList component will handle the actual navigation
-    console.log('Subdomain selected:', subdomain);
   };
 
   render() {

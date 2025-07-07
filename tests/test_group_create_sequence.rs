@@ -1,35 +1,27 @@
 use nostr_lmdb::Scope;
 use nostr_relay_builder::{
-    DatabaseSender, RelayDatabase, StoreCommand, SubscriptionCoordinator, SubscriptionRegistry,
+    CryptoHelper, MessageSender, RelayDatabase, StoreCommand, SubscriptionCoordinator,
+    SubscriptionRegistry,
 };
 use nostr_sdk::prelude::*;
-use nostr_sdk::RelayMessage;
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
-use websocket_builder::MessageSender;
 
-async fn setup_test() -> (TempDir, Arc<RelayDatabase>, DatabaseSender, Keys) {
+async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let tmp_dir = TempDir::new().unwrap();
     let admin_keys = Keys::generate();
-    let task_tracker = TaskTracker::new();
 
-    let (database, db_sender) = RelayDatabase::with_task_tracker(
-        tmp_dir.path().join("test.db").to_string_lossy().to_string(),
-        Arc::new(admin_keys.clone()),
-        task_tracker,
-    )
-    .unwrap();
-    let database = Arc::new(database);
-    (tmp_dir, database, db_sender, admin_keys)
+    let database =
+        RelayDatabase::new(tmp_dir.path().join("test.db").to_string_lossy().to_string()).unwrap();
+    (tmp_dir, Arc::new(database), admin_keys)
 }
 
 #[tokio::test]
 async fn test_group_create_followed_by_metadata_update_sequence() {
-    let (_tmp_dir, database, db_sender, admin_keys) = setup_test().await;
+    let (_tmp_dir, database, admin_keys) = setup_test().await;
 
     // Create a groups manager and subscription manager (with buffer)
     let groups = groups_relay::groups::Groups::load_groups(
@@ -45,9 +37,10 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
     let message_sender = MessageSender::new(tx, 0);
     let cancellation_token = CancellationToken::new();
 
+    let crypto_helper = CryptoHelper::new(Arc::new(admin_keys.clone()));
     let subscription_coordinator = SubscriptionCoordinator::new(
         database.clone(),
-        db_sender.clone(),
+        crypto_helper,
         registry.clone(),
         "test_conn".to_string(),
         message_sender.clone(),
@@ -67,7 +60,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
 
     // Handle group creation (this generates metadata events)
     let create_commands = groups
-        .handle_group_create(create_event, &Scope::Default)
+        .handle_group_create(create_event, &&Scope::Default)
         .await
         .unwrap();
 
@@ -94,7 +87,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
     // Execute the commands through the subscription manager (using the buffer)
     for command in create_commands {
         subscription_coordinator
-            .save_and_broadcast(command, None)
+            .save_and_broadcast(command)
             .await
             .unwrap();
     }
@@ -114,7 +107,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
 
     // Handle metadata update (this generates new metadata events)
     let metadata_commands = groups
-        .handle_edit_metadata(metadata_event, &Scope::Default)
+        .handle_edit_metadata(metadata_event, &&Scope::Default)
         .unwrap();
 
     println!(
@@ -141,7 +134,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
     println!("Executing metadata commands...");
     for command in metadata_commands {
         subscription_coordinator
-            .save_and_broadcast(command, None)
+            .save_and_broadcast(command)
             .await
             .unwrap();
     }
@@ -164,7 +157,10 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
             .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id)
             .since(Timestamp::from(0))];
 
-        let check_events = database.query(check_filter, &Scope::Default).await.unwrap();
+        let check_events = database
+            .query(check_filter, &&Scope::Default)
+            .await
+            .unwrap();
 
         if !check_events.is_empty() {
             found_metadata = true;
@@ -181,7 +177,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
     let all_events_filter = vec![Filter::new().since(Timestamp::from(0))]; // Get all events
 
     let all_events = database
-        .query(all_events_filter, &Scope::Default)
+        .query(all_events_filter, &&Scope::Default)
         .await
         .unwrap();
 
@@ -206,7 +202,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
         .since(Timestamp::from(0))]; // Get all events
 
     let all_metadata_events = database
-        .query(all_metadata_filter, &Scope::Default)
+        .query(all_metadata_filter, &&Scope::Default)
         .await
         .unwrap();
 
@@ -222,7 +218,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
         .limit(1)];
 
     let metadata_events = database
-        .query(metadata_filter, &Scope::Default)
+        .query(metadata_filter, &&Scope::Default)
         .await
         .unwrap();
 
@@ -269,7 +265,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
                 .kinds(vec![Kind::Custom(39000)])
                 .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id)
                 .limit(1)],
-            &Scope::Default,
+            &&Scope::Default,
         )
         .await
         .unwrap();
@@ -311,7 +307,7 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
 
 #[tokio::test]
 async fn test_same_timestamp_event_id_ordering() {
-    let (_tmp_dir, database, db_sender, admin_keys) = setup_test().await;
+    let (_tmp_dir, database, admin_keys) = setup_test().await;
 
     let group_id = "test_group_456";
     let fixed_timestamp = Timestamp::now();
@@ -338,49 +334,18 @@ async fn test_same_timestamp_event_id_ordering() {
         .build(admin_keys.public_key());
     let event2 = admin_keys.sign_event(event2).await.unwrap();
 
-    // Save events sequentially to avoid batch conflicts
-    let (tx1, rx1) = flume::bounded(1);
-    db_sender
-        .send_with_sender(
-            StoreCommand::SaveSignedEvent(Box::new(event1.clone()), Scope::Default, None),
-            Some(
-                nostr_relay_builder::subscription_coordinator::ResponseHandler::MessageSender(
-                    websocket_builder::MessageSender::new(tx1, 0),
-                ),
-            ),
-        )
+    // Save events directly to database
+    // Note: The send_with_sender API has been removed in the latest version
+    // Using direct database save instead
+    database
+        .save_event(&Box::new(event1.clone()), &Scope::Default)
         .await
         .unwrap();
 
-    // Wait for first event to complete
-    let response1 = rx1.recv_async().await.unwrap();
-    assert!(
-        matches!(response1.0, RelayMessage::Ok { .. }),
-        "Expected OK for event1, got {:?}",
-        response1.0
-    );
-
-    // Now save the second event
-    let (tx2, rx2) = flume::bounded(1);
-    db_sender
-        .send_with_sender(
-            StoreCommand::SaveSignedEvent(Box::new(event2.clone()), Scope::Default, None),
-            Some(
-                nostr_relay_builder::subscription_coordinator::ResponseHandler::MessageSender(
-                    websocket_builder::MessageSender::new(tx2, 0),
-                ),
-            ),
-        )
+    database
+        .save_event(&Box::new(event2.clone()), &Scope::Default)
         .await
         .unwrap();
-
-    // Wait for second event to complete
-    let response2 = rx2.recv_async().await.unwrap();
-    assert!(
-        matches!(response2.0, RelayMessage::Ok { .. }),
-        "Expected OK for event2, got {:?}",
-        response2.0
-    );
 
     // Give time for database to process the events
     sleep(Duration::from_millis(100)).await;
@@ -392,7 +357,7 @@ async fn test_same_timestamp_event_id_ordering() {
                 .kinds(vec![Kind::Custom(39000)])
                 .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id)
                 .limit(1)],
-            &Scope::Default,
+            &&Scope::Default,
         )
         .await
         .unwrap();

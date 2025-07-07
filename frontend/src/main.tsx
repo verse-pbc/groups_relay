@@ -21,7 +21,6 @@ const getWebSocketUrl = () => {
 };
 
 const wsUrl = getWebSocketUrl();
-console.log('Using WebSocket URL:', wsUrl);
 
 interface InitializationProps {
   onComplete: (client: NostrClient) => void
@@ -44,12 +43,10 @@ const Initialization = ({ onComplete }: InitializationProps) => {
       setStatus('connecting')
       const client = new NostrClient(key, { relayUrl: wsUrl })
       await client.connect()
-      console.log('Successfully connected to relay')
       // Store the key only after successful connection
       localStorage.setItem('nostr_key', key)
       onComplete(client)
     } catch (e) {
-      console.error('Connection failed:', e)
       let errorMessage = 'Failed to connect';
       if (e instanceof Error) {
         if (e.message.includes('timeout')) {

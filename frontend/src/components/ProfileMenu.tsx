@@ -40,14 +40,11 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
   };
 
   componentDidMount() {
-    console.log('🔔 [PROFILE] ProfileMenu mounting...');
     document.addEventListener('mousedown', this.handleClickOutside);
     document.addEventListener('keydown', this.handleKeyDown);
 
     // Subscribe to balance updates IMMEDIATELY on mount
-    console.log('🔔 [PROFILE] Subscribing to balance updates IMMEDIATELY');
     this.unsubscribeBalance = this.props.client.onBalanceUpdate(async (balance) => {
-      console.log('🔔 [PROFILE] Balance update received:', balance);
       this.setState({ cashuBalance: balance });
       
       // Also refresh mint count when balance updates
@@ -55,10 +52,9 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
         const mints = await this.props.client.getCashuMints();
         this.setState({ mintCount: mints.length });
       } catch (err) {
-        console.warn('Failed to refresh mint count on balance update:', err);
+        // Failed to refresh mint count on balance update
       }
     });
-    console.log('🔔 [PROFILE] Subscription complete');
 
     // Get user info first to get pubkey for cached balance
     this.loadUserInfo();
@@ -67,20 +63,17 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
 
   loadUserInfo = async () => {
     const user = await this.props.client.ndkInstance.signer?.user();
-    console.log('🔔 [PROFILE] User pubkey:', user?.pubkey ? 'found' : 'not found');
     if (user?.pubkey) {
       this.setState({ userPubkey: user.pubkey });
 
       // Try to get cached balance immediately with pubkey
       const cachedBalance = this.props.client.getCachedBalanceForUser(user.pubkey);
       if (cachedBalance > 0) {
-        console.log('🔔 [PROFILE] Loaded cached balance:', cachedBalance);
         this.setState({ cashuBalance: cachedBalance });
       }
 
       // Run admin check and wallet initialization in parallel
-      const isAdmin = await this.props.client.checkIsRelayAdmin().catch(error => {
-        console.error('Failed to check relay admin status:', error);
+      const isAdmin = await this.props.client.checkIsRelayAdmin().catch(() => {
         return false;
       });
 
@@ -90,16 +83,13 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
 
       // Initialize wallet if not already done
       if (!this.props.client.isWalletInitialized()) {
-        console.log('🔔 [PROFILE] Wallet not initialized, initializing...');
         try {
           await this.props.client.initializeWallet();
-          console.log('🔔 [PROFILE] Wallet initialized successfully');
           
           // Get mint count after initialization
           const mints = await this.props.client.getCashuMints();
           this.setState({ mintCount: mints.length, walletLoading: false });
         } catch (err) {
-          console.warn('🔔 [PROFILE] Failed to initialize wallet:', err);
           this.setState({ walletLoading: false });
         }
       } else {
@@ -114,11 +104,9 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
           this.props.client.getCashuBalance(),
           this.props.client.getCashuMints()
         ]);
-        console.log('🔔 [PROFILE] Fresh balance fetched:', balance);
-        console.log('🔔 [PROFILE] Mint count:', mints.length);
         this.setState({ cashuBalance: balance, mintCount: mints.length });
       } catch (err) {
-        console.warn('🔔 [PROFILE] Failed to fetch fresh balance:', err);
+        // Failed to fetch fresh balance
       }
     }
   }
@@ -332,7 +320,7 @@ export class ProfileMenu extends Component<ProfileMenuProps, ProfileMenuState> {
                   const mints = await this.props.client.getCashuMints();
                   this.setState({ mintCount: mints.length });
                 } catch (err) {
-                  console.warn('Failed to refresh mint count:', err);
+                  // Failed to refresh mint count
                 }
               }}
               isModal={true}
