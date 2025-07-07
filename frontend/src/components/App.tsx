@@ -33,19 +33,31 @@ type NDKEvent = { // Define structure based on usage
 
 const metadataKinds: NDKKind[] = [39000, 39001, 39002 /*, 39003 removed if not used */];
 
-// Define all kinds to fetch historically and subscribe to live
-const relevantKinds: NDKKind[] = [
-  ...metadataKinds,
-  GroupEventKind.CreateGroup,
-  GroupEventKind.CreateInvite,
-  GroupEventKind.JoinRequest,
-  GroupEventKind.PutUser, // Add/update user roles (admin, member, etc)
-  GroupEventKind.RemoveUser, // Remove user from group
+// Content kinds - loaded on-demand per group
+// h-tagged events (regular events)
+const hTaggedContentKinds: NDKKind[] = [
+  GroupEventKind.CreateInvite, // 9009 - invites use h tags
+  GroupEventKind.JoinRequest,  // 9021 - join requests use h tags
+  GroupEventKind.PutUser,      // 9000 - user management uses h tags
+  GroupEventKind.RemoveUser,   // 9001 - user removal uses h tags
   9, // Chat message
   11, // DM (Note: DMs might require specific handling/decryption not shown here)
   // Add other kinds if needed, e.g., deletions (Kind 5) if you handle them
 ];
 
+// d-tagged events (addressable events 30000+)
+const dTaggedContentKinds: NDKKind[] = [
+  // Currently no addressable content events, but keeping structure for future
+  // 39000+ events are in metadataKinds, not content
+];
+
+// Define all kinds to fetch historically and subscribe to live
+const relevantKinds: NDKKind[] = [
+  ...metadataKinds,
+  GroupEventKind.CreateGroup,
+  ...hTaggedContentKinds,
+  ...dTaggedContentKinds
+];
 export interface FlashMessageData {
   message: string;
   type: "success" | "error" | "info";
@@ -438,6 +450,202 @@ export class App extends Component<AppProps, AppState> {
       return groupsMap; // Return the potentially modified map
   };
 
+
+  // Fetch only group metadata (39000, 39001, 39002, and creation events)
+  private async fetchGroupMetadata(): Promise<{ groupsMap: Map<string, Group>; latestTimestamp: number }> {
+      let groupsMap = new Map<string, Group>();
+      let latestTimestamp = 0;
+      
+      try {
+          // Fetch all metadata events at once (they should be relatively few)
+          const filter: NDKFilter = { 
+              kinds: metadataKinds,
+              // No limit - we want all metadata
+          };
+          
+          const events = await this.props.client.ndkInstance.fetchEvents(filter) as Set<NDKEvent>;
+          
+          events.forEach((event: NDKEvent) => {
+              if (typeof event.created_at === 'number') {
+                  groupsMap = this.processEvent(event.rawEvent(), groupsMap);
+                  latestTimestamp = Math.max(latestTimestamp, event.created_at);
+              }
+          });
+          
+      } catch (error) {
+          throw error;
+      }
+      
+      return { groupsMap, latestTimestamp };
+  }
+  
+  // Subscribe to live content updates for a specific group
+  private subscribeToGroupContent(groupId: string): void {
+      // Unsubscribe from existing subscription if any
+      const existingSub = this.groupContentSubscriptions.get(groupId);
+      if (existingSub) {
+          existingSub();
+          this.groupContentSubscriptions.delete(groupId);
+      }
+      
+      // Subscribe to both h-tagged and d-tagged events separately
+      const subscriptions: any[] = [];
+      
+      // Subscribe to h-tagged events (regular events like invites, messages, etc)
+      if (hTaggedContentKinds.length > 0) {
+          const hSub = this.props.client.ndkInstance.subscribe(
+              { 
+                  kinds: hTaggedContentKinds,
+                  "#h": [groupId],
+                  since: Math.floor(Date.now() / 1000) // Only new events
+              },
+              { closeOnEose: false }
+          );
+          subscriptions.push(hSub);
+      }
+      
+      // Subscribe to d-tagged events (addressable events) if any
+      if (dTaggedContentKinds.length > 0) {
+          const dSub = this.props.client.ndkInstance.subscribe(
+              { 
+                  kinds: dTaggedContentKinds,
+                  "#d": [groupId],
+                  since: Math.floor(Date.now() / 1000) // Only new events
+              },
+              { closeOnEose: false }
+          );
+          subscriptions.push(dSub);
+      }
+      
+      // Add event handlers to all subscriptions
+      const eventHandler = (event: NDKEvent) => {
+          this.setState((prevState) => {
+              let newGroupsMap = new Map(prevState.groupsMap);
+              newGroupsMap = this.processEvent(event.rawEvent(), newGroupsMap);
+              
+              const sortedGroups = Array.from(newGroupsMap.values()).sort(
+                  (a, b) => b.updated_at - a.updated_at
+              );
+              
+              // Update selected group if it's the one receiving content
+              let newSelectedGroup = prevState.selectedGroup;
+              if (prevState.selectedGroup?.id === groupId) {
+                  newSelectedGroup = newGroupsMap.get(groupId) || null;
+              }
+              
+              return {
+                  groupsMap: newGroupsMap,
+                  groups: sortedGroups,
+                  selectedGroup: newSelectedGroup
+              };
+          });
+      };
+      
+      subscriptions.forEach(sub => {
+          sub.on("event", eventHandler);
+      });
+      
+      // Store cleanup function
+      const cleanup = () => {
+          subscriptions.forEach(sub => sub.stop());
+      };
+      
+      this.groupContentSubscriptions.set(groupId, cleanup);
+  }
+
+  // Fetch full content for a specific group
+  private async fetchGroupContent(groupId: string): Promise<void> {
+      const group = this.state.groupsMap.get(groupId);
+      if (!group) {
+          return;
+      }
+      
+      // If already loaded or loading, skip
+      if (group.isFullyLoaded || group.isLoading) {
+          return;
+      }
+      
+      
+      // Update loading state
+      this.updateGroupsMap((map) => {
+          const g = map.get(groupId);
+          if (g) {
+              g.isLoading = true;
+              g.loadError = undefined;
+          }
+      });
+      
+      try {
+          // Fetch content events for this group using separate filters for h-tagged and d-tagged events
+          const allEvents = new Set<NDKEvent>();
+          
+          // Fetch h-tagged events (regular events like invites, messages, etc)
+          if (hTaggedContentKinds.length > 0) {
+              const hFilter: NDKFilter = {
+                  kinds: hTaggedContentKinds,
+                  "#h": [groupId],
+                  limit: 250, // Split limit between the two filters
+              };
+              
+              const hEvents = await this.props.client.ndkInstance.fetchEvents(hFilter) as Set<NDKEvent>;
+              hEvents.forEach(event => allEvents.add(event));
+          }
+          
+          // Fetch d-tagged events (addressable events) if any
+          if (dTaggedContentKinds.length > 0) {
+              const dFilter: NDKFilter = {
+                  kinds: dTaggedContentKinds,
+                  "#d": [groupId],
+                  limit: 250, // Split limit between the two filters
+              };
+              
+              const dEvents = await this.props.client.ndkInstance.fetchEvents(dFilter) as Set<NDKEvent>;
+              dEvents.forEach(event => allEvents.add(event));
+          }
+          
+          const events = allEvents;
+          
+          // Process events and update group
+          this.setState((prevState) => {
+              let newGroupsMap = new Map(prevState.groupsMap);
+              
+              events.forEach((event: NDKEvent) => {
+                  if (typeof event.created_at === 'number') {
+                      newGroupsMap = this.processEvent(event.rawEvent(), newGroupsMap);
+                  }
+              });
+              
+              // Mark as fully loaded
+              const updatedGroup = newGroupsMap.get(groupId);
+              if (updatedGroup) {
+                  updatedGroup.isLoading = false;
+                  updatedGroup.isFullyLoaded = true;
+              }
+              
+              const sortedGroups = Array.from(newGroupsMap.values()).sort(
+                  (a, b) => b.updated_at - a.updated_at
+              );
+              
+              return {
+                  groupsMap: newGroupsMap,
+                  groups: sortedGroups,
+                  selectedGroup: prevState.selectedGroup?.id === groupId ? 
+                      newGroupsMap.get(groupId) || prevState.selectedGroup : 
+                      prevState.selectedGroup
+              };
+          });
+          
+      } catch (error) {
+          // Update error state
+          this.updateGroupsMap((map) => {
+              const g = map.get(groupId);
+              if (g) {
+                  g.isLoading = false;
+                  g.loadError = error instanceof Error ? error.message : 'Failed to load group content';
+              }
+          });
+      }
+  }
 
   // New method for paginated historical fetch
   private async fetchHistoricalDataPaginated(
