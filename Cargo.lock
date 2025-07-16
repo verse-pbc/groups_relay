@@ -436,7 +436,7 @@ dependencies = [
  "bitflags 2.9.1",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "log",
@@ -1436,9 +1436,9 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "heed"
-version = "0.22.0"
+version = "0.20.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a56c94661ddfb51aa9cdfbf102cfcc340aa69267f95ebccc4af08d7c530d393"
+checksum = "7d4f449bab7320c56003d37732a917e18798e2f1709d80263face2b4f9436ddb"
 dependencies = [
  "bitflags 2.9.1",
  "byteorder",
@@ -1460,9 +1460,9 @@ checksum = "eb3130048d404c57ce5a1ac61a903696e8fcde7e8c2991e9fcfc1f27c3ef74ff"
 
 [[package]]
 name = "heed-types"
-version = "0.21.0"
+version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13c255bdf46e07fb840d120a36dcc81f385140d7191c76a7391672675c01a55d"
+checksum = "9d3f528b053a6d700b2734eabcd0fd49cb8230647aa72958467527b0b7917114"
 dependencies = [
  "bincode",
  "byteorder",
@@ -1932,6 +1932,15 @@ dependencies = [
 
 [[package]]
 name = "itertools"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
@@ -2223,7 +2232,7 @@ dependencies = [
 [[package]]
 name = "nostr"
 version = "0.42.1"
-source = "git+https://github.com/verse-pbc/nostr#c2e826258168910b701303a93a02c36c4266ea55"
+source = "git+https://github.com/verse-pbc/nostr#2fd7581a1853a1790c887445a2afcd305a3d2d6b"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -2246,7 +2255,7 @@ dependencies = [
 [[package]]
 name = "nostr-database"
 version = "0.42.0"
-source = "git+https://github.com/verse-pbc/nostr#c2e826258168910b701303a93a02c36c4266ea55"
+source = "git+https://github.com/verse-pbc/nostr#2fd7581a1853a1790c887445a2afcd305a3d2d6b"
 dependencies = [
  "flatbuffers 25.2.10",
  "lru",
@@ -2257,7 +2266,7 @@ dependencies = [
 [[package]]
 name = "nostr-lmdb"
 version = "0.42.0"
-source = "git+https://github.com/verse-pbc/nostr#c2e826258168910b701303a93a02c36c4266ea55"
+source = "git+https://github.com/verse-pbc/nostr#2fd7581a1853a1790c887445a2afcd305a3d2d6b"
 dependencies = [
  "async-utility",
  "flatbuffers 23.5.26",
@@ -2268,13 +2277,12 @@ dependencies = [
  "scoped-heed",
  "tokio",
  "tracing",
- "zerovec",
 ]
 
 [[package]]
 name = "nostr-relay-pool"
 version = "0.42.0"
-source = "git+https://github.com/verse-pbc/nostr#c2e826258168910b701303a93a02c36c4266ea55"
+source = "git+https://github.com/verse-pbc/nostr#2fd7581a1853a1790c887445a2afcd305a3d2d6b"
 dependencies = [
  "async-utility",
  "async-wsocket",
@@ -2290,7 +2298,7 @@ dependencies = [
 [[package]]
 name = "nostr-sdk"
 version = "0.42.0"
-source = "git+https://github.com/verse-pbc/nostr#c2e826258168910b701303a93a02c36c4266ea55"
+source = "git+https://github.com/verse-pbc/nostr#2fd7581a1853a1790c887445a2afcd305a3d2d6b"
 dependencies = [
  "async-utility",
  "nostr",
@@ -3118,9 +3126,9 @@ dependencies = [
 
 [[package]]
 name = "scoped-heed"
-version = "0.2.0-alpha.7"
+version = "0.2.0-alpha.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4af8c0b8efcddcfd16ddd0c8c18e22749740fcca52fb353117a50666f23d4661"
+checksum = "64356d757469bd9d4b8028ead2887318e77ccbb2cdee95125401cfb92da5a90a"
 dependencies = [
  "bincode",
  "heed",
