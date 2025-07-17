@@ -560,17 +560,31 @@ export class App extends Component<AppProps, AppState> {
       this.groupContentSubscriptions.set(groupId, cleanup);
   }
 
+  // Helper function to add timeout to promises
+  private withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
+      return Promise.race([
+          promise,
+          new Promise<T>((_, reject) => 
+              setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
+          )
+      ]);
+  }
+
   // Fetch full content for a specific group
   private async fetchGroupContent(groupId: string): Promise<void> {
       const group = this.state.groupsMap.get(groupId);
       if (!group) {
+          console.log(`fetchGroupContent: Group ${groupId} not found`);
           return;
       }
       
       // If already loaded or loading, skip
       if (group.isFullyLoaded || group.isLoading) {
+          console.log(`fetchGroupContent: Group ${groupId} already loaded or loading`, { isFullyLoaded: group.isFullyLoaded, isLoading: group.isLoading });
           return;
       }
+      
+      console.log(`fetchGroupContent: Starting to load content for group ${groupId}`);
       
       // Update loading state
       this.updateGroupsMap((map) => {
@@ -582,6 +596,48 @@ export class App extends Component<AppProps, AppState> {
       });
       
       try {
+          // Ensure we have at least one connected relay
+          const pool = this.props.client.ndkInstance.pool;
+          const allRelays = Array.from(pool.relays.values());
+          // NDK relay status: 0=disconnected, 1=connecting, 2=connected, 3=reconnecting, 4=error, 5=authenticated
+          const connectedRelays = allRelays.filter(r => r.status === 2 || r.status === 5);
+          
+          console.log(`fetchGroupContent: Relay status check:`, {
+              totalRelays: allRelays.length,
+              connectedRelays: connectedRelays.length,
+              relayStates: allRelays.map(r => ({ url: r.url, status: r.status, statusName: ['disconnected', 'connecting', 'connected', 'reconnecting', 'error', 'authenticated'][r.status] }))
+          });
+          
+          if (connectedRelays.length === 0) {
+              console.log(`fetchGroupContent: No connected relays, attempting to reconnect...`);
+              
+              // Try to reconnect
+              try {
+                  await this.props.client.connect();
+                  console.log(`fetchGroupContent: Reconnection attempt completed`);
+              } catch (reconnectError) {
+                  console.error(`fetchGroupContent: Reconnection failed:`, reconnectError);
+              }
+              
+              // Check relay status after reconnection attempt
+              const relaysAfterReconnect = Array.from(pool.relays.values()).filter(r => r.status === 2 || r.status === 5);
+              console.log(`fetchGroupContent: After reconnection - connected relays: ${relaysAfterReconnect.length}`);
+              
+              if (relaysAfterReconnect.length === 0) {
+                  throw new Error('No relays connected after reconnection attempt');
+              }
+          }
+          
+          // Wait for authentication if relay is connected but not authenticated
+          const authenticatedRelays = allRelays.filter(r => r.status === 5);
+          if (authenticatedRelays.length === 0) {
+              console.log(`fetchGroupContent: No authenticated relays, waiting for authentication...`);
+              // Wait a bit for authentication to complete
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              
+              const authenticatedAfterWait = Array.from(pool.relays.values()).filter(r => r.status === 5);
+              console.log(`fetchGroupContent: After auth wait - authenticated relays: ${authenticatedAfterWait.length}`);
+          }
           // Fetch content events for this group using separate filters for h-tagged and d-tagged events
           const allEvents = new Set<NDKEvent>();
           
@@ -593,7 +649,26 @@ export class App extends Component<AppProps, AppState> {
                   limit: 250, // Split limit between the two filters
               };
               
-              const hEvents = await this.props.client.ndkInstance.fetchEvents(hFilter) as Set<NDKEvent>;
+              console.log(`fetchGroupContent: Fetching h-tagged events with filter:`, hFilter);
+              
+              // Check relay connection status
+              const relays = Array.from(this.props.client.ndkInstance.pool.relays.values());
+              console.log(`fetchGroupContent: Relay pool status:`, {
+                  relayCount: relays.length,
+                  relays: relays.map(r => ({
+                      url: r.url,
+                      status: r.status,
+                      authenticated: r.status === 5,
+                      connected: r.status === 2 || r.status === 5
+                  }))
+              });
+              
+              const hEvents = await this.withTimeout(
+                  this.props.client.ndkInstance.fetchEvents(hFilter) as Promise<Set<NDKEvent>>,
+                  10000,
+                  'Timeout fetching h-tagged events'
+              );
+              console.log(`fetchGroupContent: Got ${hEvents.size} h-tagged events`);
               hEvents.forEach(event => allEvents.add(event));
           }
           
@@ -605,11 +680,18 @@ export class App extends Component<AppProps, AppState> {
                   limit: 250, // Split limit between the two filters
               };
               
-              const dEvents = await this.props.client.ndkInstance.fetchEvents(dFilter) as Set<NDKEvent>;
+              console.log(`fetchGroupContent: Fetching d-tagged events with filter:`, dFilter);
+              const dEvents = await this.withTimeout(
+                  this.props.client.ndkInstance.fetchEvents(dFilter) as Promise<Set<NDKEvent>>,
+                  10000,
+                  'Timeout fetching d-tagged events'
+              );
+              console.log(`fetchGroupContent: Got ${dEvents.size} d-tagged events`);
               dEvents.forEach(event => allEvents.add(event));
           }
           
           const events = allEvents;
+          console.log(`fetchGroupContent: Fetched ${events.size} events for group ${groupId}`);
           
           // Process events and update group
           this.setState((prevState) => {
@@ -626,6 +708,7 @@ export class App extends Component<AppProps, AppState> {
               if (updatedGroup) {
                   updatedGroup.isLoading = false;
                   updatedGroup.isFullyLoaded = true;
+                  console.log(`fetchGroupContent: Marked group ${groupId} as fully loaded`);
               }
               
               const sortedGroups = Array.from(newGroupsMap.values()).sort(
@@ -641,13 +724,30 @@ export class App extends Component<AppProps, AppState> {
               };
           });
           
+          console.log(`fetchGroupContent: Successfully loaded content for group ${groupId}`);
+          
       } catch (error) {
+          console.error(`fetchGroupContent: Error loading group ${groupId}:`, error);
+          
+          let errorMessage = 'Failed to load group content';
+          if (error instanceof Error) {
+              errorMessage = error.message;
+              // Check if this is an access denied error
+              if (errorMessage.includes('Timeout') && groupId) {
+                  // This might be an access denied issue, check if group is private
+                  const group = this.state.groupsMap.get(groupId);
+                  if (group?.private) {
+                      errorMessage = 'Access denied: You are not a member of this private group';
+                  }
+              }
+          }
+          
           // Update error state
           this.updateGroupsMap((map) => {
               const g = map.get(groupId);
               if (g) {
                   g.isLoading = false;
-                  g.loadError = error instanceof Error ? error.message : 'Failed to load group content';
+                  g.loadError = errorMessage;
               }
           });
       }
@@ -979,6 +1079,7 @@ export class App extends Component<AppProps, AppState> {
 
    handleGroupSelect = async (group: Group | string) => {
        const groupId = typeof group === 'string' ? group : group.id;
+       console.log(`handleGroupSelect: Selecting group ${groupId}`);
        const existingGroup = this.state.groupsMap.get(groupId);
 
        if (existingGroup) {
