@@ -107,6 +107,7 @@ export class NostrClient {
       });
 
       this.groupsNdk.pool.on("relay:connect", (relay: NDKRelay) => {
+        console.log(`NDK relay connected: ${relay.url}, status: ${relay.status}`);
         // Use a custom auth policy that's more flexible with URL matching
         relay.authPolicy = async (relay: NDKRelay, challenge: string) => {
           try {
@@ -143,6 +144,7 @@ export class NostrClient {
 
       // Add error tracking for groups NDK instance
       this.groupsNdk.pool.on('relay:disconnect', (relay: NDKRelay) => {
+        console.log(`NDK relay disconnected: ${relay.url}, status: ${relay.status}`);
         // Normal disconnections should trigger reconnection, not be counted as failures
         this.markRelayAsDead(relay.url, false);
       });
@@ -1013,7 +1015,9 @@ export class NostrClient {
 
   async connect() {
     try {
+      console.log('NostrClient: Connecting to relay...');
       await this.groupsNdk.connect();
+      console.log('NostrClient: Connected successfully');
       
       // Don't create wallet service here - it will be created when needed with proper NDK instance
 
