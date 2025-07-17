@@ -102,9 +102,10 @@ impl EventProcessor for GroupsRelayProcessor {
                         // Managed group - check if the user can read from this group
                         let group = group_ref.value();
                         if group.metadata.private {
-                            // Private group - user must be a member
+                            // Private group - user must be a member or relay admin
                             if let Some(pubkey) = context.authed_pubkey {
-                                if !group.is_member(pubkey) {
+                                // Relay admin has access to all groups
+                                if pubkey != &self.relay_pubkey && !group.is_member(pubkey) {
                                     return Err(nostr_relay_builder::Error::restricted(format!(
                                         "Access denied to private group: {group_tag}"
                                     )));
