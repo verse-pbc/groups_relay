@@ -171,7 +171,7 @@ export class GroupSidebar extends Component<GroupSidebarProps, GroupSidebarState
             <div class="text-center text-sm text-[var(--color-text-secondary)] py-6 opacity-60">
               Loading channels...
             </div>
-          ) : groups.length > 0 ? (
+          ) : mainGroups.length > 0 ? (
             mainGroups.map(this.renderGroupButton)
           ) : (
             <div class="text-center text-sm text-[var(--color-text-secondary)] py-6 opacity-40">
