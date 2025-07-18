@@ -17,8 +17,12 @@ COPY benches ./benches
 # Build all binaries (includes main binary and all binaries in src/bin/)
 RUN cargo build --release --bins
 
-# Install binaries from nostr_relay_builder
-RUN cargo install --git https://github.com/verse-pbc/nostr_relay_builder --bin export_import
+# Install binaries from relay_builder
+RUN cargo install --git https://github.com/verse-pbc/relay_builder \
+    --bin export_import \
+    --bin negentropy_sync \
+    --bin nostr-lmdb-dump \
+    --bin nostr-lmdb-integrity
 
 FROM node:20-slim AS frontend-builder
 
@@ -59,6 +63,9 @@ COPY --from=rust-builder /usr/src/app/target/release/delete_event ./delete_event
 COPY --from=rust-builder /usr/src/app/target/release/add_original_relay ./add_original_relay
 # Copy cargo-installed binaries
 COPY --from=rust-builder /usr/local/cargo/bin/export_import ./export_import
+COPY --from=rust-builder /usr/local/cargo/bin/negentropy_sync ./negentropy_sync
+COPY --from=rust-builder /usr/local/cargo/bin/nostr-lmdb-dump ./nostr-lmdb-dump
+COPY --from=rust-builder /usr/local/cargo/bin/nostr-lmdb-integrity ./nostr-lmdb-integrity
 COPY config/settings.yml ./config/
 COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
 

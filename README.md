@@ -32,7 +32,16 @@ cargo fmt
 cargo clippy
 ```
 
-Built on [nostr_relay_builder](https://github.com/verse-pbc/nostr_relay_builder) and [websocket_builder](https://github.com/verse-pbc/websocket_builder).
+Built on [relay_builder](https://github.com/verse-pbc/relay_builder) and [websocket_builder](https://github.com/verse-pbc/websocket_builder).
+
+## Included Utilities
+
+The Docker image includes these utility binaries from relay_builder:
+
+- **export_import** - Export/import relay data
+- **negentropy_sync** - Relay-to-relay synchronization using Negentropy protocol
+- **nostr-lmdb-dump** - Dump LMDB database contents
+- **nostr-lmdb-integrity** - Check LMDB database integrity
 
 ## License
 
