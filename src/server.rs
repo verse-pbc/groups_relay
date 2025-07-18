@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::Result;
 use axum::{routing::get, Router};
-use nostr_relay_builder::{
+use relay_builder::{
     AuthConfig, CryptoHelper, Nip40ExpirationMiddleware, Nip70Middleware, RelayBuilder,
     RelayConfig, RelayInfo, WebSocketConfig,
 };
@@ -22,7 +22,7 @@ use tracing::{error, info};
 
 pub struct ServerState {
     pub http_state: Arc<HttpServerState>,
-    pub handlers: Arc<nostr_relay_builder::RelayService<()>>,
+    pub handlers: Arc<relay_builder::RelayService<()>>,
     pub cancellation_token: CancellationToken,
     pub metrics_handle: metrics::PrometheusHandle,
     pub connection_counter: Arc<AtomicUsize>,

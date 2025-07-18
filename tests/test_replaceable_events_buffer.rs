@@ -1,9 +1,9 @@
 #![cfg(skip_for_migration)]
-// TODO: These tests need to be migrated to nostr_relay_builder since ReplaceableEventsBuffer
+// TODO: These tests need to be migrated to relay_builder since ReplaceableEventsBuffer
 // and SubscriptionCoordinator are now part of that crate
 use groups_relay::RelayDatabase;
 use nostr_lmdb::Scope;
-use nostr_relay_builder::StoreCommand;
+use relay_builder::StoreCommand;
 use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;

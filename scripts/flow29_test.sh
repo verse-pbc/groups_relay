@@ -150,7 +150,7 @@ run_step_or_fail() {
 start_server() {
     echo -e "${YELLOW}Starting groups_relay server...${NC}"
     cd "$PROJECT_ROOT"
-    RUST_LOG="groups_relay=debug,nostr_relay_builder=debug,websocket_builder=info" cargo run --bin groups_relay -- --config-dir config > "$SERVER_LOG" 2>&1 &
+    RUST_LOG="groups_relay=debug,relay_builder=debug,websocket_builder=info" cargo run --bin groups_relay -- --config-dir config > "$SERVER_LOG" 2>&1 &
     SERVER_PID=$!
     
     # Wait for server to start

@@ -1,5 +1,5 @@
 use crate::metrics;
-use nostr_relay_builder::middlewares::MetricsHandler;
+use relay_builder::middlewares::MetricsHandler;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// A metrics handler that samples events to reduce overhead

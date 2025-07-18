@@ -1,5 +1,5 @@
 use crate::metrics;
-use nostr_relay_builder::middlewares::MetricsHandler;
+use relay_builder::middlewares::MetricsHandler;
 
 /// Implementation of MetricsHandler that updates Prometheus metrics
 #[derive(Debug, Clone)]
@@ -47,8 +47,8 @@ impl SubscriptionMetricsHandler for PrometheusSubscriptionMetricsHandler {
     }
 }
 
-// Also implement the nostr_relay_builder trait
-impl nostr_relay_builder::metrics::SubscriptionMetricsHandler
+// Also implement the relay_builder trait
+impl relay_builder::metrics::SubscriptionMetricsHandler
     for PrometheusSubscriptionMetricsHandler
 {
     fn increment_active_subscriptions(&self) {

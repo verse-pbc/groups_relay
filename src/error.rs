@@ -1,6 +1,6 @@
 use anyhow::Result;
 use nostr_database::DatabaseError;
-use nostr_relay_builder::NostrConnectionState;
+use relay_builder::NostrConnectionState;
 use nostr_sdk::client::Error as NostrSdkError;
 use nostr_sdk::prelude::*;
 use nostr_sdk::RelayMessage;

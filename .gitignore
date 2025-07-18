@@ -43,7 +43,7 @@ db
 # Example database directories
 data/
 *.db/
-crates/nostr_relay_builder/examples/*.db/
+crates/relay_builder/examples/*.db/
 .claude/settings.local.json
 CLAUDE.local.md
 

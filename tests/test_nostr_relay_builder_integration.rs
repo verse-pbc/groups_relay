@@ -1,14 +1,14 @@
-//! Integration test to verify groups_relay works with nostr_relay_builder
+//! Integration test to verify groups_relay works with relay_builder
 
 use groups_relay::{
     config::Keys, groups::Groups, groups_event_processor::GroupsRelayProcessor, RelayDatabase,
 };
-use nostr_relay_builder::{AuthConfig, RelayBuilder, RelayConfig};
+use relay_builder::{AuthConfig, RelayBuilder, RelayConfig};
 use std::sync::Arc;
 use tempfile::TempDir;
 
 #[tokio::test]
-async fn test_groups_relay_with_nostr_relay_builder() -> anyhow::Result<()> {
+async fn test_groups_relay_with_relay_builder() -> anyhow::Result<()> {
     // Create temporary directory for database
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("test.db");
@@ -46,7 +46,7 @@ async fn test_groups_relay_with_nostr_relay_builder() -> anyhow::Result<()> {
         .build()
         .await?;
 
-    println!("✅ Successfully created groups relay using nostr_relay_builder!");
+    println!("✅ Successfully created groups relay using relay_builder!");
 
     Ok(())
 }
@@ -68,22 +68,22 @@ fn test_store_command_compatibility() {
     let groups_cmd =
         groups_relay::StoreCommand::SaveSignedEvent(Box::new(event.clone()), scope.clone(), None);
 
-    // Convert to nostr_relay_builder StoreCommand
+    // Convert to relay_builder StoreCommand
     let relay_cmd = match groups_cmd {
         groups_relay::StoreCommand::SaveSignedEvent(e, s, handler) => {
-            nostr_relay_builder::StoreCommand::SaveSignedEvent(e, s, handler)
+            relay_builder::StoreCommand::SaveSignedEvent(e, s, handler)
         }
         groups_relay::StoreCommand::SaveUnsignedEvent(e, s, handler) => {
-            nostr_relay_builder::StoreCommand::SaveUnsignedEvent(e, s, handler)
+            relay_builder::StoreCommand::SaveUnsignedEvent(e, s, handler)
         }
         groups_relay::StoreCommand::DeleteEvents(f, s, handler) => {
-            nostr_relay_builder::StoreCommand::DeleteEvents(f, s, handler)
+            relay_builder::StoreCommand::DeleteEvents(f, s, handler)
         }
     };
 
     // Verify the conversion worked
     match relay_cmd {
-        nostr_relay_builder::StoreCommand::SaveSignedEvent(e, s, handler) => {
+        relay_builder::StoreCommand::SaveSignedEvent(e, s, handler) => {
             assert_eq!(e.id.to_string(), event.id.to_string());
             assert!(matches!(s, Scope::Default));
             assert!(handler.is_none());

@@ -6,7 +6,7 @@ use crate::groups::{
 };
 use crate::Groups;
 use async_trait::async_trait;
-use nostr_relay_builder::{EventContext, EventProcessor, Result, StoreCommand};
+use relay_builder::{EventContext, EventProcessor, Result, StoreCommand};
 use nostr_sdk::prelude::*;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -106,12 +106,12 @@ impl EventProcessor for GroupsRelayProcessor {
                             if let Some(pubkey) = context.authed_pubkey {
                                 // Relay admin has access to all groups
                                 if pubkey != &self.relay_pubkey && !group.is_member(pubkey) {
-                                    return Err(nostr_relay_builder::Error::restricted(format!(
+                                    return Err(relay_builder::Error::restricted(format!(
                                         "Access denied to private group: {group_tag}"
                                     )));
                                 }
                             } else {
-                                return Err(nostr_relay_builder::Error::auth_required(format!(
+                                return Err(relay_builder::Error::auth_required(format!(
                                     "Authentication required to access private group: {group_tag}"
                                 )));
                             }

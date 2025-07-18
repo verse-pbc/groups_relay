@@ -3,7 +3,7 @@ use groups_relay::config::Keys;
 use groups_relay::groups::Groups;
 use groups_relay::groups_event_processor::GroupsRelayProcessor;
 use groups_relay::RelayDatabase;
-use nostr_relay_builder::{EventContext, EventProcessor, RelayConfig};
+use relay_builder::{EventContext, EventProcessor, RelayConfig};
 use nostr_sdk::prelude::*;
 use parking_lot::RwLock;
 use std::hint::black_box;

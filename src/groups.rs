@@ -14,7 +14,7 @@ use dashmap::{
     DashMap,
 };
 use nostr_lmdb::Scope;
-use nostr_relay_builder::{Error, RelayDatabase};
+use relay_builder::{Error, RelayDatabase};
 use nostr_sdk::prelude::*;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
@@ -901,7 +901,7 @@ impl DerefMut for Groups {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr_relay_builder::RelayDatabase;
+    use relay_builder::RelayDatabase;
     use std::time::Instant;
     use tempfile::TempDir;
 

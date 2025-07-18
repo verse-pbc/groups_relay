@@ -4,7 +4,7 @@ use std::time::Instant;
 use tempfile::TempDir;
 
 use crate::group::Group;
-use nostr_relay_builder::{NostrConnectionState, RelayDatabase};
+use relay_builder::{NostrConnectionState, RelayDatabase};
 
 pub async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let tmp_dir = TempDir::new().unwrap();

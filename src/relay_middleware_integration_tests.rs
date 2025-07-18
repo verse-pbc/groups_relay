@@ -4,7 +4,7 @@ mod integration_tests {
     use crate::groups_event_processor::GroupsRelayProcessor;
     use crate::test_utils::*;
     use nostr_lmdb::Scope;
-    use nostr_relay_builder::{
+    use relay_builder::{
         CryptoHelper, EventContext, EventProcessor, NostrConnectionState, RelayMiddleware,
         SubscriptionRegistry,
     };

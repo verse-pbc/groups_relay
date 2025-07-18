@@ -1,5 +1,5 @@
 use nostr_lmdb::Scope;
-use nostr_relay_builder::{
+use relay_builder::{
     CryptoHelper, MessageSender, RelayDatabase, StoreCommand, SubscriptionCoordinator,
     SubscriptionRegistry,
 };
