@@ -436,7 +436,7 @@ dependencies = [
  "bitflags 2.9.1",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "log",
@@ -1333,11 +1333,11 @@ dependencies = [
  "nostr-database",
  "nostr-lmdb",
  "nostr-sdk",
- "nostr_relay_builder",
  "once_cell",
  "parking_lot",
  "pretty_assertions",
  "rand 0.8.5",
+ "relay_builder",
  "serde",
  "snafu",
  "strum",
@@ -1932,6 +1932,15 @@ dependencies = [
 
 [[package]]
 name = "itertools"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
@@ -2296,49 +2305,6 @@ dependencies = [
  "nostr-database",
  "nostr-relay-pool",
  "tokio",
-]
-
-[[package]]
-name = "nostr_relay_builder"
-version = "0.5.0-alpha.1"
-source = "git+https://github.com/verse-pbc/nostr_relay_builder#00292b093df9c058f1ce3370a8ebbcc829467c7f"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum 0.8.4",
- "axum-server",
- "chrono",
- "clap",
- "dashmap",
- "flume",
- "futures-util",
- "heed",
- "hex",
- "indicatif",
- "negentropy",
- "nostr",
- "nostr-database",
- "nostr-lmdb",
- "nostr-sdk",
- "num_cpus",
- "once_cell",
- "parking_lot",
- "rand 0.8.5",
- "rayon",
- "rustls",
- "serde",
- "serde_json",
- "snafu",
- "tokio",
- "tokio-util",
- "tower 0.4.13",
- "tower-http",
- "tracing",
- "tracing-futures",
- "tracing-subscriber",
- "twox-hash",
- "uuid",
- "websocket_builder",
 ]
 
 [[package]]
@@ -2939,6 +2905,49 @@ name = "regex-syntax"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
+
+[[package]]
+name = "relay_builder"
+version = "0.5.0-alpha.1"
+source = "git+https://github.com/verse-pbc/relay_builder#1b3103a2f374c4b934b3189fbec84b563e74bd76"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum 0.8.4",
+ "axum-server",
+ "chrono",
+ "clap",
+ "dashmap",
+ "flume",
+ "futures-util",
+ "heed",
+ "hex",
+ "indicatif",
+ "negentropy",
+ "nostr",
+ "nostr-database",
+ "nostr-lmdb",
+ "nostr-sdk",
+ "num_cpus",
+ "once_cell",
+ "parking_lot",
+ "rand 0.8.5",
+ "rayon",
+ "rustls",
+ "serde",
+ "serde_json",
+ "snafu",
+ "tokio",
+ "tokio-util",
+ "tower 0.4.13",
+ "tower-http",
+ "tracing",
+ "tracing-futures",
+ "tracing-subscriber",
+ "twox-hash",
+ "uuid",
+ "websocket_builder",
+]
 
 [[package]]
 name = "resolv-conf"
