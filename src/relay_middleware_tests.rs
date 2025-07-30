@@ -9,12 +9,12 @@ mod tests {
     use crate::test_utils::{create_test_event, create_test_keys, setup_test_with_sender};
     use crate::{Groups, StoreCommand};
     use nostr_lmdb::Scope;
+    use nostr_sdk::prelude::*;
+    use parking_lot::RwLock;
     use relay_builder::{
         CryptoHelper, EventContext, EventProcessor, NostrConnectionState, RelayDatabase,
         RelayMiddleware, SubscriptionRegistry,
     };
-    use nostr_sdk::prelude::*;
-    use parking_lot::RwLock;
     use std::sync::Arc;
 
     fn empty_state() -> Arc<RwLock<()>> {

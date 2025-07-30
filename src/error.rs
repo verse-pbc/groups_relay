@@ -1,9 +1,9 @@
 use anyhow::Result;
 use nostr_database::DatabaseError;
-use relay_builder::NostrConnectionState;
 use nostr_sdk::client::Error as NostrSdkError;
 use nostr_sdk::prelude::*;
 use nostr_sdk::RelayMessage;
+use relay_builder::NostrConnectionState;
 use snafu::{Backtrace, Snafu};
 use std::borrow::Cow;
 use tracing::{error, warn};

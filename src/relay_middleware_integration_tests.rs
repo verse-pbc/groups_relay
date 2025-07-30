@@ -4,12 +4,12 @@ mod integration_tests {
     use crate::groups_event_processor::GroupsRelayProcessor;
     use crate::test_utils::*;
     use nostr_lmdb::Scope;
+    use nostr_sdk::prelude::*;
+    use parking_lot::RwLock;
     use relay_builder::{
         CryptoHelper, EventContext, EventProcessor, NostrConnectionState, RelayMiddleware,
         SubscriptionRegistry,
     };
-    use nostr_sdk::prelude::*;
-    use parking_lot::RwLock;
     use std::sync::Arc;
 
     fn empty_state() -> Arc<RwLock<()>> {

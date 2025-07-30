@@ -48,9 +48,7 @@ impl SubscriptionMetricsHandler for PrometheusSubscriptionMetricsHandler {
 }
 
 // Also implement the relay_builder trait
-impl relay_builder::metrics::SubscriptionMetricsHandler
-    for PrometheusSubscriptionMetricsHandler
-{
+impl relay_builder::metrics::SubscriptionMetricsHandler for PrometheusSubscriptionMetricsHandler {
     fn increment_active_subscriptions(&self) {
         metrics::active_subscriptions().increment(1.0);
     }

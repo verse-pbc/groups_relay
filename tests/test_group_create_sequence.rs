@@ -1,9 +1,9 @@
 use nostr_lmdb::Scope;
+use nostr_sdk::prelude::*;
 use relay_builder::{
     CryptoHelper, MessageSender, RelayDatabase, StoreCommand, SubscriptionCoordinator,
     SubscriptionRegistry,
 };
-use nostr_sdk::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;

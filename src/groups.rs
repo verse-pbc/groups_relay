@@ -14,8 +14,8 @@ use dashmap::{
     DashMap,
 };
 use nostr_lmdb::Scope;
-use relay_builder::{Error, RelayDatabase};
 use nostr_sdk::prelude::*;
+use relay_builder::{Error, RelayDatabase};
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;

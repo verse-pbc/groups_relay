@@ -1,7 +1,7 @@
 use crate::StoreCommand;
 use nostr_lmdb::Scope;
-use relay_builder::Error;
 use nostr_sdk::prelude::*;
+use relay_builder::Error;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;

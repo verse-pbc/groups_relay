@@ -3,8 +3,8 @@ use groups_relay::groups::{
     KIND_GROUP_MEMBERS_39002, KIND_GROUP_USER_JOIN_REQUEST_9021,
 };
 use nostr_lmdb::Scope;
-use relay_builder::{RelayDatabase, StoreCommand};
 use nostr_sdk::prelude::*;
+use relay_builder::{RelayDatabase, StoreCommand};
 use std::sync::Arc;
 use tempfile::TempDir;
 

@@ -7,9 +7,9 @@ use groups_relay::groups::{
     KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022, NON_GROUP_ALLOWED_KINDS,
 };
 use groups_relay::validation_middleware::ValidationMiddleware;
-use relay_builder::NostrConnectionState;
 use nostr_sdk::prelude::*;
 use parking_lot::RwLock;
+use relay_builder::NostrConnectionState;
 use std::borrow::Cow;
 use std::sync::Arc;
 use websocket_builder::{InboundContext, Middleware};

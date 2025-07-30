@@ -4,8 +4,8 @@
 use groups_relay::Groups;
 use groups_relay::RelayDatabase;
 use nostr_lmdb::Scope;
-use relay_builder::{DatabaseSender, StoreCommand};
 use nostr_sdk::prelude::*;
+use relay_builder::{DatabaseSender, StoreCommand};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};

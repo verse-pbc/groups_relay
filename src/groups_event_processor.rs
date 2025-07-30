@@ -6,9 +6,9 @@ use crate::groups::{
 };
 use crate::Groups;
 use async_trait::async_trait;
-use relay_builder::{EventContext, EventProcessor, Result, StoreCommand};
 use nostr_sdk::prelude::*;
 use parking_lot::RwLock;
+use relay_builder::{EventContext, EventProcessor, Result, StoreCommand};
 use std::sync::Arc;
 use tracing::debug;
 
