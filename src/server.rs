@@ -143,9 +143,8 @@ pub async fn run_server(
                             }
                         }
 
-                        // Serve HTML info page
-                        axum::response::Html(relay_builder::handlers::default_relay_html(&relay_info))
-                            .into_response()
+                        // Serve frontend
+                        handler::serve_frontend().await.into_response()
                     }
                 }
             }
