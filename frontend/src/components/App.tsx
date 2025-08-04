@@ -207,7 +207,6 @@ export class App extends Component<AppProps, AppState> {
           }
 
           case 39000: { // Group metadata
-              const newMetadata: Partial<Group> = { broadcast: false }; // Default broadcast to false
               let metadataChanged = false;
 
               for (const tagArr of event.tags) {
@@ -216,7 +215,13 @@ export class App extends Component<AppProps, AppState> {
                   let changed = true; // Assume change unless value is same
 
                   switch (tag) {
-                      case "name": if (mutableGroup.name !== value) mutableGroup.name = value; else changed = false; break;
+                      case "name": 
+                          if (mutableGroup.name !== value) {
+                              mutableGroup.name = value;
+                          } else {
+                              changed = false;
+                          }
+                          break;
                       case "about": if (mutableGroup.about !== value) mutableGroup.about = value; else changed = false; break;
                       case "picture": if (mutableGroup.picture !== value) mutableGroup.picture = value; else changed = false; break;
                       case "private": if (!mutableGroup.private) mutableGroup.private = true; else changed = false; break;
@@ -230,7 +235,6 @@ export class App extends Component<AppProps, AppState> {
               }
               // Apply the collected metadata changes if any occurred
               if (metadataChanged) {
-                  Object.assign(mutableGroup, newMetadata); // Apply changes
                   updated = true;
               }
               break;
