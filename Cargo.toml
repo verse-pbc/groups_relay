@@ -6,7 +6,7 @@ authors = ["Daniel Cadenas <dcadenas@gmail.com>"]
 default-run = "groups_relay"
 
 [dependencies]
-relay_builder = { path = "../relay_builder" }
+relay_builder = { git = "https://github.com/verse-pbc/relay_builder" }
 websocket_builder = { git = "https://github.com/verse-pbc/websocket_builder" }
 tokio = { version = "1.45", features = ["full"] }
 anyhow = { version = "1.0.89", features = ["backtrace"] }
