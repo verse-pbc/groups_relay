@@ -1,0 +1,21 @@
+# Test configuration with localhost
+relay:
+  # Relay secret key (hex format)
+  # This is a test key, replace with your own in settings.local.yml
+  # pubkey is 385c3a6ec0b9d57a4330dbd6284989be5bd00e41c535f9ca39b6ae7c521b81cd
+  relay_secret_key: "6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e"
+  local_addr: "0.0.0.0:8080"
+  relay_url: "ws://localhost:8080"
+  db_path: "/app/db"
+  # Default/maximum limit for database queries (REQ filters)
+  query_limit: 500
+
+  # WebSocket settings
+  websocket:
+    # Size of the channel for outbound messages per connection
+    channel_size: 100
+    # Maximum time a connection can stay open (optional)
+    # Uses humantime format (e.g., "1h", "30m", "24h")
+    max_connection_time: "5m"
+    # Maximum number of concurrent connections (optional)
+    max_connections: 300

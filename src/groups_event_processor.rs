@@ -5,7 +5,6 @@ use crate::groups::{
     KIND_GROUP_USER_JOIN_REQUEST_9021, KIND_GROUP_USER_LEAVE_REQUEST_9022, NON_GROUP_ALLOWED_KINDS,
 };
 use crate::Groups;
-use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use parking_lot::RwLock;
 use relay_builder::{EventContext, EventProcessor, Result, StoreCommand};
@@ -23,7 +22,7 @@ use tracing::debug;
 ///
 /// The processor is extracted from the original Nip29Middleware to enable reusability
 /// and better testability while maintaining identical functionality.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GroupsRelayProcessor {
     groups: Arc<Groups>,
     relay_pubkey: PublicKey,
@@ -81,7 +80,6 @@ impl GroupsRelayProcessor {
     }
 }
 
-#[async_trait]
 impl EventProcessor for GroupsRelayProcessor {
     fn verify_filters(
         &self,
@@ -182,9 +180,24 @@ impl EventProcessor for GroupsRelayProcessor {
         let events_to_save = match event.kind {
             k if k == KIND_GROUP_CREATE_9007 => {
                 debug!(target: "groups_relay_logic", "Processing group create event: id={}", event.id);
-                self.groups
+                let commands = self.groups
                     .handle_group_create(Box::new(event), &subdomain)
-                    .await?
+                    .await?;
+                debug!(target: "groups_relay_logic", "Group create generated {} commands", commands.len());
+                for cmd in &commands {
+                    match cmd {
+                        StoreCommand::SaveSignedEvent(_, _, _) => {
+                            debug!(target: "groups_relay_logic", "  - SaveSignedEvent");
+                        }
+                        StoreCommand::SaveUnsignedEvent(evt, _, _) => {
+                            debug!(target: "groups_relay_logic", "  - SaveUnsignedEvent: kind={}", evt.kind);
+                        }
+                        StoreCommand::DeleteEvents(_, _, _) => {
+                            debug!(target: "groups_relay_logic", "  - DeleteEvents");
+                        }
+                    }
+                }
+                commands
             }
 
             k if k == KIND_GROUP_EDIT_METADATA_9002 => {
@@ -257,6 +270,7 @@ impl EventProcessor for GroupsRelayProcessor {
             }
         };
 
+        debug!(target: "groups_relay_logic", "Returning {} store commands from handle_event", events_to_save.len());
         Ok(events_to_save)
     }
 }

@@ -2,15 +2,13 @@ use crate::groups::Invite;
 use crate::server::ServerState;
 use axum::{
     body::Body,
-    extract::{ConnectInfo, State},
+    extract::State,
     http::{Method, Request, StatusCode},
     response::{IntoResponse, Json},
 };
 use nostr_lmdb::Scope;
-use relay_builder::WebSocketUpgrade;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
@@ -47,40 +45,23 @@ pub struct ConfigResponse {
     base_domain_parts: usize,
 }
 
-pub async fn handle_root(
-    ws: Option<WebSocketUpgrade>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    State(state): State<Arc<ServerState>>,
-    headers: axum::http::HeaderMap,
-    _request: Request<Body>,
-) -> impl IntoResponse {
-    // Check if this is a WebSocket or NIP-11 request
-    if ws.is_some()
-        || headers
-            .get(axum::http::header::ACCEPT)
-            .and_then(|h| h.to_str().ok())
-            == Some("application/nostr+json")
-    {
-        // Handle with the relay handlers
-        state.handlers.clone().axum_root_handler()(ws, ConnectInfo(addr), headers).await
-    } else {
-        // Serve the frontend HTML
-        debug!("Serving frontend HTML for root path");
-        let index_req = Request::builder()
-            .method(Method::GET)
-            .uri("/index.html")
-            .body(Body::empty())
-            .unwrap();
+pub async fn handle_root() -> impl IntoResponse {
+    // Serve the frontend HTML
+    debug!("Serving frontend HTML for root path");
+    let index_req = Request::builder()
+        .method(Method::GET)
+        .uri("/index.html")
+        .body(Body::empty())
+        .unwrap();
 
-        match ServeDir::new("frontend/dist").oneshot(index_req).await {
-            Ok(response) => {
-                debug!("Frontend served successfully");
-                response.into_response()
-            }
-            Err(err) => {
-                eprintln!("Error serving frontend: {err:?}");
-                (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
-            }
+    match ServeDir::new("frontend/dist").oneshot(index_req).await {
+        Ok(response) => {
+            debug!("Frontend served successfully");
+            response.into_response()
+        }
+        Err(err) => {
+            eprintln!("Error serving frontend: {err:?}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
         }
     }
 }

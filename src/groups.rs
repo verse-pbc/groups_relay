@@ -980,6 +980,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_handle_group_create_generates_state_events() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let groups = create_test_groups_with_db(&admin_keys).await;
+        let scope = Scope::Default;
+        
+        // Create group
+        let create_event = create_test_event(
+            &admin_keys,
+            KIND_GROUP_CREATE_9007,
+            vec![Tag::custom(TagKind::h(), ["statetest123"])],
+        )
+        .await;
+        
+        let result = groups.handle_group_create(create_event, &scope).await;
+        assert!(result.is_ok(), "handle_group_create should succeed");
+        
+        let commands = result.unwrap();
+        println!("Generated {} store commands", commands.len());
+        
+        // Should generate multiple commands
+        assert!(commands.len() >= 4, "Should generate at least 4 commands (1 signed + 3 unsigned state events)");
+        
+        // Check for specific event kinds
+        let mut has_39000 = false;
+        let mut has_39001 = false;
+        let mut has_39002 = false;
+        
+        for cmd in &commands {
+            match cmd {
+                StoreCommand::SaveUnsignedEvent(evt, _, _) => {
+                    println!("  SaveUnsignedEvent: kind={}", evt.kind);
+                    match evt.kind.as_u16() {
+                        39000 => has_39000 = true,
+                        39001 => has_39001 = true,  
+                        39002 => has_39002 = true,
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        assert!(has_39000, "Should generate 39000 (metadata) event");
+        assert!(has_39001, "Should generate 39001 (admins) event");
+        assert!(has_39002, "Should generate 39002 (members) event");
+    }
+    
+    #[tokio::test]
     async fn test_handle_set_roles_admin_can_promote_member() {
         let (admin_keys, member_keys, _) = create_test_keys().await;
         let groups = create_test_groups_with_db(&admin_keys).await;

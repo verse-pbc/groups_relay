@@ -1,6 +1,7 @@
 # Local development relay configuration
 relay:
   db_path: "./db"
+  relay_url: "ws://localhost:8080"
 
   # WebSocket settings for testing limits
   websocket:

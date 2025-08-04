@@ -3,11 +3,11 @@ use nostr_database::DatabaseError;
 use nostr_sdk::client::Error as NostrSdkError;
 use nostr_sdk::prelude::*;
 use nostr_sdk::RelayMessage;
+use relay_builder::nostr_middleware::InboundContext;
 use relay_builder::NostrConnectionState;
 use snafu::{Backtrace, Snafu};
 use std::borrow::Cow;
 use tracing::{error, warn};
-use websocket_builder::{InboundContext, SendMessage};
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
@@ -238,13 +238,13 @@ impl Error {
         }
     }
 
-    pub async fn handle_inbound_error<CM>(
+    pub async fn handle_inbound_error<'a, CM>(
         &self,
-        ctx: &mut InboundContext<NostrConnectionState, CM, RelayMessage<'static>>,
+        ctx: &InboundContext<'a, (), CM>,
         client_message_id: ClientMessageId,
     ) -> Result<()>
     where
-        CM: Send + Sync + 'static,
+        CM: relay_builder::nostr_middleware::InboundProcessor<()> + Send + Sync + 'static,
     {
         let relay_messages: Vec<RelayMessage<'static>> = {
             let mut state = ctx.state.write();

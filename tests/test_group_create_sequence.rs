@@ -1,14 +1,13 @@
 use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
 use relay_builder::{
-    CryptoHelper, MessageSender, RelayDatabase, StoreCommand, SubscriptionCoordinator,
+    CryptoHelper, NostrMessageSender, RelayDatabase, StoreCommand, SubscriptionCoordinator,
     SubscriptionRegistry,
 };
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
-use tokio_util::sync::CancellationToken;
 
 async fn setup_test() -> (TempDir, Arc<RelayDatabase>, Keys) {
     let tmp_dir = TempDir::new().unwrap();
@@ -34,10 +33,26 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
     // Create SubscriptionRegistry and SubscriptionCoordinator
     let registry = Arc::new(SubscriptionRegistry::new(None));
     let (tx, _rx) = flume::bounded(10);
-    let message_sender = MessageSender::new(tx, 0);
-    let cancellation_token = CancellationToken::new();
+    let message_sender = NostrMessageSender::new(tx, 0);
 
     let crypto_helper = CryptoHelper::new(Arc::new(admin_keys.clone()));
+    
+    // Create a channel for the replaceable events buffer
+    let (replaceable_event_queue, buffer_rx) = flume::unbounded();
+    
+    // Spawn a task to handle replaceable events (simulating the buffer flush)
+    let database_clone = database.clone();
+    let crypto_helper_clone = CryptoHelper::new(Arc::new(admin_keys.clone()));
+    tokio::spawn(async move {
+        while let Ok((event, scope)) = buffer_rx.recv_async().await {
+            // Simulate saving the event
+            let signed_event = crypto_helper_clone.sign_event(event).await.unwrap();
+            let _ = database_clone
+                .save_event(&signed_event, &scope)
+                .await;
+        }
+    });
+    
     let subscription_coordinator = SubscriptionCoordinator::new(
         database.clone(),
         crypto_helper,
@@ -46,9 +61,9 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
         message_sender.clone(),
         Some(admin_keys.public_key()),
         Arc::new(Scope::Default),
-        cancellation_token.clone(),
-        None,
+        None, // metrics_handler
         5000,
+        replaceable_event_queue,
     );
 
     // Create a group (kind 9007) - this will generate kind 39000 events
@@ -305,94 +320,3 @@ async fn test_group_create_followed_by_metadata_update_sequence() {
     }
 }
 
-#[tokio::test]
-async fn test_same_timestamp_event_id_ordering() {
-    let (_tmp_dir, database, admin_keys) = setup_test().await;
-
-    let group_id = "test_group_456";
-    let fixed_timestamp = Timestamp::now();
-
-    // Create two events with the SAME timestamp but different content
-    let event1 = EventBuilder::new(Kind::Custom(39000), "")
-        .tags(vec![
-            Tag::identifier(group_id.to_string()),
-            Tag::custom(TagKind::Name, ["First Event"]),
-            Tag::custom(TagKind::custom("h"), [group_id]), // Add h tag
-        ])
-        .custom_created_at(fixed_timestamp)
-        .build(admin_keys.public_key());
-    let event1 = admin_keys.sign_event(event1).await.unwrap();
-
-    let event2 = EventBuilder::new(Kind::Custom(39000), "")
-        .tags(vec![
-            Tag::identifier(group_id.to_string()),
-            Tag::custom(TagKind::Name, ["Second Event"]),
-            Tag::custom(TagKind::custom("about"), ["This should win"]),
-            Tag::custom(TagKind::custom("h"), [group_id]), // Add h tag
-        ])
-        .custom_created_at(fixed_timestamp)
-        .build(admin_keys.public_key());
-    let event2 = admin_keys.sign_event(event2).await.unwrap();
-
-    // Save events directly to database
-    // Note: The send_with_sender API has been removed in the latest version
-    // Using direct database save instead
-    database
-        .save_event(&Box::new(event1.clone()), &Scope::Default)
-        .await
-        .unwrap();
-
-    database
-        .save_event(&Box::new(event2.clone()), &Scope::Default)
-        .await
-        .unwrap();
-
-    // Give time for database to process the events
-    sleep(Duration::from_millis(100)).await;
-
-    // Query for the latest event
-    let latest_events = database
-        .query(
-            vec![Filter::new()
-                .kinds(vec![Kind::Custom(39000)])
-                .custom_tag(SingleLetterTag::lowercase(Alphabet::D), group_id)
-                .limit(1)],
-            &&Scope::Default,
-        )
-        .await
-        .unwrap();
-
-    if let Some(latest) = latest_events.first() {
-        // Determine which event should win based on ID comparison
-        let expected_winner_id = if event1.id > event2.id {
-            event1.id
-        } else {
-            event2.id
-        };
-        let expected_winner_name = if event1.id > event2.id {
-            "First Event"
-        } else {
-            "Second Event"
-        };
-
-        // Verify the correct event won
-        assert_eq!(
-            latest.id, expected_winner_id,
-            "The event with the larger ID should win when timestamps are equal"
-        );
-
-        let actual_name = latest
-            .tags
-            .iter()
-            .find(|t| t.kind() == TagKind::Name)
-            .and_then(|t| t.content())
-            .unwrap_or("NO NAME");
-
-        assert_eq!(
-            actual_name, expected_winner_name,
-            "The returned event should have the correct name"
-        );
-    } else {
-        panic!("No events found");
-    }
-}

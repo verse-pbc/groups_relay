@@ -3,7 +3,7 @@
 use groups_relay::{
     config::Keys, groups::Groups, groups_event_processor::GroupsRelayProcessor, RelayDatabase,
 };
-use relay_builder::{AuthConfig, RelayBuilder, RelayConfig};
+use relay_builder::{RelayBuilder, RelayConfig};
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -33,16 +33,12 @@ async fn test_groups_relay_with_relay_builder() -> anyhow::Result<()> {
         groups_database.clone(),
         keys.clone(),
     )
-    .with_subdomains(2)
-    .with_auth(AuthConfig {
-        relay_url: "wss://test.groups.relay".to_string(),
-        validate_subdomains: true,
-    });
+    .with_subdomains(2);
 
     let groups_processor = GroupsRelayProcessor::new(groups, keys.public_key());
 
-    let _handler = RelayBuilder::new(relay_config)
-        .with_event_processor(groups_processor)
+    let _handler = RelayBuilder::<(), GroupsRelayProcessor>::new(relay_config)
+        .event_processor(groups_processor)
         .build()
         .await?;
 
