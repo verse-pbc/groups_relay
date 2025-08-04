@@ -130,7 +130,7 @@ pub async fn run_server(
                 match ws {
                     Some(ws) => {
                         // Handle WebSocket upgrade
-                        let handler = handler_factory.create();
+                        let handler = handler_factory.create(&headers);
                         handle_upgrade(ws, addr, handler).await
                     }
                     None => {

@@ -2132,6 +2132,7 @@ dependencies = [
 [[package]]
 name = "nostr"
 version = "0.43.0"
+source = "git+https://github.com/verse-pbc/nostr#acdaa56e8c8d8a71a21d97c4d727e3b9d9976e3c"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -2154,6 +2155,7 @@ dependencies = [
 [[package]]
 name = "nostr-database"
 version = "0.43.0"
+source = "git+https://github.com/verse-pbc/nostr#acdaa56e8c8d8a71a21d97c4d727e3b9d9976e3c"
 dependencies = [
  "flatbuffers",
  "lru",
@@ -2164,6 +2166,7 @@ dependencies = [
 [[package]]
 name = "nostr-lmdb"
 version = "0.43.0"
+source = "git+https://github.com/verse-pbc/nostr#acdaa56e8c8d8a71a21d97c4d727e3b9d9976e3c"
 dependencies = [
  "async-utility",
  "flume",
@@ -2178,6 +2181,7 @@ dependencies = [
 [[package]]
 name = "nostr-relay-pool"
 version = "0.43.0"
+source = "git+https://github.com/verse-pbc/nostr#acdaa56e8c8d8a71a21d97c4d727e3b9d9976e3c"
 dependencies = [
  "async-utility",
  "async-wsocket",
@@ -2193,6 +2197,7 @@ dependencies = [
 [[package]]
 name = "nostr-sdk"
 version = "0.43.0"
+source = "git+https://github.com/verse-pbc/nostr#acdaa56e8c8d8a71a21d97c4d727e3b9d9976e3c"
 dependencies = [
  "async-utility",
  "nostr",
@@ -4100,7 +4105,8 @@ dependencies = [
 
 [[package]]
 name = "websocket_builder"
-version = "1.0.0"
+version = "1.1.0-alpha.1"
+source = "git+https://github.com/verse-pbc/websocket_builder#c5b5fd509ece2232fd47f99708c71d92a0d41452"
 dependencies = [
  "anyhow",
  "axum 0.8.4",
