@@ -7,8 +7,12 @@ relay:
   local_addr: "0.0.0.0:8080"
   relay_url: "ws://localhost:8080"
   db_path: "/app/db"
+  
+  # Subscription limits
+  # Maximum number of subscriptions per connection
+  max_subscriptions: 50
   # Default/maximum limit for database queries (REQ filters)
-  query_limit: 500
+  max_limit: 500
 
   # WebSocket settings
   websocket:
@@ -16,6 +20,9 @@ relay:
     channel_size: 100
     # Maximum time a connection can stay open (optional)
     # Uses humantime format (e.g., "1h", "30m", "24h")
-    max_connection_time: "5m"
+    max_connection_duration: "5m"
+    # Idle timeout - disconnects after period of inactivity
+    # Usually set to same value as max_connection_duration
+    idle_timeout: "5m"
     # Maximum number of concurrent connections (optional)
     max_connections: 300

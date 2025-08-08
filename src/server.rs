@@ -53,8 +53,8 @@ pub async fn run_server(
     // Build the relay configuration
     let websocket_config = WebSocketConfig {
         max_connections: settings.websocket.max_connections(),
-        max_connection_duration: settings.websocket.max_connection_time.map(|d| d.as_secs()),
-        idle_timeout: None, // Can be configured later if needed
+        max_connection_duration: settings.websocket.max_connection_duration().map(|d| d.as_secs()),
+        idle_timeout: settings.websocket.idle_timeout().map(|d| d.as_secs()),
     };
 
     let _crypto_helper = CryptoHelper::new(Arc::new(relay_keys.clone()));

@@ -2,12 +2,20 @@
 relay:
   db_path: "./db"
   relay_url: "ws://localhost:8080"
+  
+  # Subscription limits (smaller for testing)
+  # Maximum number of subscriptions per connection
+  max_subscriptions: 20
+  # Default/maximum limit for database queries (REQ filters)
+  max_limit: 100
 
   # WebSocket settings for testing limits
   websocket:
     # Small channel size to test backpressure
     channel_size: 1000
     # Short connection time to test auto-disconnect
-    max_connection_time: "5m"
+    max_connection_duration: "5m"
+    # Idle timeout - disconnects after period of inactivity
+    idle_timeout: "5m"
     # Small number of connections to test connection limiting
     max_connections: 300
