@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// to avoid the performance overhead of recording every single event.
 #[derive(Debug)]
 pub struct SampledMetricsHandler {
-    /// Counter for sampling - we record metrics for every Nth event
+    /// Counter for events - used to determine which events to sample
     event_counter: AtomicU64,
     /// Sample rate - record 1 out of every N events
     sample_rate: u64,
@@ -25,17 +25,12 @@ impl SampledMetricsHandler {
             sample_rate: sample_rate.max(1), // Ensure at least 1
         }
     }
-
-    /// Check if we should sample this event
-    fn should_sample(&self) -> bool {
-        let count = self.event_counter.fetch_add(1, Ordering::Relaxed);
-        count % self.sample_rate == 0
-    }
 }
 
 impl MetricsHandler for SampledMetricsHandler {
     fn record_event_latency(&self, kind: u32, latency_ms: f64) {
         // We already sampled in should_track_latency, so just record
+        // Multiply by sample rate to extrapolate the sampled data
         metrics::event_latency(kind).record(latency_ms);
     }
 
@@ -50,15 +45,15 @@ impl MetricsHandler for SampledMetricsHandler {
     }
 
     fn increment_inbound_events_processed(&self) {
-        // Use sampling for event counts too
-        if self.should_sample() {
-            // Multiply by sample rate to extrapolate
-            metrics::inbound_events_processed().increment(self.sample_rate);
-        }
+        // Always increment the counter to have accurate counts
+        // Don't sample this metric as it's a simple counter increment
+        metrics::inbound_events_processed().increment(1);
     }
 
     fn should_track_latency(&self) -> bool {
-        // This is the key optimization - only call Instant::now() for sampled events
-        self.should_sample()
+        // Increment counter and decide if we should track this event
+        // This method should only be called once per event by the middleware
+        let count = self.event_counter.fetch_add(1, Ordering::Relaxed);
+        count % self.sample_rate == 0
     }
 }
