@@ -2,6 +2,7 @@ use anyhow::Result;
 use metrics::{describe_counter, describe_gauge, describe_histogram, Counter, Gauge, Histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
 pub use metrics_exporter_prometheus::PrometheusHandle;
+use nostr::Kind;
 use once_cell::sync::{Lazy, OnceCell};
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -34,36 +35,29 @@ static EVENT_LATENCY_HISTOGRAMS: Lazy<RwLock<HashMap<u32, Histogram>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Get the label for an event kind
-fn get_kind_label(kind: u32) -> &'static str {
-    match kind {
-        // Group management events
-        9000 => "add_user",
-        9001 => "remove_user",
-        9002 => "edit_metadata",
-        9005 => "delete_event",
-        9006 => "set_roles",
-        9007 => "create",
-        9008 => "delete",
-        9009 => "create_invite",
-        9021 => "join_request",
-        9022 => "leave_request",
-        // Addressable events
-        39000 => "metadata",
-        39001 => "admins",
-        39002 => "members",
-        39003 => "roles",
-        // NIP-60 Cashu Wallet events
-        17375 => "wallet",
-        7375 => "token",
-        7376 => "spending_history",
-        7374 => "quote",
-        // NIP-61 Nutzap events
-        10019 => "nutzap_info",
-        9321 => "nutzap",
-        // Other specific events
-        10009 => "simple_list",
-        28934 => "claim",
-        _ => "other",
+fn get_kind_label(kind: u32) -> String {
+    let nostr_kind = Kind::from(kind as u16);
+
+    match nostr_kind {
+        // For Custom kinds, check if they're ones we handle
+        Kind::Custom(k) => match k {
+            // NIP-29 Group management events (not in nostr library yet)
+            9000 | 9001 | 9002 | 9005 | 9006 | 9007 | 9008 | 9009 | 9021 | 9022 |
+            // NIP-29 Group addressable events (not in nostr library yet)  
+            39000 | 39001 | 39002 | 39003 |
+            // Nutzap (not in nostr library yet)
+            10019 | 9321 |
+            // Push notifications (not in nostr library yet)
+            3079 | 3080 |
+            // Other custom kinds we want to track
+            28934 => kind.to_string(),
+            // Unknown custom kinds
+            _ => "other".to_string(),
+        },
+        // All standard kinds in the nostr library enum
+        // This includes CashuWallet (17375), CashuWalletUnspentProof (7375), 
+        // CashuWalletSpendingHistory (7376), and many others
+        _ => kind.to_string(),
     }
 }
 
@@ -147,12 +141,6 @@ pub fn setup_metrics() -> Result<PrometheusHandle, anyhow::Error> {
 
             let builder = PrometheusBuilder::new();
             let handle = builder.install_recorder()?;
-
-            // Reset gauges to 0 on startup
-            active_connections().set(0.0);
-            active_subscriptions().set(0.0);
-            active_groups().set(0.0);
-
             Ok(handle)
         })
         .cloned()
