@@ -11,8 +11,6 @@ relay:
 
   # WebSocket settings for testing limits
   websocket:
-    # Small channel size to test backpressure
-    channel_size: 1000
     # Short connection time to test auto-disconnect
     max_connection_duration: "5m"
     # Idle timeout - disconnects after period of inactivity

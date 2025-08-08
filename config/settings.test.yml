@@ -16,8 +16,6 @@ relay:
 
   # WebSocket settings
   websocket:
-    # Size of the channel for outbound messages per connection
-    channel_size: 100
     # Maximum time a connection can stay open (optional)
     # Uses humantime format (e.g., "1h", "30m", "24h")
     max_connection_duration: "5m"

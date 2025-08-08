@@ -25,18 +25,12 @@ pub struct RelaySettings {
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct WebSocketSettings {
-    #[serde(default = "default_channel_size")]
-    pub channel_size: usize,
     #[serde(with = "humantime_serde", default = "default_max_connection_duration")]
     pub max_connection_duration: Option<Duration>,
     #[serde(with = "humantime_serde", default = "default_idle_timeout")]
     pub idle_timeout: Option<Duration>,
     #[serde(default = "default_max_connections")]
     pub max_connections: Option<usize>,
-}
-
-fn default_channel_size() -> usize {
-    27500 // Default: 50 subscriptions * 500 max_limit * 1.10
 }
 
 fn default_max_connection_duration() -> Option<Duration> {
@@ -71,14 +65,6 @@ impl RelaySettings {
 }
 
 impl WebSocketSettings {
-    pub fn channel_size(&self) -> usize {
-        if self.channel_size == 0 {
-            default_channel_size()
-        } else {
-            self.channel_size
-        }
-    }
-
     pub fn max_connection_duration(&self) -> Option<Duration> {
         self.max_connection_duration
             .or_else(default_max_connection_duration)
@@ -128,8 +114,7 @@ impl Config {
         let settings: RelaySettings = self.config.get("relay")?;
         // Only log non-sensitive WebSocket settings
         info!(
-            "WebSocket settings: channel_size={}, max_connections={:?}, max_connection_duration={:?}, idle_timeout={:?}",
-            settings.websocket.channel_size,
+            "WebSocket settings: max_connections={:?}, max_connection_duration={:?}, idle_timeout={:?}",
             settings.websocket.max_connections,
             settings.websocket.max_connection_duration,
             settings.websocket.idle_timeout,
