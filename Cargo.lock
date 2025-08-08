@@ -45,6 +45,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
 dependencies = [
  "cfg-if",
+ "getrandom 0.3.3",
  "once_cell",
  "version_check",
  "zerocopy",
@@ -1297,6 +1298,7 @@ dependencies = [
  "flume",
  "futures",
  "futures-util",
+ "heavykeeper",
  "humantime-serde",
  "indicatif",
  "metrics",
@@ -1398,6 +1400,17 @@ dependencies = [
  "flate2",
  "nom",
  "num-traits",
+]
+
+[[package]]
+name = "heavykeeper"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3456dfe10628d2a2c89ba8261d39b93832c496538cfcc42a626993a0d30d9fb"
+dependencies = [
+ "ahash",
+ "rand 0.9.1",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

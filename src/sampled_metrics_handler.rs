@@ -1,4 +1,4 @@
-use crate::metrics;
+use crate::metrics::{self, UnknownKindTracker};
 use relay_builder::middlewares::MetricsHandler;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -12,6 +12,8 @@ pub struct SampledMetricsHandler {
     event_counter: AtomicU64,
     /// Sample rate - record 1 out of every N events
     sample_rate: u64,
+    /// Tracker for unknown event kinds
+    unknown_kind_tracker: UnknownKindTracker,
 }
 
 impl SampledMetricsHandler {
@@ -23,6 +25,7 @@ impl SampledMetricsHandler {
         Self {
             event_counter: AtomicU64::new(0),
             sample_rate: sample_rate.max(1), // Ensure at least 1
+            unknown_kind_tracker: UnknownKindTracker::new(),
         }
     }
 }
@@ -30,8 +33,12 @@ impl SampledMetricsHandler {
 impl MetricsHandler for SampledMetricsHandler {
     fn record_event_latency(&self, kind: u32, latency_ms: f64) {
         // We already sampled in should_track_latency, so just record
-        // Multiply by sample rate to extrapolate the sampled data
         metrics::event_latency(kind).record(latency_ms);
+        
+        // Track unknown kinds for reporting
+        if UnknownKindTracker::is_unknown_kind(kind) {
+            self.unknown_kind_tracker.track(kind as u16);
+        }
     }
 
     fn increment_active_connections(&self) {

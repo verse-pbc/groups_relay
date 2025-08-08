@@ -1,11 +1,14 @@
 use anyhow::Result;
+use heavykeeper::TopK;
 use metrics::{describe_counter, describe_gauge, describe_histogram, Counter, Gauge, Histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
 pub use metrics_exporter_prometheus::PrometheusHandle;
 use nostr::Kind;
 use once_cell::sync::{Lazy, OnceCell};
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
+use tracing::info;
 
 /// Global metrics handle to ensure single initialization
 static METRICS_HANDLE: OnceCell<PrometheusHandle> = OnceCell::new();
@@ -144,4 +147,105 @@ pub fn setup_metrics() -> Result<PrometheusHandle, anyhow::Error> {
             Ok(handle)
         })
         .cloned()
+}
+
+/// Tracks the most frequent unknown event kinds using HeavyKeeper algorithm
+pub struct UnknownKindTracker {
+    top_k: Arc<Mutex<TopK<u16>>>,
+    last_report: Arc<Mutex<Instant>>,
+    report_interval: Duration,
+}
+
+impl UnknownKindTracker {
+    /// Create a new tracker for unknown event kinds
+    pub fn new() -> Self {
+        Self {
+            // Track top 10 unknown kinds with good accuracy
+            top_k: Arc::new(Mutex::new(TopK::new(10, 1000, 4, 0.9))),
+            last_report: Arc::new(Mutex::new(Instant::now())),
+            report_interval: Duration::from_secs(300), // 5 minutes
+        }
+    }
+
+    /// Track an unknown event kind
+    pub fn track(&self, kind: u16) {
+        if let Ok(mut top_k) = self.top_k.lock() {
+            top_k.add(&kind, 1);
+        }
+
+        // Check if it's time to report
+        self.maybe_report();
+    }
+
+    /// Report top unknown kinds if enough time has passed
+    fn maybe_report(&self) {
+        let now = Instant::now();
+        
+        // Check if enough time has passed (without holding the lock)
+        let should_report = {
+            if let Ok(last_report) = self.last_report.lock() {
+                now.duration_since(*last_report) >= self.report_interval
+            } else {
+                false
+            }
+        };
+
+        if should_report {
+            // Try to update last_report time
+            if let Ok(mut last_report) = self.last_report.lock() {
+                // Double-check the time with the lock
+                if now.duration_since(*last_report) >= self.report_interval {
+                    *last_report = now;
+                    
+                    // Report the top unknown kinds
+                    if let Ok(top_k) = self.top_k.lock() {
+                        let top_kinds = top_k.list();
+                        if !top_kinds.is_empty() {
+                            let kinds_info: Vec<String> = top_kinds
+                                .iter()
+                                .map(|node| format!("kind {} ({} times)", node.item, node.count))
+                                .collect();
+                            
+                            info!(
+                                "Top unknown event kinds in the last {} minutes: {}",
+                                self.report_interval.as_secs() / 60,
+                                kinds_info.join(", ")
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check if a kind should be tracked as unknown
+    pub fn is_unknown_kind(kind: u32) -> bool {
+        let nostr_kind = Kind::from(kind as u16);
+        matches!(nostr_kind, Kind::Custom(k) if !Self::is_known_custom_kind(k))
+    }
+
+    /// Check if a custom kind is one we explicitly handle
+    fn is_known_custom_kind(kind: u16) -> bool {
+        matches!(
+            kind,
+            // NIP-29 Group management events
+            9000 | 9001 | 9002 | 9005 | 9006 | 9007 | 9008 | 9009 | 9021 | 9022 |
+            // NIP-29 Group addressable events  
+            39000 | 39001 | 39002 | 39003 |
+            // Nutzap
+            10019 | 9321 |
+            // Push notifications
+            3079 | 3080 |
+            // Other custom kinds we track
+            28934
+        )
+    }
+}
+
+impl std::fmt::Debug for UnknownKindTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnknownKindTracker")
+            .field("report_interval", &self.report_interval)
+            .finish()
+    }
 }
