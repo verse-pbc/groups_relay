@@ -2812,7 +2812,7 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 [[package]]
 name = "relay_builder"
 version = "0.5.0-alpha.1"
-source = "git+https://github.com/verse-pbc/relay_builder#12989710ce8f42f42f38be684f49951d028f39e2"
+source = "git+https://github.com/verse-pbc/relay_builder#ec74a5de4695fa15bf50a2b0e93978fee462a3bb"
 dependencies = [
  "anyhow",
  "axum 0.8.4",
@@ -4110,7 +4110,7 @@ dependencies = [
 [[package]]
 name = "websocket_builder"
 version = "1.1.0-alpha.1"
-source = "git+https://github.com/verse-pbc/websocket_builder#c5b5fd509ece2232fd47f99708c71d92a0d41452"
+source = "git+https://github.com/verse-pbc/websocket_builder#119f33ab1f0060162c4ec82b11154c8df26aa15d"
 dependencies = [
  "anyhow",
  "axum 0.8.4",
