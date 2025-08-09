@@ -2812,7 +2812,7 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 [[package]]
 name = "relay_builder"
 version = "0.5.0-alpha.1"
-source = "git+https://github.com/verse-pbc/relay_builder?branch=feat%2Fsubscription-diagnostics#254893055f2ac68a6cde474fcab013ec61062d5f"
+source = "git+https://github.com/verse-pbc/relay_builder?branch=feat%2Fsubscription-diagnostics#6a7542a68aa569e24319d1cabec9a0956cb9e143"
 dependencies = [
  "anyhow",
  "axum 0.8.4",
