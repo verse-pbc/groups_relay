@@ -61,7 +61,8 @@ pub async fn run_server(
     let mut relay_config = RelayConfig::new(settings.relay_url.clone(), database, relay_keys.clone())
         .with_subdomains_from_url(&settings.relay_url)
         .with_websocket_config(websocket_config)
-        .with_subscription_limits(settings.max_subscriptions, settings.max_limit);
+        .with_subscription_limits(settings.max_subscriptions, settings.max_limit)
+        .with_diagnostics();
     
     // Enable NIP-42 authentication
     relay_config.enable_auth = true;
