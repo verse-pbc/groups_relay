@@ -58,12 +58,12 @@ mod integration_tests {
         // Process event
         let admin_pubkey = admin_keys.public_key();
         let context = EventContext {
-            authed_pubkey: Some(&admin_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &relay_pubkey,
+            authed_pubkey: Some(admin_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: relay_pubkey,
         };
         let store_commands = processor
-            .handle_event(create_event, empty_state(), context)
+            .handle_event(create_event, empty_state(), &context)
             .await
             .unwrap();
 
@@ -121,12 +121,12 @@ mod integration_tests {
 
         let admin_pubkey = admin_keys.public_key();
         let context = EventContext {
-            authed_pubkey: Some(&admin_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &relay_pubkey,
+            authed_pubkey: Some(admin_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: relay_pubkey,
         };
         processor
-            .handle_event(create_event, empty_state(), context)
+            .handle_event(create_event, empty_state(), &context)
             .await
             .unwrap();
 
@@ -142,7 +142,7 @@ mod integration_tests {
         .await;
 
         processor
-            .handle_event(add_event, empty_state(), context)
+            .handle_event(add_event, empty_state(), &context)
             .await
             .unwrap();
 
@@ -153,27 +153,27 @@ mod integration_tests {
 
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
-            authed_pubkey: Some(&member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &relay_pubkey,
+            authed_pubkey: Some(member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: relay_pubkey,
         };
 
         // Member should be able to query
         let result = processor
-            .verify_filters(&filters, empty_state(), member_context);
+            .verify_filters(&filters, empty_state(), &member_context);
         assert!(result.is_ok());
 
         // Non-member should not be able to query
         let non_member_pubkey = non_member_keys.public_key();
         let non_member_context = EventContext {
-            authed_pubkey: Some(&non_member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &relay_pubkey,
+            authed_pubkey: Some(non_member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: relay_pubkey,
         };
         let result = processor.verify_filters(
             &filters,
             empty_state(),
-            non_member_context,
+            &non_member_context,
         );
         assert!(result.is_err());
     }
@@ -201,12 +201,12 @@ mod integration_tests {
 
         let admin_pubkey = admin_keys.public_key();
         let admin_context = EventContext {
-            authed_pubkey: Some(&admin_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &relay_pubkey,
+            authed_pubkey: Some(admin_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: relay_pubkey,
         };
         processor
-            .handle_event(create_event, empty_state(), admin_context)
+            .handle_event(create_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -222,7 +222,7 @@ mod integration_tests {
         .await;
 
         processor
-            .handle_event(add_event, empty_state(), admin_context)
+            .handle_event(add_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -236,31 +236,31 @@ mod integration_tests {
 
         // Test visibility for admin
         let can_see = processor
-            .can_see_event(&content_event, empty_state(), admin_context)
+            .can_see_event(&content_event, empty_state(), &admin_context)
             .unwrap();
         assert!(can_see);
 
         // Test visibility for member
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
-            authed_pubkey: Some(&member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &relay_pubkey,
+            authed_pubkey: Some(member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: relay_pubkey,
         };
         let can_see = processor
-            .can_see_event(&content_event, empty_state(), member_context)
+            .can_see_event(&content_event, empty_state(), &member_context)
             .unwrap();
         assert!(can_see);
 
         // Test visibility for non-member
         let non_member_pubkey = non_member_keys.public_key();
         let non_member_context = EventContext {
-            authed_pubkey: Some(&non_member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &relay_pubkey,
+            authed_pubkey: Some(non_member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: relay_pubkey,
         };
         let can_see = processor
-            .can_see_event(&content_event, empty_state(), non_member_context)
+            .can_see_event(&content_event, empty_state(), &non_member_context)
             .unwrap();
         assert!(!can_see);
     }

@@ -43,7 +43,7 @@ fn setup_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     use tracing_subscriber::{fmt, EnvFilter};
 
     let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,groups_relay=debug,websocket_builder=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("info,groups_relay=debug,relay_builder=debug"));
 
     // Create non-blocking stdout writer
     let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stdout());

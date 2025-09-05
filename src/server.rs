@@ -10,7 +10,7 @@ use relay_builder::{
     CryptoHelper, Nip40ExpirationMiddleware, Nip70Middleware, RelayBuilder, 
     RelayConfig, RelayInfo, WebSocketConfig,
 };
-use websocket_builder::{handle_upgrade, HandlerFactory, WebSocketUpgrade};
+use relay_builder::{handle_upgrade, HandlerFactory, WebSocketUpgrade};
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;

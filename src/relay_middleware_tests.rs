@@ -52,13 +52,13 @@ mod tests {
 
         let member_keys_pubkey = member_keys.public_key();
         let context = EventContext {
-            authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         let commands = processor
-            .handle_event(event.clone(), empty_state(), context)
+            .handle_event(event.clone(), empty_state(), &context)
             .await
             .unwrap();
 
@@ -87,23 +87,23 @@ mod tests {
         // Non-member should be able to see unmanaged group events
         let non_member_keys_pubkey = non_member_keys.public_key();
         let non_member_context = EventContext {
-            authed_pubkey: Some(&non_member_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(non_member_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
         let can_see = processor
-            .can_see_event(&event, empty_state(), non_member_context)
+            .can_see_event(&event, empty_state(), &non_member_context)
             .unwrap();
         assert!(can_see);
 
         // Anonymous should also see unmanaged group events
         let anon_context = EventContext {
             authed_pubkey: None,
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
         let can_see = processor
-            .can_see_event(&event, empty_state(), anon_context)
+            .can_see_event(&event, empty_state(), &anon_context)
             .unwrap();
         assert!(can_see);
     }
@@ -119,13 +119,13 @@ mod tests {
 
         let member_keys_pubkey = member_keys.public_key();
         let context = EventContext {
-            authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         let commands = processor
-            .handle_event(event.clone(), empty_state(), context)
+            .handle_event(event.clone(), empty_state(), &context)
             .await
             .unwrap();
 
@@ -152,11 +152,11 @@ mod tests {
         // Everyone should see non-group events
         let context = EventContext {
             authed_pubkey: None,
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
         let can_see = processor
-            .can_see_event(&event, empty_state(), context)
+            .can_see_event(&event, empty_state(), &context)
             .unwrap();
         assert!(can_see);
     }
@@ -180,13 +180,13 @@ mod tests {
 
         let member_keys_pubkey = member_keys.public_key();
         let context = EventContext {
-            authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         let result = processor
-            .handle_event(create_event, empty_state(), context)
+            .handle_event(create_event, empty_state(), &context)
             .await;
 
         // Should succeed - anyone can create new groups
@@ -214,13 +214,13 @@ mod tests {
 
         let admin_keys_pubkey = admin_keys.public_key();
         let admin_context = EventContext {
-            authed_pubkey: Some(&admin_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(admin_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         processor
-            .handle_event(create_event, empty_state(), admin_context)
+            .handle_event(create_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -236,7 +236,7 @@ mod tests {
         .await;
 
         processor
-            .handle_event(add_event, empty_state(), admin_context)
+            .handle_event(add_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -251,24 +251,24 @@ mod tests {
         // Non-member should NOT see private group events
         let non_member_keys_pubkey = non_member_keys.public_key();
         let non_member_context = EventContext {
-            authed_pubkey: Some(&non_member_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(non_member_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
         let can_see = processor
-            .can_see_event(&content_event, empty_state(), non_member_context)
+            .can_see_event(&content_event, empty_state(), &non_member_context)
             .unwrap();
         assert!(!can_see);
 
         // Member should see private group events
         let member_keys_pubkey = member_keys.public_key();
         let member_context = EventContext {
-            authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
         let can_see = processor
-            .can_see_event(&content_event, empty_state(), member_context)
+            .can_see_event(&content_event, empty_state(), &member_context)
             .unwrap();
         assert!(can_see);
     }
@@ -294,13 +294,13 @@ mod tests {
 
         let admin_keys_pubkey = admin_keys.public_key();
         let admin_context = EventContext {
-            authed_pubkey: Some(&admin_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(admin_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         processor
-            .handle_event(create_event, empty_state(), admin_context)
+            .handle_event(create_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -316,7 +316,7 @@ mod tests {
         .await;
 
         processor
-            .handle_event(add_event, empty_state(), admin_context)
+            .handle_event(add_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -328,28 +328,28 @@ mod tests {
         // Non-member should NOT be able to query private group
         let non_member_keys_pubkey = non_member_keys.public_key();
         let non_member_context = EventContext {
-            authed_pubkey: Some(&non_member_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(non_member_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
         let result = processor
-            .verify_filters(&filters, empty_state(), non_member_context);
+            .verify_filters(&filters, empty_state(), &non_member_context);
         assert!(result.is_err());
 
         // Member should be able to query
         let member_keys_pubkey = member_keys.public_key();
         let member_context = EventContext {
-            authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
         let result = processor
-            .verify_filters(&filters, empty_state(), member_context);
+            .verify_filters(&filters, empty_state(), &member_context);
         assert!(result.is_ok());
 
         // Admin should be able to query
         let result = processor
-            .verify_filters(&filters, empty_state(), admin_context);
+            .verify_filters(&filters, empty_state(), &admin_context);
         assert!(result.is_ok());
     }
 
@@ -375,13 +375,13 @@ mod tests {
 
         let admin_keys_pubkey = admin_keys.public_key();
         let admin_context = EventContext {
-            authed_pubkey: Some(&admin_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(admin_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         processor
-            .handle_event(create_event, empty_state(), admin_context)
+            .handle_event(create_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -395,30 +395,30 @@ mod tests {
 
         // Store the event first
         processor
-            .handle_event(content_event.clone(), empty_state(), admin_context)
+            .handle_event(content_event.clone(), empty_state(), &admin_context)
             .await
             .unwrap();
 
         // Non-member SHOULD see public group events
         let non_member_keys_pubkey = non_member_keys.public_key();
         let non_member_context = EventContext {
-            authed_pubkey: Some(&non_member_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(non_member_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
         let can_see = processor
-            .can_see_event(&content_event, empty_state(), non_member_context)
+            .can_see_event(&content_event, empty_state(), &non_member_context)
             .unwrap();
         assert!(can_see);
 
         // Anonymous should also see public group events
         let anon_context = EventContext {
             authed_pubkey: None,
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
         let can_see = processor
-            .can_see_event(&content_event, empty_state(), anon_context)
+            .can_see_event(&content_event, empty_state(), &anon_context)
             .unwrap();
         assert!(can_see);
     }
@@ -443,13 +443,13 @@ mod tests {
 
         let admin_keys_pubkey = admin_keys.public_key();
         let admin_context = EventContext {
-            authed_pubkey: Some(&admin_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(admin_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         processor
-            .handle_event(create_event, empty_state(), admin_context)
+            .handle_event(create_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -465,16 +465,16 @@ mod tests {
         .await;
 
         let result = processor
-            .handle_event(add_event.clone(), empty_state(), admin_context)
+            .handle_event(add_event.clone(), empty_state(), &admin_context)
             .await;
         assert!(result.is_ok());
 
         // Try to add another member as non-admin should fail
         let member_keys_pubkey = member_keys.public_key();
         let member_context = EventContext {
-            authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
         let add_event_by_member = create_test_event(
             &member_keys,
@@ -487,7 +487,7 @@ mod tests {
         .await;
 
         let result = processor
-            .handle_event(add_event_by_member, empty_state(), member_context)
+            .handle_event(add_event_by_member, empty_state(), &member_context)
             .await;
         assert!(result.is_err());
     }
@@ -512,13 +512,13 @@ mod tests {
 
         let admin_keys_pubkey = admin_keys.public_key();
         let admin_context = EventContext {
-            authed_pubkey: Some(&admin_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(admin_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         processor
-            .handle_event(create_event, empty_state(), admin_context)
+            .handle_event(create_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -534,7 +534,7 @@ mod tests {
         .await;
 
         processor
-            .handle_event(add_event, empty_state(), admin_context)
+            .handle_event(add_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -547,7 +547,7 @@ mod tests {
         .await;
 
         processor
-            .handle_event(content_event.clone(), empty_state(), admin_context)
+            .handle_event(content_event.clone(), empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -563,16 +563,16 @@ mod tests {
         .await;
 
         let result = processor
-            .handle_event(delete_event, empty_state(), admin_context)
+            .handle_event(delete_event, empty_state(), &admin_context)
             .await;
         assert!(result.is_ok());
 
         // Member can delete own event
         let member_keys_pubkey = member_keys.public_key();
         let member_context = EventContext {
-            authed_pubkey: Some(&member_keys_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_keys_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
         let member_content = create_test_event(
             &member_keys,
@@ -582,7 +582,7 @@ mod tests {
         .await;
 
         processor
-            .handle_event(member_content.clone(), empty_state(), member_context)
+            .handle_event(member_content.clone(), empty_state(), &member_context)
             .await
             .unwrap();
 
@@ -597,7 +597,7 @@ mod tests {
         .await;
 
         let result = processor
-            .handle_event(member_delete, empty_state(), member_context)
+            .handle_event(member_delete, empty_state(), &member_context)
             .await;
         // Current implementation: only admins can delete events (including group deletion events)
         // TODO: Should allow event authors to delete their own events
@@ -625,14 +625,14 @@ mod tests {
 
         let admin_pubkey = admin_keys.public_key();
         let admin_context = EventContext {
-            authed_pubkey: Some(&admin_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(admin_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         // Create the group
         processor
-            .handle_event(create_group_event, empty_state(), admin_context)
+            .handle_event(create_group_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -648,7 +648,7 @@ mod tests {
         .await;
 
         processor
-            .handle_event(add_member_event, empty_state(), admin_context)
+            .handle_event(add_member_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -662,14 +662,14 @@ mod tests {
 
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
-            authed_pubkey: Some(&member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         // Member should be able to see the event
         let can_see = processor
-            .can_see_event(&group_event, empty_state(), member_context)
+            .can_see_event(&group_event, empty_state(), &member_context)
             .unwrap();
         assert!(can_see, "Member should be able to see group events");
     }
@@ -696,13 +696,13 @@ mod tests {
 
         let admin_pubkey = admin_keys.public_key();
         let admin_context = EventContext {
-            authed_pubkey: Some(&admin_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(admin_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         processor
-            .handle_event(create_group_event, empty_state(), admin_context)
+            .handle_event(create_group_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -718,7 +718,7 @@ mod tests {
         .await;
 
         processor
-            .handle_event(add_member_event, empty_state(), admin_context)
+            .handle_event(add_member_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -732,14 +732,14 @@ mod tests {
 
         let non_member_pubkey = non_member_keys.public_key();
         let non_member_context = EventContext {
-            authed_pubkey: Some(&non_member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(non_member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         // Non-member should NOT be able to see private group events
         let can_see = processor
-            .can_see_event(&group_event, empty_state(), non_member_context)
+            .can_see_event(&group_event, empty_state(), &non_member_context)
             .unwrap();
         assert!(!can_see, "Non-member should not see private group events");
     }
@@ -765,13 +765,13 @@ mod tests {
 
         let admin_pubkey = admin_keys.public_key();
         let admin_context = EventContext {
-            authed_pubkey: Some(&admin_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(admin_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         processor
-            .handle_event(create_group_event, empty_state(), admin_context)
+            .handle_event(create_group_event, empty_state(), &admin_context)
             .await
             .unwrap();
 
@@ -785,7 +785,7 @@ mod tests {
 
         // Relay (admin in this case) should be able to see all events
         let can_see = processor
-            .can_see_event(&group_event, empty_state(), admin_context)
+            .can_see_event(&group_event, empty_state(), &admin_context)
             .unwrap();
         assert!(can_see, "Relay should be able to see all events");
     }
@@ -798,9 +798,9 @@ mod tests {
 
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
-            authed_pubkey: Some(&member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         // Create metadata filter with d tag (group creation events)
@@ -810,7 +810,7 @@ mod tests {
 
         // Test filter verification - should pass for metadata queries
         let result = processor
-            .verify_filters(&[meta_filter], empty_state(), member_context);
+            .verify_filters(&[meta_filter], empty_state(), &member_context);
 
         assert!(
             result.is_ok(),
@@ -826,9 +826,9 @@ mod tests {
 
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
-            authed_pubkey: Some(&member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         // Create filter for addressable events (30000-39999 range)
@@ -840,7 +840,7 @@ mod tests {
         let result = processor.verify_filters(
             &[addressable_filter],
             empty_state(),
-            member_context,
+            &member_context,
         );
 
         assert!(
@@ -857,9 +857,9 @@ mod tests {
 
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
-            authed_pubkey: Some(&member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         // Create filter for non-existing group
@@ -870,7 +870,7 @@ mod tests {
 
         // Should pass because unmanaged groups are allowed
         let result = processor
-            .verify_filters(&filters, empty_state(), member_context);
+            .verify_filters(&filters, empty_state(), &member_context);
         assert!(
             result.is_ok(),
             "Non-existing groups should be allowed (unmanaged groups)"
@@ -885,9 +885,9 @@ mod tests {
 
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
-            authed_pubkey: Some(&member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         // Create filter without group tags (non-group query)
@@ -895,7 +895,7 @@ mod tests {
 
         // Should always pass for non-group queries
         let result = processor
-            .verify_filters(&filters, empty_state(), member_context);
+            .verify_filters(&filters, empty_state(), &member_context);
         assert!(result.is_ok(), "Non-group queries should always be allowed");
     }
 
@@ -910,13 +910,13 @@ mod tests {
 
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
-            authed_pubkey: Some(&member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         let commands = processor
-            .handle_event(event.clone(), empty_state(), member_context)
+            .handle_event(event.clone(), empty_state(), &member_context)
             .await
             .unwrap();
 
@@ -946,9 +946,9 @@ mod tests {
 
         let member_pubkey = member_keys.public_key();
         let member_context = EventContext {
-            authed_pubkey: Some(&member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         // Save the unmanaged event directly to database (like the old test)
@@ -972,7 +972,7 @@ mod tests {
         .await;
 
         let result = processor
-            .handle_event(create_event, empty_state(), member_context)
+            .handle_event(create_event, empty_state(), &member_context)
             .await;
 
         // Should fail because only relay admin can convert unmanaged to managed

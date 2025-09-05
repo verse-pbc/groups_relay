@@ -85,7 +85,7 @@ impl EventProcessor for GroupsRelayProcessor {
         &self,
         filters: &[Filter],
         _custom_state: Arc<RwLock<()>>,
-        context: EventContext<'_>,
+        context: &EventContext,
     ) -> Result<()> {
         // For groups relay, we need to verify access to group queries
         for filter in filters {
@@ -96,12 +96,12 @@ impl EventProcessor for GroupsRelayProcessor {
 
                 // Verify access to each group mentioned in the filter
                 for group_tag in group_tags {
-                    if let Some(group_ref) = self.groups.get_group(context.subdomain, &group_tag) {
+                    if let Some(group_ref) = self.groups.get_group(&context.subdomain, &group_tag) {
                         // Managed group - check if the user can read from this group
                         let group = group_ref.value();
                         if group.metadata.private {
                             // Private group - user must be a member or relay admin
-                            if let Some(pubkey) = context.authed_pubkey {
+                            if let Some(pubkey) = &context.authed_pubkey {
                                 // Relay admin has access to all groups
                                 if pubkey != &self.relay_pubkey && !group.is_member(pubkey) {
                                     return Err(relay_builder::Error::restricted(format!(
@@ -135,14 +135,14 @@ impl EventProcessor for GroupsRelayProcessor {
         &self,
         event: &Event,
         _custom_state: Arc<RwLock<()>>,
-        context: EventContext<'_>,
+        context: &EventContext,
     ) -> Result<bool> {
         // Check if this is a group event
-        if let Some(group_ref) = self.groups.find_group_from_event(event, context.subdomain) {
+        if let Some(group_ref) = self.groups.find_group_from_event(event, &context.subdomain) {
             // Group event - check access control using the group's can_see_event method
             group_ref.value().can_see_event(
-                &context.authed_pubkey.cloned(),
-                context.relay_pubkey,
+                &context.authed_pubkey,
+                &context.relay_pubkey,
                 event,
             )
         } else {
@@ -155,7 +155,7 @@ impl EventProcessor for GroupsRelayProcessor {
         &self,
         event: Event,
         _custom_state: Arc<RwLock<()>>,
-        context: EventContext<'_>,
+        context: &EventContext,
     ) -> Result<Vec<StoreCommand>> {
         let subdomain = context.subdomain.clone();
 
@@ -172,7 +172,7 @@ impl EventProcessor for GroupsRelayProcessor {
             debug!(target: "groups_relay_logic", "Processing unmanaged group event: kind={}, id={}", event.kind, event.id);
             return Ok(vec![StoreCommand::SaveSignedEvent(
                 Box::new(event),
-                subdomain,
+                (*subdomain).clone(),
                 None,
             )]);
         }
@@ -264,7 +264,7 @@ impl EventProcessor for GroupsRelayProcessor {
                 debug!(target: "groups_relay_logic", "Processing non-group event: kind={}, id={}", event.kind, event.id);
                 vec![StoreCommand::SaveSignedEvent(
                     Box::new(event),
-                    subdomain,
+                    (*subdomain).clone(),
                     None,
                 )]
             }
@@ -326,14 +326,14 @@ mod tests {
 
         let member_pubkey = member_keys.public_key();
         let context = EventContext {
-            authed_pubkey: Some(&member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         // Non-group events should be visible to everyone
         assert!(processor
-            .can_see_event(&event, empty_state(), context)
+            .can_see_event(&event, empty_state(), &context)
             .unwrap());
     }
 
@@ -363,19 +363,19 @@ mod tests {
 
         let member_pubkey = member_keys.public_key();
         let context = EventContext {
-            authed_pubkey: Some(&member_pubkey),
-            subdomain: &Scope::Default,
-            relay_pubkey: &admin_keys.public_key(),
+            authed_pubkey: Some(member_pubkey),
+            subdomain: Arc::new(Scope::Default),
+            relay_pubkey: admin_keys.public_key(),
         };
 
         // Unmanaged group events should be visible (everyone is considered a member)
         assert!(processor
-            .can_see_event(&event, empty_state(), context)
+            .can_see_event(&event, empty_state(), &context)
             .unwrap());
 
         // Test handle_event for unmanaged group
         let commands = processor
-            .handle_event(event.clone(), empty_state(), context)
+            .handle_event(event.clone(), empty_state(), &context)
             .await
             .unwrap();
         assert_eq!(commands.len(), 1);

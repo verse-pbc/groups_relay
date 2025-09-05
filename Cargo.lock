@@ -61,6 +61,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocator-api2"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
+
+[[package]]
 name = "android-tzdata"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -139,6 +145,12 @@ checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 dependencies = [
  "backtrace",
 ]
+
+[[package]]
+name = "arc-swap"
+version = "1.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69f7f8c3906b62b754cd5326047894316021dcfe5a194c8ea52bdd94934a3457"
 
 [[package]]
 name = "arraydeque"
@@ -1206,6 +1218,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f90f7dce0722e95104fcb095585910c0977252f286e354b5e3bd38902cd99988"
 
 [[package]]
+name = "futures-timer"
+version = "3.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f288b0a4f20f9a56b5d1da57e2227c661b7b16168e2f72365f57b63326e29b24"
+
+[[package]]
 name = "futures-util"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1253,9 +1271,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26145e563e54f2cadc477553f1ec5ee650b00862f0a58bcd12cbdc5f0ea2d2f4"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi",
  "wasi 0.14.2+wasi-0.2.4",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1280,6 +1300,29 @@ dependencies = [
  "futures-core",
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "governor"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "444405bbb1a762387aa22dd569429533b54a1d8759d35d3b64cb39b0293eaa19"
+dependencies = [
+ "cfg-if",
+ "dashmap",
+ "futures-sink",
+ "futures-timer",
+ "futures-util",
+ "getrandom 0.3.3",
+ "hashbrown 0.15.4",
+ "nonzero_ext",
+ "parking_lot",
+ "portable-atomic",
+ "quanta",
+ "rand 0.9.1",
+ "smallvec",
+ "spinning_top",
+ "web-time",
 ]
 
 [[package]]
@@ -1327,7 +1370,6 @@ dependencies = [
  "tracing-appender",
  "tracing-futures",
  "tracing-subscriber",
- "websocket_builder",
 ]
 
 [[package]]
@@ -1377,6 +1419,8 @@ version = "0.15.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5971ac85611da7067dbfcabef3c70ebb5606018acd9e2a3903a0da507521e0d5"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash",
 ]
 
@@ -2134,9 +2178,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nonzero_ext"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
+
+[[package]]
 name = "nostr"
 version = "0.43.0"
-source = "git+https://github.com/verse-pbc/nostr#acdaa56e8c8d8a71a21d97c4d727e3b9d9976e3c"
+source = "git+https://github.com/verse-pbc/nostr#975456f565b24ff1c0593075825024eea67e55c7"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -2159,7 +2209,7 @@ dependencies = [
 [[package]]
 name = "nostr-database"
 version = "0.43.0"
-source = "git+https://github.com/verse-pbc/nostr#acdaa56e8c8d8a71a21d97c4d727e3b9d9976e3c"
+source = "git+https://github.com/verse-pbc/nostr#975456f565b24ff1c0593075825024eea67e55c7"
 dependencies = [
  "flatbuffers",
  "lru",
@@ -2170,7 +2220,7 @@ dependencies = [
 [[package]]
 name = "nostr-lmdb"
 version = "0.43.0"
-source = "git+https://github.com/verse-pbc/nostr#acdaa56e8c8d8a71a21d97c4d727e3b9d9976e3c"
+source = "git+https://github.com/verse-pbc/nostr#975456f565b24ff1c0593075825024eea67e55c7"
 dependencies = [
  "async-utility",
  "flume",
@@ -2185,7 +2235,7 @@ dependencies = [
 [[package]]
 name = "nostr-relay-pool"
 version = "0.43.0"
-source = "git+https://github.com/verse-pbc/nostr#acdaa56e8c8d8a71a21d97c4d727e3b9d9976e3c"
+source = "git+https://github.com/verse-pbc/nostr#975456f565b24ff1c0593075825024eea67e55c7"
 dependencies = [
  "async-utility",
  "async-wsocket",
@@ -2201,7 +2251,7 @@ dependencies = [
 [[package]]
 name = "nostr-sdk"
 version = "0.43.0"
-source = "git+https://github.com/verse-pbc/nostr#acdaa56e8c8d8a71a21d97c4d727e3b9d9976e3c"
+source = "git+https://github.com/verse-pbc/nostr#975456f565b24ff1c0593075825024eea67e55c7"
 dependencies = [
  "async-utility",
  "nostr",
@@ -2812,9 +2862,10 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 [[package]]
 name = "relay_builder"
 version = "0.5.0-alpha.1"
-source = "git+https://github.com/verse-pbc/relay_builder?branch=feat%2Fsubscription-diagnostics#33d920fa4c543bf9ebb499c4d12bddd72e3d8835"
+source = "git+https://github.com/verse-pbc/relay_builder?branch=optimize-lock-usage#215d2020e08ae911fa6fe4fbe45b42ef00bc5c10"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "axum 0.8.4",
  "axum-server",
  "chrono",
@@ -2822,10 +2873,13 @@ dependencies = [
  "dashmap",
  "flume",
  "futures-util",
+ "governor",
  "heed",
  "hex",
  "indicatif",
+ "libc",
  "negentropy",
+ "nonzero_ext",
  "nostr",
  "nostr-database",
  "nostr-lmdb",
@@ -2840,6 +2894,7 @@ dependencies = [
  "serde_json",
  "snafu",
  "thiserror 2.0.12",
+ "tikv-jemallocator",
  "tokio",
  "tokio-util",
  "tower 0.4.13",
@@ -2848,8 +2903,8 @@ dependencies = [
  "tracing-futures",
  "tracing-subscriber",
  "twox-hash",
+ "url",
  "uuid",
- "websocket_builder",
 ]
 
 [[package]]
@@ -3277,6 +3332,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spinning_top"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d96d2d1d716fb500937168cc09353ffdc7a012be8475ac7308e1bdf0e3923300"
+dependencies = [
+ "lock_api",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3419,6 +3483,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f60246a4944f24f6e018aa17cdeffb7818b76356965d03b07d6a9886e8962185"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "tikv-jemalloc-sys"
+version = "0.6.0+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd3c60906412afa9c2b5b5a48ca6a5abe5736aec9eb48ad05037a677e52e4e2d"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
+name = "tikv-jemallocator"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cec5ff18518d81584f477e9bfdf957f5bb0979b0bac3af4ca30b5b3ae2d2865"
+dependencies = [
+ "libc",
+ "tikv-jemalloc-sys",
 ]
 
 [[package]]
@@ -4105,19 +4189,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8782dd5a41a24eed3a4f40b606249b3e236ca61adf1f25ea4d45c73de122b502"
 dependencies = [
  "rustls-pki-types",
-]
-
-[[package]]
-name = "websocket_builder"
-version = "1.1.0-alpha.1"
-source = "git+https://github.com/verse-pbc/websocket_builder#119f33ab1f0060162c4ec82b11154c8df26aa15d"
-dependencies = [
- "anyhow",
- "axum 0.8.4",
- "flume",
- "futures-util",
- "tokio",
- "tracing",
 ]
 
 [[package]]
