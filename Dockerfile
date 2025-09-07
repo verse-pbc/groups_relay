@@ -5,6 +5,7 @@ FROM rust:${RUST_VERSION}-slim-bookworm AS rust-builder
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
+    make \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/app
