@@ -376,15 +376,16 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
         let Some(group_id) = Group::extract_group_id(&event) else {
-            return Err(Error::notice("Group ID not found in event"));
+            return Err(Error::event_error("Group ID not found in event", event_id));
         };
 
         // Safety: Query key existence without holding lock
         let key = (scope.clone(), group_id.to_string());
 
         if self.groups.contains_key(&key) {
-            return Err(Error::notice("Group already exists"));
+            return Err(Error::event_error("Group already exists", event_id));
         }
 
         // If a group with this id existed (kind 9008), we don't let it be created again
@@ -402,11 +403,11 @@ impl Groups {
             .await
         {
             Ok(events) => events,
-            Err(e) => return Err(Error::notice(format!("Error querying database: {e}"))),
+            Err(e) => return Err(Error::event_error(format!("Error querying database: {e}"), event_id)),
         };
 
         if !deleted_events.is_empty() {
-            return Err(Error::notice("Group existed before and was deleted"));
+            return Err(Error::event_error("Group existed before and was deleted", event_id));
         }
 
         // Find all previous participants in unmanaged group
@@ -422,15 +423,16 @@ impl Groups {
             .await
         {
             Ok(events) => events,
-            Err(e) => return Err(Error::notice(format!("Error querying database: {e}"))),
+            Err(e) => return Err(Error::event_error(format!("Error querying database: {e}"), event_id)),
         };
 
         let mut group = Group::new(&event, scope.clone())?;
 
         // Only allow migrating unmanaged groups to managed ones if creator is relay admin
         if !previous_events.is_empty() && event.pubkey != self.relay_pubkey {
-            return Err(Error::notice(
+            return Err(Error::event_error(
                 "Only relay admin can create a managed group from an unmanaged one",
+                event_id,
             ));
         }
 
