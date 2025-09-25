@@ -889,11 +889,10 @@ impl Group {
             )));
         }
 
-        // If user is already a member, do nothing
+        // If user is already a member, reject with NIP-29 compliant error
         if self.members.contains_key(&event.pubkey) {
-            // println!("[join_request] User {} is already a member", event.pubkey);
             info!("User {} is already a member", event.pubkey);
-            return Err(Error::notice("Notice: User is already a member"));
+            return Err(Error::notice("duplicate: User is already a member"));
         }
 
         // println!(
@@ -2124,13 +2123,13 @@ mod tests {
         let join_tags = vec![Tag::custom(TagKind::h(), [&group_id])];
         let join_event = create_test_event(&member_keys, 9021, join_tags).await;
 
-        // Should return error with message "duplicate: User is already a member"
+        // Should return error with message "duplicate: User is already a member" per NIP-29
         assert_eq!(
             group
                 .join_request(Box::new(join_event), &member_keys.public_key())
                 .unwrap_err()
                 .to_string(),
-            "Notice: Notice: User is already a member"
+            "Notice: duplicate: User is already a member"
         );
 
         // Verify member is still there with same role
