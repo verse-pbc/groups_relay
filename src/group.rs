@@ -892,7 +892,7 @@ impl Group {
         // If user is already a member, reject with NIP-29 compliant error
         if self.members.contains_key(&event.pubkey) {
             info!("User {} is already a member", event.pubkey);
-            return Err(Error::notice("duplicate: User is already a member"));
+            return Err(Error::duplicate("User is already a member"));
         }
 
         // println!(
@@ -2129,7 +2129,7 @@ mod tests {
                 .join_request(Box::new(join_event), &member_keys.public_key())
                 .unwrap_err()
                 .to_string(),
-            "Notice: duplicate: User is already a member"
+            "Duplicate: User is already a member"
         );
 
         // Verify member is still there with same role
