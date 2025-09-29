@@ -71,8 +71,7 @@ impl WebSocketSettings {
     }
 
     pub fn idle_timeout(&self) -> Option<Duration> {
-        self.idle_timeout
-            .or_else(default_idle_timeout)
+        self.idle_timeout.or_else(default_idle_timeout)
     }
 
     pub fn max_connections(&self) -> Option<usize> {

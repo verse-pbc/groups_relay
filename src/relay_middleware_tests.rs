@@ -332,8 +332,7 @@ mod tests {
             subdomain: Arc::new(Scope::Default),
             relay_pubkey: admin_keys.public_key(),
         };
-        let result = processor
-            .verify_filters(&filters, empty_state(), &non_member_context);
+        let result = processor.verify_filters(&filters, empty_state(), &non_member_context);
         assert!(result.is_err());
 
         // Member should be able to query
@@ -343,13 +342,11 @@ mod tests {
             subdomain: Arc::new(Scope::Default),
             relay_pubkey: admin_keys.public_key(),
         };
-        let result = processor
-            .verify_filters(&filters, empty_state(), &member_context);
+        let result = processor.verify_filters(&filters, empty_state(), &member_context);
         assert!(result.is_ok());
 
         // Admin should be able to query
-        let result = processor
-            .verify_filters(&filters, empty_state(), &admin_context);
+        let result = processor.verify_filters(&filters, empty_state(), &admin_context);
         assert!(result.is_ok());
     }
 
@@ -809,8 +806,7 @@ mod tests {
             .custom_tag(SingleLetterTag::lowercase(Alphabet::D), "test_group");
 
         // Test filter verification - should pass for metadata queries
-        let result = processor
-            .verify_filters(&[meta_filter], empty_state(), &member_context);
+        let result = processor.verify_filters(&[meta_filter], empty_state(), &member_context);
 
         assert!(
             result.is_ok(),
@@ -837,11 +833,8 @@ mod tests {
             .custom_tag(SingleLetterTag::lowercase(Alphabet::D), "test_group");
 
         // Test filter verification - should pass for addressable queries
-        let result = processor.verify_filters(
-            &[addressable_filter],
-            empty_state(),
-            &member_context,
-        );
+        let result =
+            processor.verify_filters(&[addressable_filter], empty_state(), &member_context);
 
         assert!(
             result.is_ok(),
@@ -869,8 +862,7 @@ mod tests {
         )];
 
         // Should pass because unmanaged groups are allowed
-        let result = processor
-            .verify_filters(&filters, empty_state(), &member_context);
+        let result = processor.verify_filters(&filters, empty_state(), &member_context);
         assert!(
             result.is_ok(),
             "Non-existing groups should be allowed (unmanaged groups)"
@@ -894,8 +886,7 @@ mod tests {
         let filters = vec![Filter::new().kinds(vec![Kind::TextNote])];
 
         // Should always pass for non-group queries
-        let result = processor
-            .verify_filters(&filters, empty_state(), &member_context);
+        let result = processor.verify_filters(&filters, empty_state(), &member_context);
         assert!(result.is_ok(), "Non-group queries should always be allowed");
     }
 

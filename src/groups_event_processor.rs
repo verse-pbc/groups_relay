@@ -140,11 +140,9 @@ impl EventProcessor for GroupsRelayProcessor {
         // Check if this is a group event
         if let Some(group_ref) = self.groups.find_group_from_event(event, &context.subdomain) {
             // Group event - check access control using the group's can_see_event method
-            group_ref.value().can_see_event(
-                &context.authed_pubkey,
-                &context.relay_pubkey,
-                event,
-            )
+            group_ref
+                .value()
+                .can_see_event(&context.authed_pubkey, &context.relay_pubkey, event)
         } else {
             // Not a group event or unmanaged group - allow it through
             Ok(true)
@@ -180,7 +178,8 @@ impl EventProcessor for GroupsRelayProcessor {
         let events_to_save = match event.kind {
             k if k == KIND_GROUP_CREATE_9007 => {
                 debug!(target: "groups_relay_logic", "Processing group create event: id={}", event.id);
-                let commands = self.groups
+                let commands = self
+                    .groups
                     .handle_group_create(Box::new(event), &subdomain)
                     .await?;
                 debug!(target: "groups_relay_logic", "Group create generated {} commands", commands.len());

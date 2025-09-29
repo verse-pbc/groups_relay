@@ -45,8 +45,7 @@ pub async fn create_test_event(keys: &Keys, kind: u16, tags: Vec<Tag>) -> nostr_
 }
 
 pub fn create_test_state(pubkey: Option<nostr_sdk::PublicKey>) -> NostrConnectionState {
-    let mut state = NostrConnectionState::new()
-        .expect("Failed to create test state");
+    let mut state = NostrConnectionState::new().expect("Failed to create test state");
     state.authed_pubkey = pubkey;
     state
 }

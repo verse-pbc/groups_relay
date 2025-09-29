@@ -183,7 +183,21 @@ impl GroupMetadata {
                         }
                     }
                 }
-                _ => {}
+                TagKind::SingleLetter(single) => {
+                    // Handle single letter tags - h and d are special, others are unknown
+                    use nostr_sdk::Alphabet;
+                    match single.character {
+                        Alphabet::H | Alphabet::D => {} // Group ID and identifier tags, ignore
+                        _ => {
+                            // All other single-letter tags are unknown (including 'g')
+                            found_tags.insert(tag.kind(), tag.clone());
+                        }
+                    }
+                }
+                _ => {
+                    // Other tag types are treated as unknown
+                    found_tags.insert(tag.kind(), tag.clone());
+                }
             }
         }
 

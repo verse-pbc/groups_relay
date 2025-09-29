@@ -403,11 +403,19 @@ impl Groups {
             .await
         {
             Ok(events) => events,
-            Err(e) => return Err(Error::event_error(format!("Error querying database: {e}"), event_id)),
+            Err(e) => {
+                return Err(Error::event_error(
+                    format!("Error querying database: {e}"),
+                    event_id,
+                ))
+            }
         };
 
         if !deleted_events.is_empty() {
-            return Err(Error::event_error("Group existed before and was deleted", event_id));
+            return Err(Error::event_error(
+                "Group existed before and was deleted",
+                event_id,
+            ));
         }
 
         // Find all previous participants in unmanaged group
@@ -423,7 +431,12 @@ impl Groups {
             .await
         {
             Ok(events) => events,
-            Err(e) => return Err(Error::event_error(format!("Error querying database: {e}"), event_id)),
+            Err(e) => {
+                return Err(Error::event_error(
+                    format!("Error querying database: {e}"),
+                    event_id,
+                ))
+            }
         };
 
         let mut group = Group::new(&event, scope.clone())?;
@@ -986,7 +999,7 @@ mod tests {
         let (admin_keys, _, _) = create_test_keys().await;
         let groups = create_test_groups_with_db(&admin_keys).await;
         let scope = Scope::Default;
-        
+
         // Create group
         let create_event = create_test_event(
             &admin_keys,
@@ -994,28 +1007,31 @@ mod tests {
             vec![Tag::custom(TagKind::h(), ["statetest123"])],
         )
         .await;
-        
+
         let result = groups.handle_group_create(create_event, &scope).await;
         assert!(result.is_ok(), "handle_group_create should succeed");
-        
+
         let commands = result.unwrap();
         println!("Generated {} store commands", commands.len());
-        
+
         // Should generate multiple commands
-        assert!(commands.len() >= 4, "Should generate at least 4 commands (1 signed + 3 unsigned state events)");
-        
+        assert!(
+            commands.len() >= 4,
+            "Should generate at least 4 commands (1 signed + 3 unsigned state events)"
+        );
+
         // Check for specific event kinds
         let mut has_39000 = false;
         let mut has_39001 = false;
         let mut has_39002 = false;
-        
+
         for cmd in &commands {
             match cmd {
                 StoreCommand::SaveUnsignedEvent(evt, _, _) => {
                     println!("  SaveUnsignedEvent: kind={}", evt.kind);
                     match evt.kind.as_u16() {
                         39000 => has_39000 = true,
-                        39001 => has_39001 = true,  
+                        39001 => has_39001 = true,
                         39002 => has_39002 = true,
                         _ => {}
                     }
@@ -1023,12 +1039,12 @@ mod tests {
                 _ => {}
             }
         }
-        
+
         assert!(has_39000, "Should generate 39000 (metadata) event");
         assert!(has_39001, "Should generate 39001 (admins) event");
         assert!(has_39002, "Should generate 39002 (members) event");
     }
-    
+
     #[tokio::test]
     async fn test_handle_set_roles_admin_can_promote_member() {
         let (admin_keys, member_keys, _) = create_test_keys().await;
@@ -1775,6 +1791,52 @@ mod tests {
         assert_eq!(
             group.value().metadata.picture,
             Some("initial_picture_url".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_edit_metadata_preserves_g_tag_in_generated_event() {
+        let (groups, admin_keys, _, _, group_id, scope) = setup_test_groups().await;
+
+        // Send kind 9002 with a "g" tag (single-letter unknown tag)
+        let tags = vec![
+            Tag::custom(TagKind::h(), [&group_id]),
+            Tag::custom(TagKind::Name, ["Test Group"]),
+            Tag::custom(TagKind::custom("g"), ["test_value"]),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
+
+        let commands = groups.handle_edit_metadata(event, &scope).unwrap();
+
+        // Find the generated kind 39000 event in the commands
+        let mut found_metadata_event = false;
+        for cmd in &commands {
+            if let StoreCommand::SaveUnsignedEvent(unsigned_event, _, _) = cmd {
+                if unsigned_event.kind == KIND_GROUP_METADATA_39000 {
+                    found_metadata_event = true;
+
+                    // Check if the "g" tag is preserved in the generated event
+                    let g_tag = unsigned_event
+                        .tags
+                        .iter()
+                        .find(|t| t.kind() == TagKind::custom("g"));
+
+                    assert!(
+                        g_tag.is_some(),
+                        "The 'g' tag should be preserved in the generated kind 39000 event"
+                    );
+                    assert_eq!(
+                        g_tag.unwrap().content(),
+                        Some("test_value"),
+                        "The 'g' tag value should be preserved"
+                    );
+                }
+            }
+        }
+
+        assert!(
+            found_metadata_event,
+            "Should generate a kind 39000 metadata event"
         );
     }
 

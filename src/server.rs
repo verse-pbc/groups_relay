@@ -6,11 +6,11 @@ use crate::{
 };
 use anyhow::Result;
 use axum::{response::IntoResponse, routing::get, Router};
-use relay_builder::{
-    CryptoHelper, Nip40ExpirationMiddleware, Nip70Middleware, RelayBuilder, 
-    RelayConfig, RelayInfo, WebSocketConfig,
-};
 use relay_builder::{handle_upgrade, HandlerFactory, WebSocketUpgrade};
+use relay_builder::{
+    CryptoHelper, Nip40ExpirationMiddleware, Nip70Middleware, RelayBuilder, RelayConfig, RelayInfo,
+    WebSocketConfig,
+};
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
@@ -53,17 +53,21 @@ pub async fn run_server(
     // Build the relay configuration
     let websocket_config = WebSocketConfig {
         max_connections: settings.websocket.max_connections(),
-        max_connection_duration: settings.websocket.max_connection_duration().map(|d| d.as_secs()),
+        max_connection_duration: settings
+            .websocket
+            .max_connection_duration()
+            .map(|d| d.as_secs()),
         idle_timeout: settings.websocket.idle_timeout().map(|d| d.as_secs()),
     };
 
     let _crypto_helper = CryptoHelper::new(Arc::new(relay_keys.clone()));
-    let mut relay_config = RelayConfig::new(settings.relay_url.clone(), database, relay_keys.clone())
-        .with_subdomains_from_url(&settings.relay_url)
-        .with_websocket_config(websocket_config)
-        .with_subscription_limits(settings.max_subscriptions, settings.max_limit)
-        .with_diagnostics();
-    
+    let mut relay_config =
+        RelayConfig::new(settings.relay_url.clone(), database, relay_keys.clone())
+            .with_subdomains_from_url(&settings.relay_url)
+            .with_websocket_config(websocket_config)
+            .with_subscription_limits(settings.max_subscriptions, settings.max_limit)
+            .with_diagnostics();
+
     // Enable NIP-42 authentication
     relay_config.enable_auth = true;
 

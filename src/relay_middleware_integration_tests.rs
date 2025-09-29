@@ -74,14 +74,14 @@ mod integration_tests {
         let mut has_metadata = false;
         let mut has_admins = false;
         let mut has_members = false;
-        
+
         for cmd in &store_commands {
             match cmd {
                 relay_builder::StoreCommand::SaveUnsignedEvent(evt, _, _) => {
                     match evt.kind.as_u16() {
-                        39000 => has_metadata = true,  // Group metadata
-                        39001 => has_admins = true,    // Group admins
-                        39002 => has_members = true,   // Group members
+                        39000 => has_metadata = true, // Group metadata
+                        39001 => has_admins = true,   // Group admins
+                        39002 => has_members = true,  // Group members
                         _ => {}
                     }
                 }
@@ -92,7 +92,7 @@ mod integration_tests {
                 _ => {}
             }
         }
-        
+
         assert!(has_metadata, "Should generate 39000 (metadata) event");
         assert!(has_admins, "Should generate 39001 (admins) event");
         assert!(has_members, "Should generate 39002 (members) event");
@@ -159,8 +159,7 @@ mod integration_tests {
         };
 
         // Member should be able to query
-        let result = processor
-            .verify_filters(&filters, empty_state(), &member_context);
+        let result = processor.verify_filters(&filters, empty_state(), &member_context);
         assert!(result.is_ok());
 
         // Non-member should not be able to query
@@ -170,11 +169,7 @@ mod integration_tests {
             subdomain: Arc::new(Scope::Default),
             relay_pubkey: relay_pubkey,
         };
-        let result = processor.verify_filters(
-            &filters,
-            empty_state(),
-            &non_member_context,
-        );
+        let result = processor.verify_filters(&filters, empty_state(), &non_member_context);
         assert!(result.is_err());
     }
 

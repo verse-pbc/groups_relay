@@ -58,7 +58,7 @@ fn get_kind_label(kind: u32) -> String {
             _ => "other".to_string(),
         },
         // All standard kinds in the nostr library enum
-        // This includes CashuWallet (17375), CashuWalletUnspentProof (7375), 
+        // This includes CashuWallet (17375), CashuWalletUnspentProof (7375),
         // CashuWalletSpendingHistory (7376), and many others
         _ => kind.to_string(),
     }
@@ -180,7 +180,7 @@ impl UnknownKindTracker {
     /// Report top unknown kinds if enough time has passed
     fn maybe_report(&self) {
         let now = Instant::now();
-        
+
         // Check if enough time has passed (without holding the lock)
         let should_report = {
             if let Ok(last_report) = self.last_report.lock() {
@@ -196,7 +196,7 @@ impl UnknownKindTracker {
                 // Double-check the time with the lock
                 if now.duration_since(*last_report) >= self.report_interval {
                     *last_report = now;
-                    
+
                     // Report the top unknown kinds
                     if let Ok(top_k) = self.top_k.lock() {
                         let top_kinds = top_k.list();
@@ -205,7 +205,7 @@ impl UnknownKindTracker {
                                 .iter()
                                 .map(|node| format!("kind {} ({} times)", node.item, node.count))
                                 .collect();
-                            
+
                             info!(
                                 "Top unknown event kinds in the last {} minutes: {}",
                                 self.report_interval.as_secs() / 60,

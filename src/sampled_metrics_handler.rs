@@ -34,7 +34,7 @@ impl MetricsHandler for SampledMetricsHandler {
     fn record_event_latency(&self, kind: u32, latency_ms: f64) {
         // We already sampled in should_track_latency, so just record
         metrics::event_latency(kind).record(latency_ms);
-        
+
         // Track unknown kinds for reporting
         if UnknownKindTracker::is_unknown_kind(kind) {
             self.unknown_kind_tracker.track(kind as u16);
