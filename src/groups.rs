@@ -488,9 +488,10 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
-            .ok_or(Error::notice("[SetRoles] Group not found"))?;
+            .ok_or_else(|| Error::event_error("[SetRoles] Group not found", event_id))?;
 
         // Group now uses the correct scope internally
         group.set_roles(event, &self.relay_pubkey)
@@ -503,9 +504,10 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
-            .ok_or(Error::notice("[PutUser] Group not found"))?;
+            .ok_or_else(|| Error::event_error("[PutUser] Group not found", event_id))?;
 
         // Group now uses the correct scope internally
         group.add_members_from_event(event, &self.relay_pubkey)
@@ -518,9 +520,10 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
-            .ok_or(Error::notice("[RemoveUser] Group not found"))?;
+            .ok_or_else(|| Error::event_error("[RemoveUser] Group not found", event_id))?;
 
         group.remove_members(event, &self.relay_pubkey)
     }
@@ -532,9 +535,10 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
-            .ok_or(Error::notice("[GroupManagement] Group not found"))?;
+            .ok_or_else(|| Error::event_error("[GroupManagement] Group not found", event_id))?;
 
         group.handle_group_content(event, &self.relay_pubkey)
     }
@@ -546,9 +550,10 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
-            .ok_or(Error::notice("[EditMetadata] Group not found"))?;
+            .ok_or_else(|| Error::event_error("[EditMetadata] Group not found", event_id))?;
 
         group.set_metadata(&event, &self.relay_pubkey)?;
 
@@ -575,10 +580,11 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
         {
             let mut group = self
                 .find_group_from_event_mut(&event, scope)?
-                .ok_or(Error::notice("[CreateInvite] Group not found"))?;
+                .ok_or_else(|| Error::event_error("[CreateInvite] Group not found", event_id))?;
             group.create_invite(&event, &self.relay_pubkey)?;
         }
 
@@ -598,11 +604,12 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
         let result;
         {
             let mut group = self
                 .find_group_from_event_mut(&event, scope)?
-                .ok_or(Error::notice("[JoinRequest] Group not found"))?;
+                .ok_or_else(|| Error::event_error("[JoinRequest] Group not found", event_id))?;
 
             result = group.join_request(event, &self.relay_pubkey);
         }
@@ -617,9 +624,10 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
-            .ok_or(Error::notice("[LeaveRequest] Group not found"))?;
+            .ok_or_else(|| Error::event_error("[LeaveRequest] Group not found", event_id))?;
 
         group.leave_request(event, &self.relay_pubkey)
     }
@@ -631,9 +639,12 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
         let mut group = self
             .find_group_from_event_mut(&event, scope)?
-            .ok_or_else(|| Error::notice("Group not found for this group content"))?;
+            .ok_or_else(|| {
+                Error::event_error("Group not found for this group content", event_id)
+            })?;
 
         group.delete_event_request(event, &self.relay_pubkey)
     }
@@ -645,9 +656,10 @@ impl Groups {
         event: Box<Event>,
         scope: &Scope,
     ) -> Result<Vec<StoreCommand>, Error> {
+        let event_id = event.id;
         let group = self
             .find_group_from_event(&event, scope)
-            .ok_or_else(|| Error::notice("[DeleteGroup] Group not found"))?;
+            .ok_or_else(|| Error::event_error("[DeleteGroup] Group not found", event_id))?;
 
         // Extract the group ID
         let group_id = group.key().1.clone();
@@ -1837,6 +1849,46 @@ mod tests {
         assert!(
             found_metadata_event,
             "Should generate a kind 39000 metadata event"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_group_not_found_returns_event_error() {
+        let (admin_keys, _, _) = create_test_keys().await;
+        let groups = create_test_groups_with_db(&admin_keys).await;
+        let scope = Scope::Default;
+
+        // Test handle_edit_metadata with non-existent group
+        let tags = vec![
+            Tag::custom(TagKind::h(), ["non_existent_group"]),
+            Tag::custom(TagKind::Name, ["Test"]),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_EDIT_METADATA_9002, tags).await;
+        let result = groups.handle_edit_metadata(event, &scope);
+
+        // Should return an EventError, not a Notice
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, Error::EventError { .. }),
+            "Should return EventError for non-existent group, got: {:?}",
+            err
+        );
+
+        // Test handle_put_user with non-existent group
+        let tags = vec![
+            Tag::custom(TagKind::h(), ["non_existent_group"]),
+            Tag::public_key(admin_keys.public_key()),
+        ];
+        let event = create_test_event(&admin_keys, KIND_GROUP_ADD_USER_9000, tags).await;
+        let result = groups.handle_put_user(event, &scope);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, Error::EventError { .. }),
+            "Should return EventError for non-existent group, got: {:?}",
+            err
         );
     }
 
