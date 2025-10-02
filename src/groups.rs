@@ -1038,17 +1038,14 @@ mod tests {
         let mut has_39002 = false;
 
         for cmd in &commands {
-            match cmd {
-                StoreCommand::SaveUnsignedEvent(evt, _, _) => {
-                    println!("  SaveUnsignedEvent: kind={}", evt.kind);
-                    match evt.kind.as_u16() {
-                        39000 => has_39000 = true,
-                        39001 => has_39001 = true,
-                        39002 => has_39002 = true,
-                        _ => {}
-                    }
+            if let StoreCommand::SaveUnsignedEvent(evt, _, _) = cmd {
+                println!("  SaveUnsignedEvent: kind={}", evt.kind);
+                match evt.kind.as_u16() {
+                    39000 => has_39000 = true,
+                    39001 => has_39001 = true,
+                    39002 => has_39002 = true,
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
@@ -1871,8 +1868,7 @@ mod tests {
         let err = result.unwrap_err();
         assert!(
             matches!(err, Error::EventError { .. }),
-            "Should return EventError for non-existent group, got: {:?}",
-            err
+            "Should return EventError for non-existent group, got: {err:?}"
         );
 
         // Test handle_put_user with non-existent group
@@ -1887,8 +1883,7 @@ mod tests {
         let err = result.unwrap_err();
         assert!(
             matches!(err, Error::EventError { .. }),
-            "Should return EventError for non-existent group, got: {:?}",
-            err
+            "Should return EventError for non-existent group, got: {err:?}"
         );
     }
 

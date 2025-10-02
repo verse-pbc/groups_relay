@@ -60,7 +60,7 @@ mod integration_tests {
         let context = EventContext {
             authed_pubkey: Some(admin_pubkey),
             subdomain: Arc::new(Scope::Default),
-            relay_pubkey: relay_pubkey,
+            relay_pubkey,
         };
         let store_commands = processor
             .handle_event(create_event, empty_state(), &context)
@@ -123,7 +123,7 @@ mod integration_tests {
         let context = EventContext {
             authed_pubkey: Some(admin_pubkey),
             subdomain: Arc::new(Scope::Default),
-            relay_pubkey: relay_pubkey,
+            relay_pubkey,
         };
         processor
             .handle_event(create_event, empty_state(), &context)
@@ -155,7 +155,7 @@ mod integration_tests {
         let member_context = EventContext {
             authed_pubkey: Some(member_pubkey),
             subdomain: Arc::new(Scope::Default),
-            relay_pubkey: relay_pubkey,
+            relay_pubkey,
         };
 
         // Member should be able to query
@@ -167,7 +167,7 @@ mod integration_tests {
         let non_member_context = EventContext {
             authed_pubkey: Some(non_member_pubkey),
             subdomain: Arc::new(Scope::Default),
-            relay_pubkey: relay_pubkey,
+            relay_pubkey,
         };
         let result = processor.verify_filters(&filters, empty_state(), &non_member_context);
         assert!(result.is_err());
@@ -198,7 +198,7 @@ mod integration_tests {
         let admin_context = EventContext {
             authed_pubkey: Some(admin_pubkey),
             subdomain: Arc::new(Scope::Default),
-            relay_pubkey: relay_pubkey,
+            relay_pubkey,
         };
         processor
             .handle_event(create_event, empty_state(), &admin_context)
@@ -240,7 +240,7 @@ mod integration_tests {
         let member_context = EventContext {
             authed_pubkey: Some(member_pubkey),
             subdomain: Arc::new(Scope::Default),
-            relay_pubkey: relay_pubkey,
+            relay_pubkey,
         };
         let can_see = processor
             .can_see_event(&content_event, empty_state(), &member_context)
@@ -252,7 +252,7 @@ mod integration_tests {
         let non_member_context = EventContext {
             authed_pubkey: Some(non_member_pubkey),
             subdomain: Arc::new(Scope::Default),
-            relay_pubkey: relay_pubkey,
+            relay_pubkey,
         };
         let can_see = processor
             .can_see_event(&content_event, empty_state(), &non_member_context)

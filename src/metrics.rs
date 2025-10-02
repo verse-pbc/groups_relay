@@ -156,6 +156,12 @@ pub struct UnknownKindTracker {
     report_interval: Duration,
 }
 
+impl Default for UnknownKindTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UnknownKindTracker {
     /// Create a new tracker for unknown event kinds
     pub fn new() -> Self {
