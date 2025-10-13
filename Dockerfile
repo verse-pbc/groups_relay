@@ -15,8 +15,9 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY benches ./benches
 
-# Build all binaries (includes main binary and all binaries in src/bin/)
-RUN cargo build --release --bins
+# Build all binaries with tokio-console support
+ENV RUSTFLAGS="--cfg tokio_unstable"
+RUN cargo build --release --bins --features console
 
 # Install binaries from relay_builder
 RUN cargo install --git https://github.com/verse-pbc/relay_builder \
@@ -54,6 +55,7 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
     libssl-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -71,6 +73,7 @@ COPY config/settings.yml ./config/
 COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
 
 EXPOSE 8080
+EXPOSE 6669
 
 ENV NODE_ENV=production
 

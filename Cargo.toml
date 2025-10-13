@@ -31,7 +31,7 @@ axum-server = "0.6.0"
 strum = { version = "0.27.1", features = ["derive", "strum_macros"] }
 snafu = { version = "0.8.5", features = ["backtrace"] }
 console-subscriber = { version = "0.4.1", optional = true }
-tower-http = { version = "0.6.2", features = ["trace", "cors", "fs"] }
+tower-http = { version = "0.6.2", features = ["trace", "cors", "fs", "timeout"] }
 tower = { version = "0.4.13", features = ["util"] }
 nostr = { git = "https://github.com/verse-pbc/nostr", features = ["std"] }
 nostr-database = { git = "https://github.com/verse-pbc/nostr" }

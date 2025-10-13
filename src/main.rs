@@ -40,27 +40,37 @@ struct Args {
 }
 
 fn setup_tracing() -> tracing_appender::non_blocking::WorkerGuard {
-    use tracing_subscriber::{fmt, EnvFilter};
+    #[cfg(feature = "console")]
+    {
+        console_subscriber::init();
+        let (_non_blocking, guard) = tracing_appender::non_blocking(std::io::stdout());
+        return guard;
+    }
 
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,groups_relay=debug,relay_builder=debug"));
+    #[cfg(not(feature = "console"))]
+    {
+        use tracing_subscriber::{fmt, EnvFilter};
 
-    // Create non-blocking stdout writer
-    let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stdout());
+        let env_filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("info,groups_relay=debug,relay_builder=debug"));
 
-    fmt()
-        .with_writer(non_blocking)
-        .with_env_filter(env_filter)
-        .with_timer(fmt::time::SystemTime)
-        .with_target(true)
-        .with_thread_ids(false)
-        .with_thread_names(false)
-        .with_file(false)
-        .with_line_number(false)
-        .with_level(true)
-        .init();
+        // Create non-blocking stdout writer
+        let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stdout());
 
-    guard // Return the guard to keep it alive
+        fmt()
+            .with_writer(non_blocking)
+            .with_env_filter(env_filter)
+            .with_timer(fmt::time::SystemTime)
+            .with_target(true)
+            .with_thread_ids(false)
+            .with_thread_names(false)
+            .with_file(false)
+            .with_line_number(false)
+            .with_level(true)
+            .init();
+
+        guard // Return the guard to keep it alive
+    }
 }
 
 #[tokio::main]

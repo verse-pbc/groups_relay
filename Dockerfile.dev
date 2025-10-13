@@ -5,7 +5,8 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
         pkg-config \
         libssl-dev \
-        ca-certificates; \
+        ca-certificates \
+        make; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     apt-get clean
 
@@ -17,8 +18,9 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY benches ./benches
 
-# Build the relay binary in debug mode
-RUN cargo build
+# Build the relay binary in debug mode with tokio-console support
+ENV RUSTFLAGS="--cfg tokio_unstable"
+RUN cargo build --features console
 
 FROM node:20-slim AS frontend-builder
 
@@ -55,7 +57,8 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         libssl3 \
-        iputils-ping; \
+        iputils-ping \
+        curl; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     apt-get clean
 
@@ -65,5 +68,6 @@ COPY --from=rust-builder /usr/src/app/target/debug/groups_relay ./groups_relay
 COPY --from=frontend-builder /usr/src/app/frontend/dist ./frontend/dist
 
 EXPOSE 8080
+EXPOSE 6669
 
 CMD ["./groups_relay"]

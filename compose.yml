@@ -14,6 +14,13 @@ services:
       NIP29__relay__auth_url: "${AUTH_URL:-ws://example.local:8080}"
     ports:
       - "8080:8080"
+      - "6669:6669"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 volumes:
   data:

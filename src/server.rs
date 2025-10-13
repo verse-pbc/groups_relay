@@ -19,6 +19,7 @@ use tokio::time;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
+use tower_http::timeout::TimeoutLayer;
 use tracing::{error, info};
 
 pub struct ServerState {
@@ -171,7 +172,8 @@ pub async fn run_server(
         .merge(api_routes)
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .fallback_service(ServeDir::new("frontend/dist"))
-        .layer(cors);
+        .layer(cors)
+        .layer(TimeoutLayer::new(Duration::from_secs(30)));
 
     let addr = settings.local_addr.parse::<SocketAddr>()?;
     let handle = axum_server::Handle::new();
