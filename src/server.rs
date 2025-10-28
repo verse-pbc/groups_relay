@@ -158,13 +158,15 @@ pub async fn run_server(
         }
     };
 
-    // Create API routes with state
+    // Create API routes with state and timeout protection
+    // Note: Timeout is applied only to API routes, not WebSocket connections
     let api_routes = Router::new()
         .route("/api/subdomains", get(handler::handle_subdomains))
         .route("/api/config", get(handler::handle_config))
+        .layer(TimeoutLayer::new(Duration::from_secs(30)))
         .with_state(app_state);
 
-    // Build router
+    // Build router (WebSocket and static files do not have timeouts)
     let router = Router::new()
         .route("/", get(root_handler))
         .route("/health", get(|| async { "OK" }))
@@ -172,8 +174,7 @@ pub async fn run_server(
         .merge(api_routes)
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .fallback_service(ServeDir::new("frontend/dist"))
-        .layer(cors)
-        .layer(TimeoutLayer::new(Duration::from_secs(30)));
+        .layer(cors);
 
     let addr = settings.local_addr.parse::<SocketAddr>()?;
     let handle = axum_server::Handle::new();

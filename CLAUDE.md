@@ -152,6 +152,45 @@ docker compose up --build
   - `export_import`: Export/import relay data
   - `negentropy_sync`: Sync between relays
 
+### Async Runtime Debugging with tokio-console
+
+The relay is instrumented with tokio-console for debugging async issues.
+
+**Local Development:**
+```bash
+# Build with console feature
+cargo run --features console
+
+# In another terminal
+tokio-console http://localhost:6669
+```
+
+**Production/Remote:**
+```bash
+# Port 6669 is already exposed
+ssh communities
+source ~/.cargo/env
+tokio-console http://localhost:6669
+```
+
+**Quick Diagnostics:**
+```bash
+# Automated snapshot capture
+./scripts/diagnose_tokio_console.sh
+```
+
+**Common Issues:**
+- **Lost Wakers**: Tasks cancelled before running (check for timeout issues)
+- **High Poll Counts**: Tasks spinning or busy-waiting
+- **Stuck Tasks**: Long-running tasks blocking the runtime
+
+See `docs/debugging_async_issues.md` for comprehensive debugging guide.
+
+**Key Views:**
+- `t` - Tasks view (shows all async tasks)
+- `r` - Resources view (mutexes, semaphores)
+- `Enter` - Inspect selected task details
+
 ## Frontend Architecture
 
 ### NDK Wallet Integration
