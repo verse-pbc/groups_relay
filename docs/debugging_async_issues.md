@@ -186,7 +186,28 @@ tokio-console http://localhost:6669
 
 ## Capturing Diagnostics
 
-### Using tmux (Recommended)
+### Quick Start: Automated Scripts
+
+**From your laptop (recommended):**
+
+```bash
+# Capture only tokio-console state
+./scripts/diagnose_tokio_console.sh communities
+
+# Capture comprehensive diagnostics (tokio-console + docker stats + metrics + logs)
+./scripts/diagnose_server.sh communities
+
+# For test server
+./scripts/diagnose_server.sh communities2
+```
+
+Both scripts:
+- SSH into the remote server automatically
+- Capture all relevant data
+- Save output locally with timestamp
+- Provide auto-analysis summary
+
+### Manual: Using tmux (Interactive)
 
 ```bash
 # Start a tmux session

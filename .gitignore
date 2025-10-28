@@ -104,3 +104,8 @@ perf.data.old
 
 # Build artifacts with debug info
 # (target/ is already included above)
+
+# Diagnostic outputs
+diagnostics/
+tokio-console-*.txt
+diagnostic-*.txt

@@ -173,10 +173,13 @@ source ~/.cargo/env
 tokio-console http://localhost:6669
 ```
 
-**Quick Diagnostics:**
+**Quick Diagnostics (from your laptop):**
 ```bash
-# Automated snapshot capture
-./scripts/diagnose_tokio_console.sh
+# tokio-console only
+./scripts/diagnose_tokio_console.sh communities
+
+# Comprehensive diagnostics (recommended)
+./scripts/diagnose_server.sh communities
 ```
 
 **Common Issues:**

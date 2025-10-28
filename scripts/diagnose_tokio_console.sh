@@ -1,85 +1,98 @@
 #!/bin/bash
 # Tokio Console Diagnostic Script
-# Captures current tokio-console state for debugging async issues
+# Captures tokio-console state from a remote server via SSH
+# Usage: ./scripts/diagnose_tokio_console.sh <server_name>
+# Example: ./scripts/diagnose_tokio_console.sh communities
 
 set -e
 
-# Configuration
-TOKIO_CONSOLE_ADDR="${TOKIO_CONSOLE_ADDR:-http://localhost:6669}"
-OUTPUT_DIR="${OUTPUT_DIR:-$HOME}"
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-OUTPUT_FILE="$OUTPUT_DIR/tokio-console-snapshot-$TIMESTAMP.txt"
-
-# Colors for output
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
+
+# Configuration
+SERVER="${1:-communities}"
+OUTPUT_DIR="${OUTPUT_DIR:-.}"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+OUTPUT_FILE="$OUTPUT_DIR/tokio-console-$SERVER-$TIMESTAMP.txt"
 
 echo "======================================"
-echo "Tokio Console Diagnostic Tool"
+echo "Tokio Console Remote Diagnostic"
 echo "======================================"
+echo "Server: $SERVER"
+echo "Output: $OUTPUT_FILE"
 echo ""
 
-# Check if tokio-console is installed
-if ! command -v tokio-console &> /dev/null; then
-    echo -e "${RED}Error: tokio-console not found${NC}"
-    echo "Install with: cargo install --locked tokio-console"
-    echo "Or: source ~/.cargo/env (if already installed)"
+# Test SSH connection
+echo "Testing SSH connection to $SERVER..."
+if ! ssh -o ConnectTimeout=5 "$SERVER" "echo connected" &>/dev/null; then
+    echo -e "${RED}Error: Cannot SSH to $SERVER${NC}"
+    echo "Make sure SSH is configured (try: ssh $SERVER)"
     exit 1
 fi
+echo -e "${GREEN}✓ SSH connection OK${NC}"
 
+# Check if tokio-console is available on remote
+echo "Checking tokio-console on $SERVER..."
+if ! ssh "$SERVER" "source ~/.cargo/env 2>/dev/null && which tokio-console" &>/dev/null; then
+    echo -e "${RED}Error: tokio-console not found on $SERVER${NC}"
+    echo "Install with: ssh $SERVER 'source ~/.cargo/env && cargo install --locked tokio-console'"
+    exit 1
+fi
 echo -e "${GREEN}✓ tokio-console found${NC}"
 
-# Check if server is reachable
-echo "Checking connection to $TOKIO_CONSOLE_ADDR..."
-if ! timeout 2 bash -c "</dev/tcp/localhost/6669" 2>/dev/null; then
-    echo -e "${RED}Error: Cannot connect to $TOKIO_CONSOLE_ADDR${NC}"
-    echo "Make sure the server is running with the 'console' feature enabled"
+# Check if port 6669 is reachable
+echo "Checking console-subscriber on $SERVER:6669..."
+if ! ssh "$SERVER" "timeout 2 bash -c '</dev/tcp/localhost/6669' 2>/dev/null"; then
+    echo -e "${RED}Error: Cannot connect to console-subscriber on $SERVER${NC}"
+    echo "Make sure the groups_relay container is running with console feature enabled"
     exit 1
 fi
-
-echo -e "${GREEN}✓ Server is reachable${NC}"
+echo -e "${GREEN}✓ console-subscriber reachable${NC}"
 echo ""
 
-# Function to capture console state
-capture_console_state() {
-    local session_name="tokio_diagnosis_$$"
-    local duration=${1:-5}
+# Capture tokio-console state
+echo "Capturing tokio-console state (waiting 5s for data)..."
+SESSION="tokio_diag_$$"
 
-    echo "Capturing tokio-console state (waiting ${duration}s for data)..."
+# Run tokio-console via SSH in tmux, capture, and cleanup
+ssh "$SERVER" bash <<EOF
+set -e
+source ~/.cargo/env 2>/dev/null || true
 
-    # Start tokio-console in tmux
-    if command -v tmux &> /dev/null; then
-        # Using tmux
-        tmux new-session -d -s "$session_name" "source ~/.cargo/env 2>/dev/null; tokio-console $TOKIO_CONSOLE_ADDR" || {
-            # tmux not available or failed, try without tmux
-            echo -e "${YELLOW}Warning: tmux not available, using alternative method${NC}"
-            return 1
-        }
-
-        # Wait for console to connect and gather data
-        sleep "$duration"
-
-        # Capture the pane content
-        tmux capture-pane -t "$session_name" -p -S - > "$OUTPUT_FILE" 2>/dev/null || {
-            echo -e "${RED}Error: Failed to capture pane${NC}"
-            tmux kill-session -t "$session_name" 2>/dev/null
-            return 1
-        }
-
-        # Cleanup
-        tmux kill-session -t "$session_name" 2>/dev/null
-
-        return 0
-    else
-        echo -e "${YELLOW}Warning: tmux not available${NC}"
-        return 1
-    fi
+# Start tokio-console in background tmux session
+tmux new-session -d -s "$SESSION" "tokio-console http://localhost:6669" 2>/dev/null || {
+    echo "Error: Failed to start tmux session" >&2
+    exit 1
 }
 
-# Capture the state
-if capture_console_state 5; then
+# Wait for console to connect and gather data
+sleep 5
+
+# Capture the pane content
+tmux capture-pane -t "$SESSION" -p -S - 2>/dev/null || {
+    tmux kill-session -t "$SESSION" 2>/dev/null
+    echo "Error: Failed to capture pane" >&2
+    exit 1
+}
+
+# Cleanup
+tmux kill-session -t "$SESSION" 2>/dev/null
+EOF
+
+if [ $? -eq 0 ]; then
+    # Save the output locally
+    ssh "$SERVER" bash <<EOF | tee "$OUTPUT_FILE"
+source ~/.cargo/env 2>/dev/null || true
+tmux new-session -d -s "$SESSION" "tokio-console http://localhost:6669" 2>/dev/null
+sleep 5
+tmux capture-pane -t "$SESSION" -p -S -
+tmux kill-session -t "$SESSION" 2>/dev/null
+EOF
+
+    echo ""
     echo -e "${GREEN}✓ Snapshot captured successfully${NC}"
     echo ""
     echo "Output saved to: $OUTPUT_FILE"
@@ -93,12 +106,12 @@ if capture_console_state 5; then
     # Extract key information
     if grep -q "tasks have lost their wakers" "$OUTPUT_FILE"; then
         lost_wakers=$(grep -o "[0-9]* tasks have lost their wakers" "$OUTPUT_FILE" | head -1)
-        echo -e "${YELLOW}⚠ Warning: $lost_wakers${NC}"
+        echo -e "${YELLOW}⚠  $lost_wakers${NC}"
     fi
 
     if grep -q "tasks are.*bytes or larger" "$OUTPUT_FILE"; then
         large_tasks=$(grep -o "[0-9]* tasks are [0-9]* bytes or larger" "$OUTPUT_FILE" | head -1)
-        echo -e "${YELLOW}⚠ Warning: $large_tasks${NC}"
+        echo -e "${YELLOW}⚠  $large_tasks${NC}"
     fi
 
     # Count total tasks
@@ -116,20 +129,17 @@ if capture_console_state 5; then
     echo "To view the full snapshot:"
     echo "  cat $OUTPUT_FILE"
     echo ""
-    echo "To view in less:"
+    echo "  Or with colors:"
     echo "  less -R $OUTPUT_FILE"
 
 else
-    echo -e "${YELLOW}Warning: Could not auto-capture snapshot${NC}"
+    echo -e "${RED}Error: Failed to capture tokio-console snapshot${NC}"
     echo ""
     echo "You can manually connect with:"
-    echo "  tokio-console $TOKIO_CONSOLE_ADDR"
-    echo ""
-    echo "Or capture manually with tmux:"
-    echo "  tmux new-session -d -s diag 'tokio-console $TOKIO_CONSOLE_ADDR'"
-    echo "  sleep 5"
-    echo "  tmux capture-pane -t diag -p -S - > snapshot.txt"
-    echo "  tmux kill-session -t diag"
+    echo "  ssh $SERVER"
+    echo "  source ~/.cargo/env"
+    echo "  tokio-console http://localhost:6669"
+    exit 1
 fi
 
 echo ""
