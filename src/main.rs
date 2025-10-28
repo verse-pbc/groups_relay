@@ -42,7 +42,9 @@ struct Args {
 fn setup_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     #[cfg(feature = "console")]
     {
-        console_subscriber::init();
+        console_subscriber::ConsoleLayer::builder()
+            .server_addr(([0, 0, 0, 0], 6669))
+            .init();
         let (_non_blocking, guard) = tracing_appender::non_blocking(std::io::stdout());
         return guard;
     }
