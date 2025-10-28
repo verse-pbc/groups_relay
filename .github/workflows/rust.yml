@@ -49,7 +49,7 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           mkdir -p build-context/config
-          cp Cargo.toml Cargo.lock build-context/
+          cp Cargo.toml Cargo.lock rust-toolchain.toml build-context/
           cp -r src build-context/
           cp -r benches build-context/
           cp config/settings.yml build-context/config/
