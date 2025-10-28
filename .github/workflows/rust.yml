@@ -34,8 +34,8 @@ jobs:
 
       - name: Build
         env:
-          RUSTFLAGS: '-C target-feature=+crt-static'
-        run: cargo build --release --target x86_64-unknown-linux-gnu --verbose
+          RUSTFLAGS: '--cfg tokio_unstable -C target-feature=+crt-static'
+        run: cargo build --release --target x86_64-unknown-linux-gnu --features console --verbose
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
