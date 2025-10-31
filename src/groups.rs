@@ -1038,20 +1038,22 @@ mod tests {
     }
 
     async fn setup_test_groups() -> (Groups, Keys, Keys, Keys, String, Scope) {
-        let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
+        let (relay_keys, user_keys, member_keys) = create_test_keys().await;
         let tags = vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])];
-        let event = create_test_event(&admin_keys, KIND_GROUP_CREATE_9007, tags).await;
+        // User creates the group (not the relay)
+        let event = create_test_event(&user_keys, KIND_GROUP_CREATE_9007, tags).await;
 
-        let groups = create_test_groups_with_db(&admin_keys).await;
-        // In tests we use the default scope, but we pass it along explicitly
+        // Relay pubkey is relay_keys
+        let groups = create_test_groups_with_db(&relay_keys).await;
         let scope = Scope::Default;
         groups.handle_group_create(event, &scope).await.unwrap();
 
+        // Return: groups, user_keys (acts as admin), member_keys, relay_keys (non_member), group_id, scope
         (
             groups,
-            admin_keys,
-            member_keys,
-            non_member_keys,
+            user_keys,      // This user created the group and is admin
+            member_keys,    // Regular member key for tests
+            relay_keys,     // The relay (should never be in group)
             TEST_GROUP_ID.to_string(),
             scope,
         )
@@ -1064,6 +1066,135 @@ mod tests {
         // Verify group exists and admin is set
         let group = groups.get_group(&scope, &group_id).unwrap();
         assert!(group.value().is_admin(&admin_keys.public_key()));
+    }
+
+    #[tokio::test]
+    async fn test_handle_group_create_relay_never_member() {
+        let (admin_keys, user_keys, _) = create_test_keys().await;
+        let groups = create_test_groups_with_db(&admin_keys).await;
+        let scope = Scope::Default;
+        let relay_pubkey = admin_keys.public_key(); // In tests, admin_keys acts as relay
+
+        // User creates a group
+        let group_id = "test_relay_not_member";
+        let create_event = create_test_event(
+            &user_keys,
+            KIND_GROUP_CREATE_9007,
+            vec![Tag::custom(TagKind::h(), [group_id])],
+        )
+        .await;
+
+        let commands = groups
+            .handle_group_create(create_event, &scope)
+            .await
+            .unwrap();
+
+        // Verify the generated events
+        let mut found_user_9000 = false;
+        let mut found_relay_9000 = false;
+        let mut user_in_39001 = false;
+        let mut relay_in_39001 = false;
+        let mut user_in_39002 = false;
+        let mut relay_in_39002 = false;
+
+        for cmd in &commands {
+            match cmd {
+                StoreCommand::SaveUnsignedEvent(event, _, _) => {
+                    // Check kind:9000 events
+                    if event.kind == KIND_GROUP_ADD_USER_9000 {
+                        // Find who is being added
+                        if let Some(p_tag) = event.tags.iter().find(|t| t.kind() == TagKind::p()) {
+                            if let Some(pubkey_str) = p_tag.content() {
+                                if pubkey_str == user_keys.public_key().to_string() {
+                                    found_user_9000 = true;
+                                }
+                                if pubkey_str == relay_pubkey.to_string() {
+                                    found_relay_9000 = true;
+                                }
+                            }
+                        }
+                    }
+
+                    // Check kind:39001 (admins)
+                    if event.kind == KIND_GROUP_ADMINS_39001 {
+                        for tag in event.tags.iter() {
+                            if tag.kind() == TagKind::p() {
+                                if let Some(pubkey_str) = tag.content() {
+                                    if pubkey_str == user_keys.public_key().to_string() {
+                                        user_in_39001 = true;
+                                    }
+                                    if pubkey_str == relay_pubkey.to_string() {
+                                        relay_in_39001 = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Check kind:39002 (members)
+                    if event.kind == KIND_GROUP_MEMBERS_39002 {
+                        for tag in event.tags.iter() {
+                            if tag.kind() == TagKind::p() {
+                                if let Some(pubkey_str) = tag.content() {
+                                    if pubkey_str == user_keys.public_key().to_string() {
+                                        user_in_39002 = true;
+                                    }
+                                    if pubkey_str == relay_pubkey.to_string() {
+                                        relay_in_39002 = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Assertions per NIP-29:
+        // 1. User should have a kind:9000 establishing their membership
+        assert!(
+            found_user_9000,
+            "User should have a kind:9000 event in moderation history"
+        );
+
+        // 2. Relay should NEVER have a kind:9000
+        assert!(
+            !found_relay_9000,
+            "Relay should NEVER be added as a member via kind:9000"
+        );
+
+        // 3. User should be in kind:39001 (admins list)
+        assert!(user_in_39001, "User should be in the admins list (kind:39001)");
+
+        // 4. Relay should NEVER be in kind:39001
+        assert!(
+            !relay_in_39001,
+            "Relay should NEVER be in the admins list (kind:39001)"
+        );
+
+        // 5. User should be in kind:39002 (members list)
+        assert!(
+            user_in_39002,
+            "User should be in the members list (kind:39002)"
+        );
+
+        // 6. Relay should NEVER be in kind:39002
+        assert!(
+            !relay_in_39002,
+            "Relay should NEVER be in the members list (kind:39002)"
+        );
+
+        // Verify in-memory state as well
+        let group = groups.get_group(&scope, group_id).unwrap();
+        assert!(
+            group.value().is_admin(&user_keys.public_key()),
+            "User should be admin in memory"
+        );
+        assert!(
+            !group.value().is_member(&relay_pubkey),
+            "Relay should NOT be a member in memory"
+        );
     }
 
     #[tokio::test]
@@ -1126,13 +1257,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_set_roles_admin_can_promote_member() {
-        let (admin_keys, member_keys, _) = create_test_keys().await;
-        let groups = create_test_groups_with_db(&admin_keys).await;
+        let (relay_keys, user_keys, member_keys) = create_test_keys().await;
+        let groups = create_test_groups_with_db(&relay_keys).await;
         let scope = Scope::Default;
 
-        // Create group and add member
+        // User creates group
         let create_event = create_test_event(
-            &admin_keys,
+            &user_keys,
             KIND_GROUP_CREATE_9007,
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
@@ -1142,8 +1273,9 @@ mod tests {
             .await
             .unwrap();
 
+        // User adds member
         let add_event = create_test_event(
-            &admin_keys,
+            &user_keys,
             KIND_GROUP_ADD_USER_9000,
             vec![
                 Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
@@ -1155,7 +1287,7 @@ mod tests {
 
         // Promote member to admin
         let set_roles_event = create_test_event(
-            &admin_keys,
+            &user_keys,
             KIND_GROUP_SET_ROLES_9006,
             vec![
                 Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
@@ -1180,13 +1312,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_set_roles_non_admin_cannot_set_roles() {
-        let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
-        let groups = create_test_groups_with_db(&admin_keys).await;
+        let (relay_keys, user_keys, member_keys) = create_test_keys().await;
+        let groups = create_test_groups_with_db(&relay_keys).await;
         let scope = Scope::Default;
+        let (_, _, non_member_keys) = create_test_keys().await;
 
-        // Create group and add member
+        // User creates group
         let create_event = create_test_event(
-            &admin_keys,
+            &user_keys,
             KIND_GROUP_CREATE_9007,
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
@@ -1196,8 +1329,9 @@ mod tests {
             .await
             .unwrap();
 
+        // User adds member
         let add_event = create_test_event(
-            &admin_keys,
+            &user_keys,
             KIND_GROUP_ADD_USER_9000,
             vec![
                 Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
@@ -1226,13 +1360,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_put_user_admin_can_add_member() {
-        let (admin_keys, member_keys, _) = create_test_keys().await;
-        let groups = create_test_groups_with_db(&admin_keys).await;
+        let (relay_keys, user_keys, member_keys) = create_test_keys().await;
+        let groups = create_test_groups_with_db(&relay_keys).await;
         let scope = Scope::Default;
 
-        // Create group
+        // User creates group
         let create_event = create_test_event(
-            &admin_keys,
+            &user_keys,
             KIND_GROUP_CREATE_9007,
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
@@ -1242,9 +1376,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Add member
+        // User adds member
         let add_event = create_test_event(
-            &admin_keys,
+            &user_keys,
             KIND_GROUP_ADD_USER_9000,
             vec![
                 Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
@@ -1265,13 +1399,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_put_user_non_admin_cannot_add_member() {
-        let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
-        let groups = create_test_groups_with_db(&admin_keys).await;
+        let (relay_keys, user_keys, member_keys) = create_test_keys().await;
+        let groups = create_test_groups_with_db(&relay_keys).await;
         let scope = Scope::Default;
+        let (_, _, non_member_keys) = create_test_keys().await;
 
-        // Create group
+        // User creates group
         let create_event = create_test_event(
-            &admin_keys,
+            &user_keys,
             KIND_GROUP_CREATE_9007,
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
@@ -1297,13 +1432,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_remove_user_admin_can_remove_member() {
-        let (admin_keys, member_keys, _) = create_test_keys().await;
-        let groups = create_test_groups_with_db(&admin_keys).await;
+        let (relay_keys, user_keys, member_keys) = create_test_keys().await;
+        let groups = create_test_groups_with_db(&relay_keys).await;
         let scope = Scope::Default;
 
-        // Create group and add member
+        // User creates group
         let create_event = create_test_event(
-            &admin_keys,
+            &user_keys,
             KIND_GROUP_CREATE_9007,
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
@@ -1313,8 +1448,9 @@ mod tests {
             .await
             .unwrap();
 
+        // User adds member
         let add_event = create_test_event(
-            &admin_keys,
+            &user_keys,
             KIND_GROUP_ADD_USER_9000,
             vec![
                 Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
@@ -1326,7 +1462,7 @@ mod tests {
 
         // Remove member
         let remove_event = create_test_event(
-            &admin_keys,
+            &user_keys,
             KIND_GROUP_REMOVE_USER_9001,
             vec![
                 Tag::custom(TagKind::h(), [TEST_GROUP_ID]),
@@ -1347,13 +1483,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_remove_user_non_admin_cannot_remove_member() {
-        let (admin_keys, member_keys, non_member_keys) = create_test_keys().await;
-        let groups = create_test_groups_with_db(&admin_keys).await;
+        let (relay_keys, user_keys, member_keys) = create_test_keys().await;
+        let groups = create_test_groups_with_db(&relay_keys).await;
         let scope = Scope::Default;
+        let (_, _, non_member_keys) = create_test_keys().await;
 
-        // Create group and add member
+        // User creates group
         let create_event = create_test_event(
-            &admin_keys,
+            &user_keys,
             KIND_GROUP_CREATE_9007,
             vec![Tag::custom(TagKind::h(), [TEST_GROUP_ID])],
         )
@@ -1363,8 +1500,9 @@ mod tests {
             .await
             .unwrap();
 
+        // User adds member
         let add_event = create_test_event(
-            &admin_keys,
+            &user_keys,
             KIND_GROUP_ADD_USER_9000,
             vec![
                 Tag::custom(TagKind::h(), [TEST_GROUP_ID]),

@@ -531,6 +531,8 @@ impl Group {
         group.scope = scope;
 
         // Add the creator as an admin
+        // NOTE: In production, if the creator is the relay, it will be filtered out
+        // when generating events, so it won't appear in any 9000 or 39xxx events
         group
             .members
             .insert(event.pubkey, GroupMember::new_admin(event.pubkey));
@@ -1400,36 +1402,56 @@ impl Group {
     }
 
     /// Generates all membership-related events for the group
+    /// Returns moderation events (9000) for members and metadata events (39001, 39002)
+    /// 
+    /// NOTE: When called during initial group creation, this generates kind:9000 events
+    /// establishing each member's entry into the group (signed by relay).
+    /// The 39001/39002 events reflect the current membership state.
     pub fn generate_membership_events(
         &self,
         relay_pubkey: &PublicKey,
     ) -> Result<Vec<UnsignedEvent>, Error> {
-        // println!("[generate_membership_events] Starting to generate membership events");
-        // println!("[generate_membership_events] Generating put_user_event");
-        let put_user = self.generate_put_user_event(relay_pubkey);
-        // println!("[generate_membership_events] Generating admins_event");
-        let admins = self.generate_admins_event(relay_pubkey)?;
-        // println!("[generate_membership_events] Generating members_event");
-        let members = self.generate_members_event(relay_pubkey);
-        // println!("[generate_membership_events] Finished generating all events");
+        let mut events = Vec::new();
 
-        Ok(vec![put_user, admins, members])
+        // Generate kind:9000 (put-user) events for each member to establish moderation history
+        // These are signed by the relay on behalf of the system
+        for (_member_pubkey, member) in &self.members {
+            events.push(self.generate_put_user_event_for_member(relay_pubkey, member));
+        }
+
+        // Generate kind:39001 (admins) - relay-signed metadata reflecting current admin list
+        events.push(self.generate_admins_event(relay_pubkey)?);
+        
+        // Generate kind:39002 (members) - relay-signed metadata reflecting current member list
+        events.push(self.generate_members_event(relay_pubkey));
+
+        Ok(events)
     }
 
-    pub fn generate_put_user_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
-        // println!("[generate_put_user_event] Starting");
+    /// Generate a kind:9000 event for a specific member
+    /// This is signed by the relay on behalf of the admin/system
+    fn generate_put_user_event_for_member(
+        &self,
+        relay_pubkey: &PublicKey,
+        member: &GroupMember,
+    ) -> UnsignedEvent {
+        // Determine the primary role for this member
+        let role = if member.roles.contains(&GroupRole::Admin) {
+            GroupRole::Admin
+        } else {
+            GroupRole::Member
+        };
 
-        // println!("[generate_put_user_event] Finished");
         UnsignedEvent::new(
-            *pubkey,
+            *relay_pubkey,
             Timestamp::now_with_supplier(&Instant::now()),
             KIND_GROUP_ADD_USER_9000,
             vec![
                 Tag::custom(
                     TagKind::p(),
                     vec![
-                        pubkey.to_string(),
-                        GroupRole::Member.as_tuple().0.to_string(),
+                        member.pubkey.to_string(),
+                        role.as_tuple().0.to_string(),
                     ],
                 ),
                 Tag::custom(TagKind::h(), [self.id.clone()]),
@@ -1438,26 +1460,19 @@ impl Group {
         )
     }
 
-    pub fn generate_admins_event(&self, pubkey: &PublicKey) -> Result<UnsignedEvent, Error> {
-        // println!("[generate_admins_event] Starting");
-
-        // First validate the group has at least one admin
-        self.validate_has_admin()?;
-
-        let admins = self.members.values().filter(|member| {
-            member
-                .roles
-                .iter()
-                .any(|role| matches!(role, GroupRole::Admin))
-        });
+    pub fn generate_admins_event(&self, relay_pubkey: &PublicKey) -> Result<UnsignedEvent, Error> {
+        // Collect all admins (including relay if it's legitimately a member/admin)
+        let admins: Vec<_> = self.members.values()
+            .filter(|member| {
+                // Only include members with Admin role
+                member.roles.iter().any(|role| matches!(role, GroupRole::Admin))
+            })
+            .collect();
 
         let mut tags = Vec::new();
         tags.push(Tag::identifier(self.id.clone()));
 
-        let mut admin_count = 0;
-        // println!("[generate_admins_event] Creating tags for admins");
         for admin in admins {
-            admin_count += 1;
             let mut tag_vals: Vec<String> = vec![admin.pubkey.to_string()];
             // Only include admin-related roles (not Member role) in the 39001 event
             tag_vals.extend(
@@ -1471,18 +1486,16 @@ impl Group {
             let tag = Tag::custom(TagKind::p(), tag_vals);
             tags.push(tag);
         }
-        // println!("[generate_admins_event] Finished creating tags");
 
-        // Double-check we have at least one admin in the generated event
-        if admin_count == 0 {
+        // Validate we have at least one admin
+        if tags.len() <= 1 {
             return Err(Error::notice(
                 "Cannot generate 39001 event: group has no admins",
             ));
         }
 
-        // println!("[generate_admins_event] Finished");
         Ok(UnsignedEvent::new(
-            *pubkey,
+            *relay_pubkey,
             Timestamp::now_with_supplier(&Instant::now()),
             KIND_GROUP_ADMINS_39001,
             tags,
@@ -1490,25 +1503,19 @@ impl Group {
         ))
     }
 
-    pub fn generate_members_event(&self, pubkey: &PublicKey) -> UnsignedEvent {
-        // println!("[generate_members_event] Starting");
+    pub fn generate_members_event(&self, relay_pubkey: &PublicKey) -> UnsignedEvent {
+        // Include all members (including relay if it's legitimately a member)
         let members: Vec<&PublicKey> = self.members.keys().collect();
 
         let mut tags = Vec::new();
         tags.push(Tag::identifier(self.id.clone()));
 
-        // println!(
-        //     "[generate_members_event] Creating tags for {} members",
-        //     members.len()
-        // );
         for pubkey in members {
             tags.push(Tag::public_key(*pubkey));
         }
-        // println!("[generate_members_event] Finished creating tags");
 
-        // println!("[generate_members_event] Finished");
         UnsignedEvent::new(
-            *pubkey,
+            *relay_pubkey,
             Timestamp::now_with_supplier(&Instant::now()),
             KIND_GROUP_MEMBERS_39002,
             tags,
