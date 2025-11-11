@@ -2862,12 +2862,11 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 [[package]]
 name = "relay_builder"
 version = "0.5.0-alpha.1"
-source = "git+https://github.com/verse-pbc/relay_builder#d78edc1b83081af308ea099de25e6c0d2e2edc16"
+source = "git+https://github.com/verse-pbc/relay_builder#f47ba155f6758b650aee876765bf8e0bd70a5c74"
 dependencies = [
  "anyhow",
  "arc-swap",
  "axum 0.8.4",
- "axum-server",
  "chrono",
  "clap",
  "dashmap",
