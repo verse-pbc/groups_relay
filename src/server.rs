@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::timeout::TimeoutLayer;
-use tracing::{error, info};
+use tracing::info;
 
 pub struct ServerState {
     pub http_state: Arc<HttpServerState>,
@@ -197,16 +197,6 @@ pub async fn run_server(
             // Update total groups by privacy settings
             for (private, closed, count) in groups_for_metrics.count_groups_by_privacy() {
                 metrics::groups_by_privacy(private, closed).set(count as f64);
-            }
-
-            // Update active groups by privacy settings
-            match groups_for_metrics.count_active_groups_by_privacy().await {
-                Ok(counts) => {
-                    for (private, closed, count) in counts {
-                        metrics::active_groups_by_privacy(private, closed).set(count as f64);
-                    }
-                }
-                Err(e) => error!("Failed to update active groups metrics: {}", e),
             }
         }
     });

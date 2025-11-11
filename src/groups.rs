@@ -15,12 +15,10 @@ use dashmap::{
 };
 use nostr_lmdb::Scope;
 use nostr_sdk::prelude::*;
-use parking_lot::RwLock;
 use relay_builder::{Error, RelayDatabase};
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
 // Type aliases to make complex types more manageable
@@ -28,36 +26,12 @@ type ScopedGroupKey = (Scope, String);
 type ScopedGroupRef<'a> = Ref<'a, ScopedGroupKey, Group>;
 type ScopedGroupRefMut<'a> = RefMut<'a, ScopedGroupKey, Group>;
 
-/// Cache entry for active groups count
-#[derive(Debug, Clone)]
-struct ActiveGroupsCache {
-    counts: [(bool, bool, usize); 4],
-    timestamp: Instant,
-    ttl: Duration,
-}
-
-impl ActiveGroupsCache {
-    fn new(counts: [(bool, bool, usize); 4], ttl: Duration) -> Self {
-        Self {
-            counts,
-            timestamp: Instant::now(),
-            ttl,
-        }
-    }
-
-    fn is_valid(&self) -> bool {
-        self.timestamp.elapsed() < self.ttl
-    }
-}
-
 #[derive(Debug)]
 pub struct Groups {
     db: Arc<RelayDatabase>,
     groups: DashMap<ScopedGroupKey, Group>, // (scope, group_id) -> Group
     pub relay_pubkey: PublicKey,
     pub relay_url: String,
-    // Cache for active groups count (TTL: 60 seconds)
-    active_groups_cache: Arc<RwLock<Option<ActiveGroupsCache>>>,
 }
 
 impl Groups {
@@ -110,7 +84,6 @@ impl Groups {
             groups: all_groups,
             relay_pubkey,
             relay_url,
-            active_groups_cache: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -755,188 +728,6 @@ impl Groups {
         counts
     }
 
-    /// Returns counts of active groups by their privacy settings for all scopes
-    /// 
-    /// Note: This function performs database queries for each group sequentially.
-    /// For better performance with many groups, consider using the cached version
-    /// or implementing concurrent queries.
-    pub async fn count_active_groups_by_privacy(&self) -> Result<[(bool, bool, usize); 4], Error> {
-        // Check cache first
-        {
-            let cache = self.active_groups_cache.read();
-            if let Some(cached) = cache.as_ref() {
-                if cached.is_valid() {
-                    debug!("Returning cached active groups count (age: {:?})", cached.timestamp.elapsed());
-                    return Ok(cached.counts);
-                }
-            }
-        }
-
-        // Cache miss or expired - recompute
-        debug!("Cache miss or expired, recomputing active groups count");
-        let counts = self.compute_active_groups_by_privacy().await?;
-
-        // Update cache with 60-second TTL
-        {
-            let mut cache = self.active_groups_cache.write();
-            *cache = Some(ActiveGroupsCache::new(counts, Duration::from_secs(60)));
-        }
-
-        Ok(counts)
-    }
-
-    /// Internal function to compute active groups count (without caching)
-    /// This is separated to allow the public function to use caching
-    async fn compute_active_groups_by_privacy(&self) -> Result<[(bool, bool, usize); 4], Error> {
-        let mut counts = [
-            (false, false, 0),
-            (false, true, 0),
-            (true, false, 0),
-            (true, true, 0),
-        ];
-
-        // Collect groups to check (avoiding holding iterator lock during async operations)
-        let groups_to_check: Vec<_> = self
-            .iter()
-            .filter_map(|entry| {
-                let (scope, _) = entry.key();
-                let group = entry.value();
-                
-                // First check member count
-                if group.members.len() < 2 {
-                    return None;
-                }
-                
-                Some((
-                    scope.clone(),
-                    group.id.clone(),
-                    group.metadata.private,
-                    group.metadata.closed,
-                ))
-            })
-            .collect();
-
-        debug!("Checking {} groups for active status", groups_to_check.len());
-
-        // Query database for each group sequentially
-        // TODO: Consider implementing concurrent queries with buffer_unordered for better performance
-        for (scope, group_id, is_private, is_closed) in groups_to_check {
-            let events = self
-                .db
-                .query(
-                    vec![Filter::new()
-                        .custom_tag(
-                            SingleLetterTag::lowercase(Alphabet::H),
-                            group_id,
-                        )
-                        .limit(1)],
-                    &scope,
-                )
-                .await
-                .map_err(|e| {
-                    Error::notice(format!("Error querying database for scope {scope:?}: {e}"))
-                })?;
-
-            // Check if any event is a content event (not a 9xxx management event)
-            let has_content = events.iter().any(|e| match e.kind {
-                Kind::Custom(k) => !(9000..=9999).contains(&k),
-                _ => true,
-            });
-
-            if has_content {
-                let idx = match (is_private, is_closed) {
-                    (false, false) => 0,
-                    (false, true) => 1,
-                    (true, false) => 2,
-                    (true, true) => 3,
-                };
-                counts[idx].2 += 1;
-            }
-        }
-
-        Ok(counts)
-    }
-
-    /// Returns counts of active groups by their privacy settings for a specific scope
-    pub async fn count_active_groups_by_privacy_in_scope(
-        &self,
-        query_scope: &Scope,
-    ) -> Result<[(bool, bool, usize); 4], Error> {
-        let mut counts = [
-            (false, false, 0),
-            (false, true, 0),
-            (true, false, 0),
-            (true, true, 0),
-        ];
-
-        for entry in self.iter() {
-            let (scope, _) = entry.key();
-            let group = entry.value();
-
-            // Only count groups in the specified scope
-            if scope != query_scope {
-                continue;
-            }
-
-            // First check member count
-            if group.members.len() < 2 {
-                continue;
-            }
-
-            // Then check for content events
-            let events = match self
-                .db
-                .query(
-                    vec![Filter::new()
-                        .custom_tag(
-                            SingleLetterTag::lowercase(Alphabet::H),
-                            group.id.to_string(),
-                        )
-                        .limit(1)],
-                    scope,
-                )
-                .await
-            {
-                Ok(events) => events,
-                Err(e) => {
-                    return Err(Error::notice(format!(
-                        "Error querying database for scope {scope:?}: {e}"
-                    )))
-                }
-            };
-
-            // Check if any event is a content event (not a 9xxx management event)
-            let has_content = events.iter().any(|e| match e.kind {
-                Kind::Custom(k) => !(9000..=9999).contains(&k),
-                _ => true,
-            });
-
-            if has_content {
-                let idx = match (group.metadata.private, group.metadata.closed) {
-                    (false, false) => 0,
-                    (false, true) => 1,
-                    (true, false) => 2,
-                    (true, true) => 3,
-                };
-                counts[idx].2 += 1;
-            }
-        }
-
-        Ok(counts)
-    }
-
-    /// Returns the number of active groups (groups with 2+ members and at least one content event) across all scopes
-    pub async fn count_active_groups(&self) -> Result<usize, Error> {
-        let counts = self.count_active_groups_by_privacy().await?;
-        Ok(counts.iter().map(|(_, _, count)| count).sum())
-    }
-
-    /// Returns the number of active groups in a specific scope
-    pub async fn count_active_groups_in_scope(&self, scope: &Scope) -> Result<usize, Error> {
-        let counts = self.count_active_groups_by_privacy_in_scope(scope).await?;
-        Ok(counts.iter().map(|(_, _, count)| count).sum())
-    }
-
     /// Verifies if a user has access to a group
     /// Returns Ok(()) if access is allowed, or an appropriate error if not
     pub fn verify_group_access(
@@ -1033,7 +824,6 @@ mod tests {
             groups: DashMap::new(),
             relay_pubkey: admin_keys.public_key(),
             relay_url: "wss://test.relay.url".to_string(),
-            active_groups_cache: Arc::new(RwLock::new(None)),
         }
     }
 

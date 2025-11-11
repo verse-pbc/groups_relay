@@ -61,6 +61,6 @@ impl MetricsHandler for SampledMetricsHandler {
         // Increment counter and decide if we should track this event
         // This method should only be called once per event by the middleware
         let count = self.event_counter.fetch_add(1, Ordering::Relaxed);
-        count % self.sample_rate == 0
+        count.is_multiple_of(self.sample_rate)
     }
 }

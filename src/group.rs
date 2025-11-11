@@ -1415,7 +1415,7 @@ impl Group {
 
         // Generate kind:9000 (put-user) events for each member to establish moderation history
         // These are signed by the relay on behalf of the system
-        for (_member_pubkey, member) in &self.members {
+        for member in self.members.values() {
             events.push(self.generate_put_user_event_for_member(relay_pubkey, member));
         }
 

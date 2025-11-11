@@ -90,16 +90,6 @@ pub fn groups_by_privacy(private: bool, closed: bool) -> Gauge {
     metrics::gauge!("groups_by_privacy", "private" => private.to_string(), "closed" => closed.to_string())
 }
 
-/// Active groups gauge by privacy settings (groups with 2+ members and at least one event)
-pub fn active_groups_by_privacy(private: bool, closed: bool) -> Gauge {
-    metrics::gauge!("active_groups_by_privacy", "private" => private.to_string(), "closed" => closed.to_string())
-}
-
-/// Active groups gauge (groups with 2+ members and 1+ event)
-pub fn active_groups() -> Gauge {
-    metrics::gauge!("active_groups")
-}
-
 /// Sets up the Prometheus recorder and returns a handle that can be used
 /// to expose the /metrics endpoint.
 pub fn setup_metrics() -> Result<PrometheusHandle, anyhow::Error> {
@@ -120,14 +110,6 @@ pub fn setup_metrics() -> Result<PrometheusHandle, anyhow::Error> {
             describe_histogram!(
                 "event_latency_ms",
                 "Event processing latency in milliseconds by event kind"
-            );
-            describe_gauge!(
-                "active_groups_by_privacy",
-                "Number of active groups (2+ members and 1+ event) by privacy settings"
-            );
-            describe_gauge!(
-                "active_groups",
-                "Number of groups with at least 2 members and 1 event"
             );
             describe_gauge!(
                 "active_connections",
