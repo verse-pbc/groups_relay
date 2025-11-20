@@ -6,9 +6,9 @@ use crate::groups::{
 };
 use crate::Groups;
 use nostr_sdk::prelude::*;
-use parking_lot::RwLock;
 use relay_builder::{EventContext, EventProcessor, Result, StoreCommand};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::debug;
 
 /// Groups event processor implementing NIP-29 (Relay-based Groups) functionality.

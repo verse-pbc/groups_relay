@@ -171,14 +171,16 @@ fi
 
 # 14. Tokio Console Snapshot
 section "Tokio Console Async Runtime State"
-echo -e "${BLUE}Capturing tokio-console snapshot...${NC}"
+echo -e "${BLUE}Capturing tokio-console snapshot (multiple views)...${NC}"
 SESSION="comprehensive_diag_$$"
+
+# Capture default view (sorted by Total time)
+echo "View 1: Default (sorted by Total time)" | tee -a "$OUTPUT_FILE"
 TOKIO_OUTPUT=$(ssh "$SERVER" bash <<EOF
 source ~/.cargo/env 2>/dev/null || true
-tmux new-session -d -s "$SESSION" "tokio-console http://localhost:6669" 2>/dev/null
-sleep 5
+TERM=xterm-256color tmux new-session -d -s "$SESSION" -x 250 -y 60 "tokio-console http://localhost:6669" 2>/dev/null
+sleep 6
 tmux capture-pane -t "$SESSION" -p -S - 2>/dev/null
-tmux kill-session -t "$SESSION" 2>/dev/null
 EOF
 )
 
@@ -187,6 +189,53 @@ if [ -n "$TOKIO_OUTPUT" ]; then
 else
     echo "tokio-console not available or failed to capture" | tee -a "$OUTPUT_FILE"
 fi
+
+# Capture sorted by Busy time (blocking tasks appear first)
+echo "" | tee -a "$OUTPUT_FILE"
+echo "View 2: Sorted by Busy time (blocking/spinning tasks first)" | tee -a "$OUTPUT_FILE"
+TOKIO_BUSY=$(ssh "$SERVER" bash <<EOF
+source ~/.cargo/env 2>/dev/null || true
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+    # Navigate to Busy column and sort descending
+    tmux send-keys -t "$SESSION" 'h' 'h' 'h' 'h' 'h' 2>/dev/null  # Move to Busy column
+    tmux send-keys -t "$SESSION" 'i' 2>/dev/null                   # Invert (highest first)
+    sleep 2
+    tmux capture-pane -t "$SESSION" -p -S - 2>/dev/null
+    tmux kill-session -t "$SESSION" 2>/dev/null
+fi
+EOF
+)
+
+if [ -n "$TOKIO_BUSY" ]; then
+    echo "$TOKIO_BUSY" | tee -a "$OUTPUT_FILE"
+else
+    echo "Could not capture busy-sorted view" | tee -a "$OUTPUT_FILE"
+fi
+
+# 15. Console Dump (Detailed Task Info via gRPC)
+section "Console Dump - Detailed Task Information"
+echo -e "${BLUE}Attempting to get detailed task info via console_dump...${NC}"
+
+# Check if console_dump binary exists in container
+if ssh "$SERVER" "docker exec $CONTAINER_NAME test -f ./console_dump" 2>/dev/null; then
+    echo -e "${GREEN}✓ console_dump binary found${NC}" | tee -a "$OUTPUT_FILE"
+
+    # Run console_dump with blocking-only and min-busy-time filters
+    ssh "$SERVER" "docker exec $CONTAINER_NAME timeout 10 ./console_dump --blocking-only --min-busy-ms 50 2>&1" | tee -a "$OUTPUT_FILE"
+else
+    echo -e "${YELLOW}console_dump binary not available (requires rebuild with console-dump feature)${NC}" | tee -a "$OUTPUT_FILE"
+    echo "To enable: Rebuild Docker image with updated Dockerfile" | tee -a "$OUTPUT_FILE"
+fi
+
+# Add note about manual detailed task inspection
+{
+    echo ""
+    echo "For interactive detailed task inspection:"
+    echo "  ssh $SERVER"
+    echo "  source ~/.cargo/env"
+    echo "  tokio-console http://localhost:6669"
+    echo "  Navigate to a task (↑↓ or j,k) and press Enter to view full details"
+} | tee -a "$OUTPUT_FILE"
 
 # Final summary
 section "Auto-Analysis Summary"
@@ -230,6 +279,16 @@ if echo "$TOKIO_OUTPUT" | grep -q "tasks have lost their wakers"; then
     LOST_WAKERS=$(echo "$TOKIO_OUTPUT" | grep -o "[0-9]* tasks have lost their wakers" | head -1)
     echo -e "${YELLOW}⚠  $LOST_WAKERS${NC}"
     ((ISSUES++))
+fi
+
+# Check for blocking tasks with high busy time
+if echo "$TOKIO_BUSY" | grep -q "blocking.*[0-9]*m[0-9]*s.*[0-9]*m[0-9]*s"; then
+    BLOCKING_COUNT=$(echo "$TOKIO_BUSY" | grep "blocking" | grep -E "[0-9]+m[0-9]+s.*[0-9]+m[0-9]+s" | wc -l)
+    if [ "$BLOCKING_COUNT" -gt 0 ]; then
+        echo -e "${YELLOW}⚠  Found $BLOCKING_COUNT blocking task(s) with high busy time${NC}"
+        echo -e "${YELLOW}   (See 'View 2' section for details)${NC}"
+        ((ISSUES++))
+    fi
 fi
 
 echo ""

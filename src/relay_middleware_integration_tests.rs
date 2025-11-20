@@ -9,7 +9,7 @@ mod integration_tests {
     use crate::test_utils::*;
     use nostr_lmdb::Scope;
     use nostr_sdk::prelude::*;
-    use parking_lot::RwLock;
+    use tokio::sync::RwLock;
     use relay_builder::{EventContext, EventProcessor};
     use std::sync::Arc;
 
