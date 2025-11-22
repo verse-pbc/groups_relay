@@ -220,8 +220,8 @@ echo -e "${BLUE}Attempting to get detailed task info via console_dump...${NC}"
 if ssh "$SERVER" "docker exec $CONTAINER_NAME test -f ./console_dump" 2>/dev/null; then
     echo -e "${GREEN}✓ console_dump binary found${NC}" | tee -a "$OUTPUT_FILE"
 
-    # Run console_dump with blocking-only and min-busy-time filters
-    ssh "$SERVER" "docker exec $CONTAINER_NAME timeout 10 ./console_dump --blocking-only --min-busy-ms 50 2>&1" | tee -a "$OUTPUT_FILE"
+    # Run console_dump (simple dump.rs style - just captures updates)
+    ssh "$SERVER" "docker exec $CONTAINER_NAME timeout 10 ./console_dump http://localhost:6669 2>&1 | head -200" | tee -a "$OUTPUT_FILE"
 else
     echo -e "${YELLOW}console_dump binary not available (requires rebuild with console-dump feature)${NC}" | tee -a "$OUTPUT_FILE"
     echo "To enable: Rebuild Docker image with updated Dockerfile" | tee -a "$OUTPUT_FILE"
