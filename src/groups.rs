@@ -815,6 +815,7 @@ mod tests {
                 .to_string_lossy()
                 .to_string(),
         )
+        .await
         .unwrap();
 
         std::mem::forget(temp_dir);

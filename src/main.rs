@@ -114,7 +114,7 @@ async fn main() -> Result<()> {
     let _cancellation_token = CancellationToken::new();
 
     // Create database (CryptoHelper is created internally)
-    let database = RelayDatabase::new(settings.db_path.clone())?;
+    let database = RelayDatabase::new(settings.db_path.clone()).await?;
     let database = Arc::new(database);
     let groups = Arc::new(
         Groups::load_groups(

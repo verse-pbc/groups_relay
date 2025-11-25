@@ -8,7 +8,7 @@ set -e
 # ----------------------------
 
 # Relay Configuration
-RELAY_URL="ws://example.local:8080"
+RELAY_URL="ws://localhost:8080"
 RELAY_PRIVATE_KEY="6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e"
 USER_PRIVATE_KEY="262f9c9cdd4d490f54c7333c0ae7033b03cfb8f83c123f2da4e3cf10b7d33b00"
 NEW_USER_PRIVATE_KEY="efa1aa99103d56f1c0d77b6986d06d4a8327c88886ed5ec0a2ed2b1bca504895"
@@ -81,38 +81,38 @@ main() {
         "nak event -k 9021 -t h='${GROUP_ID}' --auth --sec='${THIRD_USER_PRIVATE_KEY}' '${RELAY_URL}'"
 
     run_step 7 "Admin manually adds second user (9000)" \
-        "nak event -k 9000 -t h='${GROUP_ID}' -t 'p=${THIRD_USER_PUBLIC_KEY};role=member' --auth --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
+        "nak event -k 9000 -t h='${GROUP_ID}' -t 'p=${THIRD_USER_PUBLIC_KEY};member' --auth --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
     echo "Relay automatically updates 39002"
 
     echo -e "\n=== First user lists all events for -h tag without auth ==="
-    run_step 9 "First user lists all events for -h tag (9000)" \
+    run_step 8 "First user lists all events for -h tag" \
         "nak req -t h='${GROUP_ID}' '${RELAY_URL}'"
 
     echo -e "\n=== First user lists all events for -h tag with auth ==="
-    run_step 10 "First user lists all events for -h tag (9000)" \
+    run_step 9 "First user lists all events for -h tag (with auth)" \
         "nak req -t h='${GROUP_ID}' -fpa --auth --sec='${NEW_USER_PRIVATE_KEY}' '${RELAY_URL}'"
 
     echo -e "\n=== User Leaving Flow ==="
-    run_step 11 "First user requests to leave (9022)" \
+    run_step 10 "First user requests to leave (9022)" \
         "nak event -k 9022 -t h='${GROUP_ID}' --auth --sec='${NEW_USER_PRIVATE_KEY}' '${RELAY_URL}'"
     echo "Relay automatically creates 9001 and updates 39002"
 
     echo -e "\n=== First user lists all events for -h tag ==="
-    run_step 12 "First user lists all events for -h tag (9000)" \
+    run_step 11 "First user lists all events for -h tag (after leaving)" \
         "nak req -t h='${GROUP_ID}' -fpa --auth --sec='${NEW_USER_PRIVATE_KEY}' '${RELAY_URL}'"
 
     echo -e "\n=== Moderation Actions Flow ==="
-    run_step 13 "Admin removes second user (9001)" \
+    run_step 12 "Admin removes second user (9001)" \
         "nak event -k 9001 -t h='${GROUP_ID}' -t p='${THIRD_USER_PUBLIC_KEY}' --auth --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
     echo "Relay automatically updates 39002"
 
     echo -e "\n=== Delete Message ==="
     MESSAGE_ID=`nak req -k 9 -l 1 -t h=${GROUP_ID} -fpa --auth --sec=${RELAY_PRIVATE_KEY} ${RELAY_URL} |jq -r '.id'`
-    run_step 14 "Admin deletes message (9005)" \
+    run_step 13 "Admin deletes message (9005)" \
         "nak event -k 9005 -t h='${GROUP_ID}' -t e='${MESSAGE_ID}' --auth --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
 
     echo -e "\n=== Delete Group ==="
-    run_step 15 "Admin deletes group (9006)" \
+    run_step 14 "Admin deletes group (9008)" \
         "nak event -k 9008 -t h='${GROUP_ID}' --auth --sec='${RELAY_PRIVATE_KEY}' '${RELAY_URL}'"
 }
 

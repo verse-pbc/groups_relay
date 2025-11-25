@@ -22,6 +22,7 @@ async fn test_join_request_generates_correct_events() {
             .to_string_lossy()
             .to_string(),
     )
+    .await
     .unwrap();
     let db = Arc::new(db);
 

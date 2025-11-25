@@ -16,7 +16,7 @@ async fn test_groups_relay_with_relay_builder() -> anyhow::Result<()> {
     let keys = Keys::generate();
 
     // groups_relay's database is used for groups management
-    let groups_database = RelayDatabase::new(db_path.to_string_lossy().to_string())?;
+    let groups_database = RelayDatabase::new(db_path.to_string_lossy().to_string()).await?;
     let groups_database = Arc::new(groups_database);
 
     let groups = Arc::new(

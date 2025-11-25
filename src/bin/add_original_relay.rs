@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
     info!("Dry run: {}", args.dry_run);
 
     // Open database
-    let database = RelayDatabase::new(&args.db_path)?;
+    let database = RelayDatabase::new(&args.db_path).await?;
     let database = Arc::new(database);
 
     // Load groups

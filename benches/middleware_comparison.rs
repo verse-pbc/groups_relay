@@ -4,11 +4,11 @@ use groups_relay::groups::Groups;
 use groups_relay::groups_event_processor::GroupsRelayProcessor;
 use groups_relay::RelayDatabase;
 use nostr_sdk::prelude::*;
-use parking_lot::RwLock;
 use relay_builder::{EventContext, EventProcessor, RelayConfig};
 use std::hint::black_box;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
+use tokio::sync::RwLock;
 
 fn empty_state() -> Arc<RwLock<()>> {
     Arc::new(RwLock::new(()))
@@ -20,7 +20,7 @@ async fn setup_bench() -> (tempfile::TempDir, Arc<RelayDatabase>, Arc<Groups>, K
     let db_path = tmp_dir.path().join("bench_db");
 
     let admin_keys = Keys::generate();
-    let database = RelayDatabase::new(db_path.to_str().unwrap()).unwrap();
+    let database = RelayDatabase::new(db_path.to_str().unwrap()).await.unwrap();
     let database = Arc::new(database);
 
     let groups = Arc::new(
@@ -84,13 +84,13 @@ async fn create_test_data(
 
         let admin_pk = admin_keys.public_key();
         let context = EventContext {
-            authed_pubkey: Some(&admin_pk),
-            subdomain: &nostr_lmdb::Scope::Default,
-            relay_pubkey: &admin_pk,
+            authed_pubkey: Some(admin_pk),
+            subdomain: Arc::new(nostr_lmdb::Scope::Default),
+            relay_pubkey: admin_pk,
         };
 
         processor
-            .handle_event(create_event.clone(), Arc::new(RwLock::default()), context)
+            .handle_event(create_event.clone(), Arc::new(RwLock::default()), &context)
             .await
             .unwrap();
 
@@ -107,7 +107,7 @@ async fn create_test_data(
             );
 
             processor
-                .handle_event(add_event, Arc::new(RwLock::default()), context)
+                .handle_event(add_event, Arc::new(RwLock::default()), &context)
                 .await
                 .unwrap();
 
@@ -160,15 +160,15 @@ fn bench_visibility_direct(c: &mut Criterion) {
 
                     b.to_async(&rt).iter(|| async {
                         let context = EventContext {
-                            authed_pubkey: auth_pubkey.as_ref(),
-                            subdomain: &nostr_lmdb::Scope::Default,
-                            relay_pubkey: &admin_keys.public_key(),
+                            authed_pubkey: auth_pubkey,
+                            subdomain: Arc::new(nostr_lmdb::Scope::Default),
+                            relay_pubkey: admin_keys.public_key(),
                         };
 
                         black_box(processor.can_see_event(
                             event,
                             Arc::new(RwLock::default()),
-                            context,
+                            &context,
                         ))
                     });
                 },
@@ -260,14 +260,14 @@ fn bench_nip29_operations(c: &mut Criterion) {
             b.to_async(&rt).iter(|| async {
                 let admin_pk = admin_keys.public_key();
                 let context = EventContext {
-                    authed_pubkey: Some(&admin_pk),
-                    subdomain: &nostr_lmdb::Scope::Default,
-                    relay_pubkey: &admin_pk,
+                    authed_pubkey: Some(admin_pk),
+                    subdomain: Arc::new(nostr_lmdb::Scope::Default),
+                    relay_pubkey: admin_pk,
                 };
 
                 black_box(
                     processor
-                        .handle_event(event.clone(), Arc::new(RwLock::default()), context)
+                        .handle_event(event.clone(), Arc::new(RwLock::default()), &context)
                         .await,
                 )
             });
@@ -332,12 +332,12 @@ fn bench_group_operations(c: &mut Criterion) {
 
             let admin_pk = admin_keys.public_key();
             let context = EventContext {
-                authed_pubkey: Some(&admin_pk),
-                subdomain: &nostr_lmdb::Scope::Default,
-                relay_pubkey: &admin_pk,
+                authed_pubkey: Some(admin_pk),
+                subdomain: Arc::new(nostr_lmdb::Scope::Default),
+                relay_pubkey: admin_pk,
             };
 
-            black_box(processor.verify_filters(&[filter.clone()], empty_state(), context))
+            black_box(processor.verify_filters(&[filter.clone()], empty_state(), &context))
         });
     });
 

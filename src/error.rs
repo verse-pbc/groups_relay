@@ -96,25 +96,27 @@ impl Error {
 impl From<NostrSdkError> for Error {
     fn from(error: NostrSdkError) -> Self {
         match error {
-            NostrSdkError::EventNotFound(event_id) => {
-                Error::nostr_sdk(format!("Event not found: {event_id}"))
-            }
-            NostrSdkError::ImpossibleToZap(message) => Error::nostr_sdk(message),
             NostrSdkError::GossipFiltersEmpty => {
                 Error::nostr_sdk("Gossip broken down filters are empty")
             }
+            NostrSdkError::PrivateMsgRelaysNotFound => {
+                Error::nostr_sdk("Private message relays not found")
+            }
             NostrSdkError::Relay(relay_error) => Error::nostr_sdk(relay_error.to_string()),
             NostrSdkError::Database(database_error) => Error::nostr_sdk(database_error.to_string()),
-            NostrSdkError::NIP59(nip59_error) => Error::nostr_sdk(nip59_error.to_string()),
             NostrSdkError::RelayPool(relay_pool_error) => {
                 Error::nostr_sdk(relay_pool_error.to_string())
             }
             NostrSdkError::Signer(signer_error) => Error::nostr_sdk(signer_error.to_string()),
+            NostrSdkError::Gossip(gossip_error) => Error::nostr_sdk(gossip_error.to_string()),
             NostrSdkError::EventBuilder(event_builder_error) => {
                 Error::nostr_sdk(event_builder_error.to_string())
             }
             NostrSdkError::Json(json_error) => Error::nostr_sdk(json_error.to_string()),
             NostrSdkError::SharedState(state_error) => Error::nostr_sdk(state_error.to_string()),
+            #[cfg(feature = "nip59")]
+            NostrSdkError::NIP59(nip59_error) => Error::nostr_sdk(nip59_error.to_string()),
+            #[allow(unreachable_patterns)]
             _ => Error::nostr_sdk(format!("Unhandled Nostr SDK error: {error:?}")),
         }
     }

@@ -535,6 +535,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "btreecap"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6160c957d8aa33d0a8ba1dbab98e3cb57023ad9374c501441e88559f99e6c4c9"
+
+[[package]]
 name = "bumpalo"
 version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2205,8 +2211,8 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 
 [[package]]
 name = "nostr"
-version = "0.43.0"
-source = "git+https://github.com/verse-pbc/nostr#975456f565b24ff1c0593075825024eea67e55c7"
+version = "0.44.1"
+source = "git+https://github.com/verse-pbc/nostr#db62491b66fc1f4c0b0477184745921f526f8f6a"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -2217,6 +2223,7 @@ dependencies = [
  "chacha20",
  "chacha20poly1305",
  "getrandom 0.2.16",
+ "hex",
  "instant",
  "scrypt",
  "secp256k1",
@@ -2228,9 +2235,10 @@ dependencies = [
 
 [[package]]
 name = "nostr-database"
-version = "0.43.0"
-source = "git+https://github.com/verse-pbc/nostr#975456f565b24ff1c0593075825024eea67e55c7"
+version = "0.44.0"
+source = "git+https://github.com/verse-pbc/nostr#db62491b66fc1f4c0b0477184745921f526f8f6a"
 dependencies = [
+ "btreecap",
  "flatbuffers",
  "lru",
  "nostr",
@@ -2238,9 +2246,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nostr-gossip"
+version = "0.44.0"
+source = "git+https://github.com/verse-pbc/nostr#db62491b66fc1f4c0b0477184745921f526f8f6a"
+dependencies = [
+ "nostr",
+]
+
+[[package]]
 name = "nostr-lmdb"
-version = "0.43.0"
-source = "git+https://github.com/verse-pbc/nostr#975456f565b24ff1c0593075825024eea67e55c7"
+version = "0.44.0"
+source = "git+https://github.com/verse-pbc/nostr#db62491b66fc1f4c0b0477184745921f526f8f6a"
 dependencies = [
  "async-utility",
  "flume",
@@ -2254,12 +2270,13 @@ dependencies = [
 
 [[package]]
 name = "nostr-relay-pool"
-version = "0.43.0"
-source = "git+https://github.com/verse-pbc/nostr#975456f565b24ff1c0593075825024eea67e55c7"
+version = "0.44.0"
+source = "git+https://github.com/verse-pbc/nostr#db62491b66fc1f4c0b0477184745921f526f8f6a"
 dependencies = [
  "async-utility",
  "async-wsocket",
  "atomic-destructor",
+ "hex",
  "lru",
  "negentropy",
  "nostr",
@@ -2270,14 +2287,16 @@ dependencies = [
 
 [[package]]
 name = "nostr-sdk"
-version = "0.43.0"
-source = "git+https://github.com/verse-pbc/nostr#975456f565b24ff1c0593075825024eea67e55c7"
+version = "0.44.1"
+source = "git+https://github.com/verse-pbc/nostr#db62491b66fc1f4c0b0477184745921f526f8f6a"
 dependencies = [
  "async-utility",
  "nostr",
  "nostr-database",
+ "nostr-gossip",
  "nostr-relay-pool",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2914,7 +2933,7 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 [[package]]
 name = "relay_builder"
 version = "0.5.0-alpha.1"
-source = "git+https://github.com/verse-pbc/relay_builder#32f7b697ac2dcdd2519b4805bc1d56fe8998ba0c"
+source = "git+https://github.com/verse-pbc/relay_builder#f1306cab8d4bc4bdb30e193aca63553a17e72555"
 dependencies = [
  "anyhow",
  "arc-swap",

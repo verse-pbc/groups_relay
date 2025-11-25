@@ -9,9 +9,9 @@ mod tests {
     use crate::{Groups, StoreCommand};
     use nostr_lmdb::Scope;
     use nostr_sdk::prelude::*;
-    use tokio::sync::RwLock;
     use relay_builder::{EventContext, EventProcessor};
     use std::sync::Arc;
+    use tokio::sync::RwLock;
 
     fn empty_state() -> Arc<RwLock<()>> {
         Arc::new(RwLock::new(()))

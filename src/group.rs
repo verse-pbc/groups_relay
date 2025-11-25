@@ -475,8 +475,8 @@ impl std::fmt::Debug for Group {
                 .collect::<Vec<_>>()
                 .join(", ")
         )?;
-        writeln!(f, "  created_at: {},", self.created_at.as_u64())?;
-        writeln!(f, "  updated_at: {}", self.updated_at.as_u64())?;
+        writeln!(f, "  created_at: {},", self.created_at.as_secs())?;
+        writeln!(f, "  updated_at: {}", self.updated_at.as_secs())?;
         write!(f, "}}")
     }
 }
@@ -491,7 +491,7 @@ impl Group {
             self.id,
             self.members.len()
         );
-        // println!("[update_state] Updated timestamp to {}", self.updated_at.as_u64());
+        // println!("[update_state] Updated timestamp to {}", self.updated_at.as_secs());
     }
 
     /// Checks if an event kind is a group management kind that requires a managed group to exist

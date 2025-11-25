@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
-use nostr_lmdb::NostrLMDB;
+use nostr_lmdb::NostrLmdb;
 use nostr_sdk::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
@@ -64,7 +64,7 @@ struct GroupInfo {
     reason: String,
 }
 
-async fn analyze_groups(db: &NostrLMDB) -> Result<(HashMap<String, GroupInfo>, PruneStats)> {
+async fn analyze_groups(db: &NostrLmdb) -> Result<(HashMap<String, GroupInfo>, PruneStats)> {
     let one_month_ago = Timestamp::now() - Duration::from_secs(30 * 24 * 60 * 60);
     let mut stats = PruneStats {
         inactive_groups: 0,
@@ -179,7 +179,7 @@ async fn analyze_groups(db: &NostrLMDB) -> Result<(HashMap<String, GroupInfo>, P
     Ok((groups_to_delete, stats))
 }
 
-async fn delete_groups(db: &NostrLMDB, groups: &HashMap<String, GroupInfo>) -> Result<usize> {
+async fn delete_groups(db: &NostrLmdb, groups: &HashMap<String, GroupInfo>) -> Result<usize> {
     let mut events_deleted = 0;
     let progress_bar = ProgressBar::new(groups.len() as u64);
     progress_bar.set_style(
@@ -236,7 +236,7 @@ fn prompt_for_confirmation(
     Ok(input.trim().eq_ignore_ascii_case("y"))
 }
 
-async fn prune_inactive_groups(db: &NostrLMDB, skip_confirmation: bool) -> Result<()> {
+async fn prune_inactive_groups(db: &NostrLmdb, skip_confirmation: bool) -> Result<()> {
     info!("Analyzing groups...");
     let (groups_to_delete, mut stats) = analyze_groups(db).await?;
 
@@ -268,7 +268,8 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Open the database
-    let db = NostrLMDB::open(&args.db)
+    let db = NostrLmdb::open(&args.db)
+        .await
         .with_context(|| format!("Failed to open database at {:?}", args.db))?;
 
     if args.prune_inactive_groups {
