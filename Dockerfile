@@ -12,11 +12,12 @@ WORKDIR /usr/src/app
 
 # Copy the project for building
 COPY Cargo.toml Cargo.lock ./
+COPY .cargo ./.cargo
 COPY src ./src
 COPY benches ./benches
 
-# Build all binaries with tokio-console support
-ENV RUSTFLAGS="--cfg tokio_unstable"
+# Build all binaries with tokio-console support and task dump capability
+ENV RUSTFLAGS="--cfg tokio_unstable --cfg tokio_taskdump"
 RUN cargo build --release --bins --features console,console-dump
 
 # Install binaries from relay_builder

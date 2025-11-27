@@ -12,15 +12,17 @@ services:
       RUST_LOG: "${RUST_LOG:-info}"
       NIP29__relay__relay_url: "${RELAY_URL:-ws://example.local:8080}"
       NIP29__relay__auth_url: "${AUTH_URL:-ws://example.local:8080}"
+      TOKIO_BLOCKING_THREADS: "2048"
     ports:
       - "8080:8080"
       - "6669:6669"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 60s
+      test: ["CMD", "curl", "-sf", "--max-time", "5", "http://localhost:8080/health"]
+      interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 10s
+      retries: 2
+      start_period: 30s
+    restart: unless-stopped
 
 volumes:
   data:

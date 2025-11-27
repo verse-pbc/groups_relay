@@ -17,7 +17,9 @@ use clap::Parser;
 use groups_relay::{config, groups::Groups, server, RelayDatabase};
 use nostr_sdk::RelayUrl;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+use tokio_util_watchdog::Watchdog;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -77,10 +79,36 @@ fn setup_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Keep the guard alive for the entire program duration
     let _guard = setup_tracing();
+
+    // Build runtime with increased blocking thread pool to prevent exhaustion
+    // under heavy LMDB load with large databases
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .max_blocking_threads(2048)
+        .thread_keep_alive(Duration::from_secs(60))
+        .build()
+        .expect("Failed to create Tokio runtime");
+
+    runtime.block_on(async_main())
+}
+
+async fn async_main() -> Result<()> {
+    // Initialize watchdog to detect runtime stalls
+    // With panic(false), it logs diagnostics but doesn't crash
+    let _watchdog = Watchdog::builder()
+        .heartbeat_period(Duration::from_secs(1))
+        .watchdog_timeout(Duration::from_secs(10))
+        .triggered_metrics_duration(Duration::from_secs(3))
+        .triggered_metrics_collections(30)
+        .task_dump_deadline(Duration::from_secs(10))
+        .panic(false)
+        .thread_name("groups-relay-watchdog")
+        .build();
+
+    tracing::info!("Watchdog initialized with 10s timeout");
 
     let args = Args::parse();
     let config = config::Config::new(&args.config_dir).context("Failed to load configuration")?;
