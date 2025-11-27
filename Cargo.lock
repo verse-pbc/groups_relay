@@ -2213,7 +2213,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "nostr"
 version = "0.44.1"
-source = "git+https://github.com/verse-pbc/nostr#1cb4deab539054119fd7b33c07033e3e54516887"
+source = "git+https://github.com/verse-pbc/nostr#78e4dd38d4278f7f65444583b0dfb009334c9595"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -2237,7 +2237,7 @@ dependencies = [
 [[package]]
 name = "nostr-database"
 version = "0.44.0"
-source = "git+https://github.com/verse-pbc/nostr#1cb4deab539054119fd7b33c07033e3e54516887"
+source = "git+https://github.com/verse-pbc/nostr#78e4dd38d4278f7f65444583b0dfb009334c9595"
 dependencies = [
  "btreecap",
  "flatbuffers",
@@ -2249,7 +2249,7 @@ dependencies = [
 [[package]]
 name = "nostr-gossip"
 version = "0.44.0"
-source = "git+https://github.com/verse-pbc/nostr#1cb4deab539054119fd7b33c07033e3e54516887"
+source = "git+https://github.com/verse-pbc/nostr#78e4dd38d4278f7f65444583b0dfb009334c9595"
 dependencies = [
  "nostr",
 ]
@@ -2257,7 +2257,7 @@ dependencies = [
 [[package]]
 name = "nostr-lmdb"
 version = "0.44.0"
-source = "git+https://github.com/verse-pbc/nostr#1cb4deab539054119fd7b33c07033e3e54516887"
+source = "git+https://github.com/verse-pbc/nostr#78e4dd38d4278f7f65444583b0dfb009334c9595"
 dependencies = [
  "async-utility",
  "flume",
@@ -2272,7 +2272,7 @@ dependencies = [
 [[package]]
 name = "nostr-relay-pool"
 version = "0.44.0"
-source = "git+https://github.com/verse-pbc/nostr#1cb4deab539054119fd7b33c07033e3e54516887"
+source = "git+https://github.com/verse-pbc/nostr#78e4dd38d4278f7f65444583b0dfb009334c9595"
 dependencies = [
  "async-utility",
  "async-wsocket",
@@ -2289,7 +2289,7 @@ dependencies = [
 [[package]]
 name = "nostr-sdk"
 version = "0.44.1"
-source = "git+https://github.com/verse-pbc/nostr#1cb4deab539054119fd7b33c07033e3e54516887"
+source = "git+https://github.com/verse-pbc/nostr#78e4dd38d4278f7f65444583b0dfb009334c9595"
 dependencies = [
  "async-utility",
  "nostr",
