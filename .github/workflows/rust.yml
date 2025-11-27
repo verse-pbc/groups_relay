@@ -50,6 +50,7 @@ jobs:
         run: |
           mkdir -p build-context/config
           cp Cargo.toml Cargo.lock rust-toolchain.toml build-context/
+          cp -r .cargo build-context/
           cp -r src build-context/
           cp -r benches build-context/
           cp config/settings.yml build-context/config/
