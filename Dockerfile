@@ -67,7 +67,8 @@ WORKDIR /app
 COPY --from=rust-builder /usr/src/app/target/release/groups_relay ./groups_relay
 COPY --from=rust-builder /usr/src/app/target/release/delete_event ./delete_event
 COPY --from=rust-builder /usr/src/app/target/release/add_original_relay ./add_original_relay
-COPY --from=rust-builder /usr/src/app/target/release/console_dump ./console_dump
+# console_dump requires console-dump feature, skipped for stability testing
+# COPY --from=rust-builder /usr/src/app/target/release/console_dump ./console_dump
 # Copy cargo-installed binaries
 COPY --from=rust-builder /usr/local/cargo/bin/export_import ./export_import
 COPY --from=rust-builder /usr/local/cargo/bin/negentropy_sync ./negentropy_sync
