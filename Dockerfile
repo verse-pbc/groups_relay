@@ -16,9 +16,10 @@ COPY .cargo ./.cargo
 COPY src ./src
 COPY benches ./benches
 
-# Build all binaries with tokio-console support and task dump capability
-ENV RUSTFLAGS="--cfg tokio_unstable --cfg tokio_taskdump"
-RUN cargo build --release --bins --features console,console-dump
+# Build all binaries (console feature disabled for stability testing)
+# tokio_unstable still needed for runtime metrics used by watchdog
+ENV RUSTFLAGS="--cfg tokio_unstable"
+RUN cargo build --release --bins
 
 # Install binaries from relay_builder
 RUN cargo install --git https://github.com/verse-pbc/relay_builder \
