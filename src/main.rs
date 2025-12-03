@@ -83,10 +83,13 @@ fn main() -> Result<()> {
     // Keep the guard alive for the entire program duration
     let _guard = setup_tracing();
 
-    // Build runtime with increased blocking thread pool to prevent exhaustion
-    // under heavy LMDB load with large databases
+    // Build runtime with explicit worker thread count to prevent deadlock
+    // on low-CPU machines. Default is num_cpus, but with only 2 workers,
+    // any race in park/wake coordination can freeze the entire runtime.
+    // Also increased blocking thread pool for heavy LMDB load.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        .worker_threads(8)
         .max_blocking_threads(2048)
         .thread_keep_alive(Duration::from_secs(60))
         .build()
