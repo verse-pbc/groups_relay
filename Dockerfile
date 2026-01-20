@@ -17,8 +17,9 @@ COPY src ./src
 COPY benches ./benches
 
 # Build all binaries (console feature disabled for stability testing)
-# tokio_unstable still needed for runtime metrics used by watchdog
-ENV RUSTFLAGS="--cfg tokio_unstable"
+# tokio_unstable needed for runtime metrics used by watchdog
+# tokio_taskdump enables task dumps when deadlocks are detected (Linux only)
+ENV RUSTFLAGS="--cfg tokio_unstable --cfg tokio_taskdump"
 RUN cargo build --release --bins
 
 # Install binaries from relay_builder

@@ -18,6 +18,7 @@ use groups_relay::{config, groups::Groups, server, RelayDatabase};
 use nostr_sdk::RelayUrl;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_metrics::RuntimeMonitor;
 use tokio_util::sync::CancellationToken;
 use tokio_util_watchdog::Watchdog;
 
@@ -98,6 +99,65 @@ fn main() -> Result<()> {
     runtime.block_on(async_main())
 }
 
+/// Spawns a background task that periodically logs runtime metrics.
+/// This provides visibility into runtime health evolution before any deadlock.
+fn spawn_runtime_metrics_logger(handle: tokio::runtime::Handle) {
+    let runtime_monitor = RuntimeMonitor::new(&handle);
+
+    tokio::spawn(async move {
+        // Log metrics every 60 seconds
+        let mut intervals = runtime_monitor.intervals();
+        let mut iteration = 0u64;
+
+        loop {
+            // Wait for the next metrics interval (returns None if runtime is shutting down)
+            let Some(metrics) = intervals.next() else {
+                tracing::info!(target: "runtime_metrics", "Runtime shutting down, stopping metrics logger");
+                break;
+            };
+            iteration += 1;
+
+            // Log every minute (interval is ~1 second by default, so log every 60th)
+            // Also log first 5 to establish baseline
+            if iteration <= 5 || iteration % 60 == 0 {
+                tracing::info!(
+                    target: "runtime_metrics",
+                    iteration = iteration,
+                    workers_count = metrics.workers_count,
+                    total_park_count = metrics.total_park_count,
+                    total_noop_count = metrics.total_noop_count,
+                    total_steal_count = metrics.total_steal_count,
+                    total_steal_operations = metrics.total_steal_operations,
+                    total_polls_count = metrics.total_polls_count,
+                    total_busy_duration_ms = metrics.total_busy_duration.as_millis() as u64,
+                    total_local_schedule_count = metrics.total_local_schedule_count,
+                    total_overflow_count = metrics.total_overflow_count,
+                    budget_forced_yield_count = metrics.budget_forced_yield_count,
+                    io_driver_ready_count = metrics.io_driver_ready_count,
+                    "Periodic runtime metrics snapshot"
+                );
+            }
+
+            // Also log warnings if we see concerning patterns
+            if metrics.total_overflow_count > 0 {
+                tracing::warn!(
+                    target: "runtime_metrics",
+                    overflow_count = metrics.total_overflow_count,
+                    "Task queue overflow detected - tasks being pushed to global queue"
+                );
+            }
+
+            if metrics.budget_forced_yield_count > 100 {
+                tracing::warn!(
+                    target: "runtime_metrics",
+                    yield_count = metrics.budget_forced_yield_count,
+                    "High budget forced yield count - tasks may be CPU-bound"
+                );
+            }
+        }
+    });
+}
+
 async fn async_main() -> Result<()> {
     // Initialize watchdog to detect runtime stalls
     // With panic(false), it logs diagnostics but doesn't crash
@@ -112,6 +172,10 @@ async fn async_main() -> Result<()> {
         .build();
 
     tracing::info!("Watchdog initialized with 10s timeout");
+
+    // Start periodic runtime metrics logging for pre-deadlock diagnostics
+    spawn_runtime_metrics_logger(tokio::runtime::Handle::current());
+    tracing::info!("Runtime metrics logger started (logs every 60s)");
 
     let args = Args::parse();
     let config = config::Config::new(&args.config_dir).context("Failed to load configuration")?;
