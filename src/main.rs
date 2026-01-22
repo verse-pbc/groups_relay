@@ -112,7 +112,7 @@ fn spawn_runtime_metrics_logger(handle: tokio::runtime::Handle) {
         loop {
             // Wait for the next metrics interval (returns None if runtime is shutting down)
             let Some(metrics) = intervals.next() else {
-                tracing::info!(target: "runtime_metrics", "Runtime shutting down, stopping metrics logger");
+                tracing::info!(target: "groups_relay", "Runtime shutting down, stopping metrics logger");
                 break;
             };
             iteration += 1;
@@ -121,7 +121,7 @@ fn spawn_runtime_metrics_logger(handle: tokio::runtime::Handle) {
             // Also log first 5 to establish baseline
             if iteration <= 5 || iteration % 60 == 0 {
                 tracing::info!(
-                    target: "runtime_metrics",
+                    target: "groups_relay",
                     iteration = iteration,
                     workers_count = metrics.workers_count,
                     total_park_count = metrics.total_park_count,
@@ -141,7 +141,7 @@ fn spawn_runtime_metrics_logger(handle: tokio::runtime::Handle) {
             // Also log warnings if we see concerning patterns
             if metrics.total_overflow_count > 0 {
                 tracing::warn!(
-                    target: "runtime_metrics",
+                    target: "groups_relay",
                     overflow_count = metrics.total_overflow_count,
                     "Task queue overflow detected - tasks being pushed to global queue"
                 );
@@ -149,7 +149,7 @@ fn spawn_runtime_metrics_logger(handle: tokio::runtime::Handle) {
 
             if metrics.budget_forced_yield_count > 100 {
                 tracing::warn!(
-                    target: "runtime_metrics",
+                    target: "groups_relay",
                     yield_count = metrics.budget_forced_yield_count,
                     "High budget forced yield count - tasks may be CPU-bound"
                 );
