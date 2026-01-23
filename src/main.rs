@@ -110,35 +110,34 @@ fn spawn_runtime_metrics_logger(handle: tokio::runtime::Handle) {
         let mut iteration = 0u64;
 
         loop {
-            // Wait for the next metrics interval (returns None if runtime is shutting down)
+            // Wait 60 seconds between metrics snapshots
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+
+            // Get metrics delta since last call (returns None if runtime is shutting down)
             let Some(metrics) = intervals.next() else {
                 tracing::info!(target: "groups_relay", "Runtime shutting down, stopping metrics logger");
                 break;
             };
             iteration += 1;
 
-            // Log every minute (interval is ~1 second by default, so log every 60th)
-            // Also log first 5 to establish baseline
-            if iteration <= 5 || iteration % 60 == 0 {
-                tracing::info!(
-                    target: "groups_relay",
-                    iteration = iteration,
-                    workers_count = metrics.workers_count,
-                    total_park_count = metrics.total_park_count,
-                    total_noop_count = metrics.total_noop_count,
-                    total_steal_count = metrics.total_steal_count,
-                    total_steal_operations = metrics.total_steal_operations,
-                    total_polls_count = metrics.total_polls_count,
-                    total_busy_duration_ms = metrics.total_busy_duration.as_millis() as u64,
-                    total_local_schedule_count = metrics.total_local_schedule_count,
-                    total_overflow_count = metrics.total_overflow_count,
-                    budget_forced_yield_count = metrics.budget_forced_yield_count,
-                    io_driver_ready_count = metrics.io_driver_ready_count,
-                    "Periodic runtime metrics snapshot"
-                );
-            }
+            tracing::info!(
+                target: "groups_relay",
+                iteration = iteration,
+                workers_count = metrics.workers_count,
+                total_park_count = metrics.total_park_count,
+                total_noop_count = metrics.total_noop_count,
+                total_steal_count = metrics.total_steal_count,
+                total_steal_operations = metrics.total_steal_operations,
+                total_polls_count = metrics.total_polls_count,
+                total_busy_duration_ms = metrics.total_busy_duration.as_millis() as u64,
+                total_local_schedule_count = metrics.total_local_schedule_count,
+                total_overflow_count = metrics.total_overflow_count,
+                budget_forced_yield_count = metrics.budget_forced_yield_count,
+                io_driver_ready_count = metrics.io_driver_ready_count,
+                "Runtime metrics (60s interval)"
+            );
 
-            // Also log warnings if we see concerning patterns
+            // Log warnings if we see concerning patterns
             if metrics.total_overflow_count > 0 {
                 tracing::warn!(
                     target: "groups_relay",
