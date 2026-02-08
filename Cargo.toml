@@ -25,7 +25,6 @@ indicatif = "0.17"
 
 tokio-util = { version = "0.7.1", features = ["rt"] }
 tokio_util_watchdog = "0.1"
-tokio-metrics = { version = "0.4", default-features = false, features = ["rt"] }
 dashmap = "6.1.0"
 config = "0.15.11"
 axum = { version = "0.8.4", features = ["ws", "http1"] }
