@@ -2213,7 +2213,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "nostr"
 version = "0.44.1"
-source = "git+https://github.com/verse-pbc/nostr#40c1083a0f61386340e26cb4cbbdc1530d59e932"
+source = "git+https://github.com/verse-pbc/nostr#2fa894d6cb5b20d5a34fb9573c51bb3c388bfbe1"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -2237,7 +2237,7 @@ dependencies = [
 [[package]]
 name = "nostr-database"
 version = "0.44.0"
-source = "git+https://github.com/verse-pbc/nostr#40c1083a0f61386340e26cb4cbbdc1530d59e932"
+source = "git+https://github.com/verse-pbc/nostr#2fa894d6cb5b20d5a34fb9573c51bb3c388bfbe1"
 dependencies = [
  "btreecap",
  "flatbuffers",
@@ -2249,7 +2249,7 @@ dependencies = [
 [[package]]
 name = "nostr-gossip"
 version = "0.44.0"
-source = "git+https://github.com/verse-pbc/nostr#40c1083a0f61386340e26cb4cbbdc1530d59e932"
+source = "git+https://github.com/verse-pbc/nostr#2fa894d6cb5b20d5a34fb9573c51bb3c388bfbe1"
 dependencies = [
  "nostr",
 ]
@@ -2257,7 +2257,7 @@ dependencies = [
 [[package]]
 name = "nostr-lmdb"
 version = "0.44.0"
-source = "git+https://github.com/verse-pbc/nostr#40c1083a0f61386340e26cb4cbbdc1530d59e932"
+source = "git+https://github.com/verse-pbc/nostr#2fa894d6cb5b20d5a34fb9573c51bb3c388bfbe1"
 dependencies = [
  "async-utility",
  "flume",
@@ -2272,7 +2272,7 @@ dependencies = [
 [[package]]
 name = "nostr-relay-pool"
 version = "0.44.0"
-source = "git+https://github.com/verse-pbc/nostr#40c1083a0f61386340e26cb4cbbdc1530d59e932"
+source = "git+https://github.com/verse-pbc/nostr#2fa894d6cb5b20d5a34fb9573c51bb3c388bfbe1"
 dependencies = [
  "async-utility",
  "async-wsocket",
@@ -2289,7 +2289,7 @@ dependencies = [
 [[package]]
 name = "nostr-sdk"
 version = "0.44.1"
-source = "git+https://github.com/verse-pbc/nostr#40c1083a0f61386340e26cb4cbbdc1530d59e932"
+source = "git+https://github.com/verse-pbc/nostr#2fa894d6cb5b20d5a34fb9573c51bb3c388bfbe1"
 dependencies = [
  "async-utility",
  "nostr",
@@ -2934,7 +2934,7 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 [[package]]
 name = "relay_builder"
 version = "0.5.0-alpha.1"
-source = "git+https://github.com/verse-pbc/relay_builder#6e4a4fc7d964ad9d7e72ae56eb45b1b3ef0960d5"
+source = "git+https://github.com/verse-pbc/relay_builder#eb63614ebd8e5c11a0512d14d3c8eb6eefb38297"
 dependencies = [
  "anyhow",
  "arc-swap",

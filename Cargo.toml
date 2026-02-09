@@ -83,3 +83,7 @@ name = "console_dump"
 path = "src/bin/console_dump.rs"
 required-features = ["console-dump"]
 
+[[bin]]
+name = "deadlock_torture"
+path = "src/bin/deadlock_torture.rs"
+
