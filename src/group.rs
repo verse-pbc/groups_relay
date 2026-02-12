@@ -1403,7 +1403,7 @@ impl Group {
 
     /// Generates all membership-related events for the group
     /// Returns moderation events (9000) for members and metadata events (39001, 39002)
-    /// 
+    ///
     /// NOTE: When called during initial group creation, this generates kind:9000 events
     /// establishing each member's entry into the group (signed by relay).
     /// The 39001/39002 events reflect the current membership state.
@@ -1421,7 +1421,7 @@ impl Group {
 
         // Generate kind:39001 (admins) - relay-signed metadata reflecting current admin list
         events.push(self.generate_admins_event(relay_pubkey)?);
-        
+
         // Generate kind:39002 (members) - relay-signed metadata reflecting current member list
         events.push(self.generate_members_event(relay_pubkey));
 
@@ -1449,10 +1449,7 @@ impl Group {
             vec![
                 Tag::custom(
                     TagKind::p(),
-                    vec![
-                        member.pubkey.to_string(),
-                        role.as_tuple().0.to_string(),
-                    ],
+                    vec![member.pubkey.to_string(), role.as_tuple().0.to_string()],
                 ),
                 Tag::custom(TagKind::h(), [self.id.clone()]),
             ],
@@ -1462,10 +1459,15 @@ impl Group {
 
     pub fn generate_admins_event(&self, relay_pubkey: &PublicKey) -> Result<UnsignedEvent, Error> {
         // Collect all admins (including relay if it's legitimately a member/admin)
-        let admins: Vec<_> = self.members.values()
+        let admins: Vec<_> = self
+            .members
+            .values()
             .filter(|member| {
                 // Only include members with Admin role
-                member.roles.iter().any(|role| matches!(role, GroupRole::Admin))
+                member
+                    .roles
+                    .iter()
+                    .any(|role| matches!(role, GroupRole::Admin))
             })
             .collect();
 

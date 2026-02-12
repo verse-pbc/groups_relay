@@ -842,9 +842,9 @@ mod tests {
         // Return: groups, user_keys (acts as admin), member_keys, relay_keys (non_member), group_id, scope
         (
             groups,
-            user_keys,      // This user created the group and is admin
-            member_keys,    // Regular member key for tests
-            relay_keys,     // The relay (should never be in group)
+            user_keys,   // This user created the group and is admin
+            member_keys, // Regular member key for tests
+            relay_keys,  // The relay (should never be in group)
             TEST_GROUP_ID.to_string(),
             scope,
         )
@@ -956,7 +956,10 @@ mod tests {
         );
 
         // 3. User should be in kind:39001 (admins list)
-        assert!(user_in_39001, "User should be in the admins list (kind:39001)");
+        assert!(
+            user_in_39001,
+            "User should be in the admins list (kind:39001)"
+        );
 
         // 4. Relay should NEVER be in kind:39001
         assert!(

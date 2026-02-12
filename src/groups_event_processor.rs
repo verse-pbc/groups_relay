@@ -105,12 +105,12 @@ impl EventProcessor for GroupsRelayProcessor {
                                 // Relay admin has access to all groups
                                 if pubkey != &self.relay_pubkey && !group.is_member(pubkey) {
                                     return Err(relay_builder::Error::restricted(
-                                        "Access denied to private group".to_string()
+                                        "Access denied to private group".to_string(),
                                     ));
                                 }
                             } else {
                                 return Err(relay_builder::Error::auth_required(
-                                    "Authentication required to access private groups".to_string()
+                                    "Authentication required to access private groups".to_string(),
                                 ));
                             }
                         }

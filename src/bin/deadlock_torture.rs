@@ -247,7 +247,10 @@ async fn test_combined_blocking_and_rwlock(running: Arc<AtomicBool>) {
         // Detect stall - if blocking operations stopped progressing
         if blocking_delta == 0 && start.elapsed() > Duration::from_secs(3) {
             stall_count += 1;
-            println!("  WARNING: No blocking operations completed this second! (stall count: {})", stall_count);
+            println!(
+                "  WARNING: No blocking operations completed this second! (stall count: {})",
+                stall_count
+            );
             if stall_count >= 5 {
                 println!("  DEADLOCK DETECTED: 5 consecutive seconds with no progress!");
                 break;
