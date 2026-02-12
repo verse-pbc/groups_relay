@@ -28,7 +28,7 @@ tokio_util_watchdog = "0.1"
 dashmap = "6.1.0"
 config = "0.15.11"
 axum = { version = "0.8.4", features = ["ws", "http1"] }
-axum-server = "0.6.0"
+axum-server = "0.8.0"
 strum = { version = "0.27.1", features = ["derive", "strum_macros"] }
 snafu = { version = "0.8.5", features = ["backtrace"] }
 console-subscriber = { version = "0.4.1", optional = true }
