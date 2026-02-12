@@ -24,7 +24,7 @@ thiserror = "2.0.12"
 indicatif = "0.17"
 
 tokio-util = { version = "0.7.1", features = ["rt"] }
-tokio_util_watchdog = "0.1"
+tokio_util_watchdog = { version = "0.2", default-features = false }
 dashmap = "6.1.0"
 config = "0.15.11"
 axum = { version = "0.8.4", features = ["ws", "http1"] }
